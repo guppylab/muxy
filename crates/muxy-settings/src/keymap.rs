@@ -8,6 +8,7 @@ use muxy_core::shortcuts::{self, Shortcut, ShortcutSettings};
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Action {
+    OpenSettings,
     NewHomeTab,
     ToggleSidebar,
     ToggleFullScreen,
@@ -58,7 +59,8 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Self; 45] = [
+    pub const ALL: [Self; 46] = [
+        Self::OpenSettings,
         Self::NewHomeTab,
         Self::ToggleSidebar,
         Self::ToggleFullScreen,
@@ -108,6 +110,7 @@ impl Action {
 
     pub fn name(self) -> &'static str {
         match self {
+            Self::OpenSettings => "open_settings",
             Self::NewHomeTab => "new_home_tab",
             Self::ToggleSidebar => "toggle_sidebar",
             Self::ToggleFullScreen => "toggle_full_screen",
@@ -159,8 +162,8 @@ impl Action {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(transparent)]
-pub struct Keymap(BTreeMap<String, KeyChord>);
+#[serde(into = "BTreeMap<String, KeyChord>")]
+pub struct Keymap(BTreeMap<String, KeyChord>, BTreeMap<String, String>);
 
 impl Default for Keymap {
     fn default() -> Self {
@@ -174,6 +177,7 @@ impl Default for Keymap {
                         .map(|key| (shortcut.id.to_owned(), KeyChord::default_binding(key)))
                 })
                 .collect(),
+            BTreeMap::new(),
         )
     }
 }
@@ -189,8 +193,38 @@ impl Keymap {
             .find(|action| self.chord(*action) == Some(chord))
     }
 
+    pub fn binding(&self, id: &str) -> Option<&KeyChord> {
+        self.0.get(id)
+    }
+
+    pub fn with_binding(&self, id: &str, chord: Option<KeyChord>) -> Result<Self> {
+        if shortcuts::find(id).is_none() {
+            return Err(Error::new("keymap", "unknown action"));
+        }
+        let reset = chord.is_none();
+        let mut overrides = self.1.clone();
+        if let Some(chord) = chord {
+            overrides.insert(id.into(), chord.to_string());
+        } else {
+            overrides.remove(id);
+        }
+        let resolved = Self::from_overrides(overrides)?;
+        if reset && resolved.binding(id) != Self::default().binding(id) {
+            return Err(Error::new(
+                format!("keymap.{id}"),
+                "the default shortcut is assigned to another action; reset that action first",
+            ));
+        }
+        Ok(resolved)
+    }
+
+    pub fn save(&self, path: &std::path::Path) -> Result<()> {
+        crate::appearance::replace_section(path, "keymap", &self.1)
+            .map_err(|error| Error::new("keymap", error))
+    }
+
     fn from_overrides(overrides: BTreeMap<String, String>) -> Result<Self> {
-        let mut keymap = Self::default();
+        let mut keymap = Self(Self::default().0, overrides.clone());
         let mut explicit = BTreeMap::new();
         for (name, value) in overrides {
             let key = format!("keymap.{name}");
@@ -202,6 +236,7 @@ impl Keymap {
             explicit.insert(shortcut.id.to_owned(), chord);
         }
         for action in [
+            Action::OpenSettings,
             Action::NewHomeTab,
             Action::ToggleSidebar,
             Action::ToggleFullScreen,
@@ -250,6 +285,10 @@ impl Keymap {
                 }
             }
         }
+        let defaults = Self::default();
+        keymap
+            .1
+            .retain(|id, chord| chord.parse::<KeyChord>().ok().as_ref() != defaults.0.get(id));
         Ok(keymap)
     }
 }
@@ -335,4 +374,10 @@ fn primary_applies(id: &str, chord: &KeyChord, context: Option<&str>) -> bool {
     contexts
         .iter()
         .any(|other| context_overlap(context, *other))
+}
+
+impl From<Keymap> for BTreeMap<String, KeyChord> {
+    fn from(keymap: Keymap) -> Self {
+        keymap.0
+    }
 }

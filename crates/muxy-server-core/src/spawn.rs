@@ -35,6 +35,11 @@ pub(crate) fn spawn_shell(
         env: environment(),
         size,
     };
+    request.env.retain(|(name, _)| name != "SHELL");
+    request.env.push((
+        OsString::from("SHELL"),
+        request.program.clone().into_os_string(),
+    ));
     if let Some(integration) = integration {
         integration.configure(&mut request, settings.shell_integration);
     }

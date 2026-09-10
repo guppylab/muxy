@@ -1,4 +1,5 @@
 mod links;
+mod preferences;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -20,6 +21,38 @@ use muxy_ui::theme::{Metrics, Theme};
 pub(crate) struct PaneSession {
     pub(crate) view: Entity<TerminalPane>,
     _subscription: Subscription,
+}
+
+pub(crate) enum PaneView {
+    Terminal(PaneSession),
+    Settings {
+        view: Entity<crate::views::settings::SettingsPane>,
+        _subscription: Subscription,
+    },
+}
+
+impl PaneView {
+    pub(crate) fn terminal(&self) -> Option<&PaneSession> {
+        match self {
+            Self::Terminal(pane) => Some(pane),
+            Self::Settings { .. } => None,
+        }
+    }
+
+    pub(crate) fn element(&self) -> gpui::AnyElement {
+        use gpui::IntoElement;
+        match self {
+            Self::Terminal(pane) => pane.view.clone().into_any_element(),
+            Self::Settings { view, .. } => view.clone().into_any_element(),
+        }
+    }
+
+    pub(crate) fn focus(&self, window: &mut Window, cx: &gpui::App) {
+        match self {
+            Self::Terminal(pane) => pane.view.read(cx).focus.focus(window),
+            Self::Settings { view, .. } => view.read(cx).focus.focus(window),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -46,12 +79,14 @@ struct CloseRequest {
 pub(crate) struct AppModel {
     pub(crate) window: gpui::AnyWindowHandle,
     pub(crate) state: AppState,
-    pub(crate) grids: HashMap<PaneId, PaneSession>,
+    pub(crate) grids: HashMap<PaneId, PaneView>,
     pub(crate) error: Option<String>,
     pub(crate) focus: FocusHandle,
     pub(crate) appearance: muxy_settings::Appearance,
     pub(crate) settings: muxy_settings::Settings,
     terminal: muxy_settings::TerminalSettings,
+    server_preferences: preferences::ServerPreferences,
+    pub(crate) settings_picker: Option<crate::views::settings::PickerRequest>,
     font_sizes: HashMap<PaneId, f32>,
     initial_directories: HashMap<PaneId, PathBuf>,
     pub(crate) theme: Theme,
@@ -69,6 +104,7 @@ pub(crate) struct AppModel {
     pub(crate) picker_search: crate::picker::search::SearchService,
     pub(crate) navigation: crate::navigation::Navigation,
     path: PathBuf,
+    bounds_save: Option<Task<()>>,
     work: Worker,
     pending: HashSet<PaneId>,
     pending_close: Option<TabId>,
@@ -89,20 +125,29 @@ pub(crate) struct AppModel {
 }
 
 impl AppModel {
+    pub(crate) fn terminal(&self, id: &PaneId) -> Option<&PaneSession> {
+        self.grids.get(id).and_then(PaneView::terminal)
+    }
     pub(crate) fn refresh_theme(&mut self, cx: &mut Context<Self>) {
         (self.theme, self.palette) = self.themes.resolve(&self.appearance, self.dark);
         if self.connection == ConnectionState::Ready {
             self.send(Work::Colors(self.palette.terminal_colors()), cx);
         }
-        for pane in self.grids.values() {
+        for pane in self.grids.values().filter_map(PaneView::terminal) {
             pane.view.update(cx, |pane, cx| {
                 pane.palette = self.palette;
                 pane.update_find_theme(&self.theme, cx);
                 cx.notify();
             });
         }
-        if let Some(Overlay::Themes { picker, .. }) = &self.overlay {
-            let name = self.themes.active_name(&self.appearance, self.dark);
+        self.sync_preferences(cx);
+        if let Some(Overlay::Fonts { picker, .. }) = &self.overlay {
+            picker.update(cx, |picker, cx| {
+                picker.set_appearance(self.theme.clone(), self.metrics, cx);
+            });
+        }
+        if let Some(Overlay::Themes { picker, dark, .. }) = &self.overlay {
+            let name = self.themes.active_name(&self.appearance, *dark);
             picker.update(cx, |picker, cx| {
                 picker.set_appearance(name, self.theme.clone(), cx);
             });
@@ -135,8 +180,13 @@ impl AppModel {
             .appearance
             .save(&self.path.with_file_name("settings.toml"))
         {
+            self.appearance = self.settings.appearance.clone();
+            self.refresh_theme(cx);
             self.fail(format!("Could not save appearance: {error}"), cx);
+        } else {
+            self.settings.appearance = self.appearance.clone();
         }
+        self.sync_preferences(cx);
     }
 
     pub(crate) fn navigate(&mut self, forward: bool, cx: &mut Context<Self>) {
@@ -146,6 +196,7 @@ impl AppModel {
         {
             self.navigation.commit(index);
             self.changed(cx);
+            self.focus_requested = true;
         }
     }
 
@@ -187,7 +238,7 @@ impl AppModel {
             if window.is_window_active() {
                 model.refresh_project_statuses(cx);
             }
-            if let Some(pane) = model.active_pane().and_then(|id| model.grids.get(&id)) {
+            if let Some(pane) = model.active_pane().and_then(|id| model.terminal(&id)) {
                 pane.view.update(cx, |pane, cx| {
                     pane.focus_changed(window.is_window_active(), cx);
                 });
@@ -209,6 +260,8 @@ impl AppModel {
             appearance: boot.settings.appearance.clone(),
             settings: boot.settings,
             terminal: boot.terminal,
+            server_preferences: preferences::ServerPreferences::default(),
+            settings_picker: None,
             font_sizes: HashMap::new(),
             initial_directories: HashMap::new(),
             theme,
@@ -226,6 +279,7 @@ impl AppModel {
             picker_search: crate::picker::search::SearchService::default(),
             navigation: crate::navigation::Navigation::default(),
             path: boot.state_path,
+            bounds_save: None,
             work: boot.work,
             pending: HashSet::new(),
             pending_close: None,
@@ -246,6 +300,7 @@ impl AppModel {
         };
         model.sync_visible(cx);
         model.save_bounds(window, cx);
+        model.save(cx);
         model.focus.focus(window);
         if let Some(tab) = model.active_tab() {
             model
@@ -256,14 +311,20 @@ impl AppModel {
     }
 
     pub(crate) fn active_tab(&self) -> Option<TabId> {
-        if self.state.current_project().status() == ProjectStatus::Missing {
+        let project = self.state.current_project();
+        let selected = self.state.window().selected_tab.get(&project.id).copied()?;
+        if project.status() == ProjectStatus::Missing
+            && !project.tabs.iter().any(|tab| {
+                tab.id == selected
+                    && tab
+                        .panes
+                        .iter()
+                        .any(|pane| pane.content == PaneContent::Settings)
+            })
+        {
             return None;
         }
-        self.state
-            .window()
-            .selected_tab
-            .get(&self.state.current_project().id)
-            .copied()
+        Some(selected)
     }
 
     pub(crate) fn active_pane(&self) -> Option<PaneId> {
@@ -292,16 +353,14 @@ impl AppModel {
         };
         let directory =
             if self.settings.panes.new_pane_directory == muxy_settings::NewPaneDirectory::Current {
-                self.grids
-                    .get(&source)
+                self.terminal(&source)
                     .and_then(|pane| pane.view.read(cx).directory())
                     .unwrap_or_else(|| self.state.current_project().directory.clone())
             } else {
                 self.state.current_project().directory.clone()
             };
         let mut size = self
-            .grids
-            .get(&source)
+            .terminal(&source)
             .and_then(|pane| pane.view.read(cx).viewport())
             .unwrap_or(Size { cols: 80, rows: 24 });
         match edge.axis() {
@@ -491,7 +550,10 @@ impl AppModel {
             return;
         }
         match self.state.select_tab(self.state.current_project().id, tab) {
-            Ok(()) => self.changed(cx),
+            Ok(()) => {
+                self.changed(cx);
+                self.focus_requested = true;
+            }
             Err(error) => self.fail(error.to_string(), cx),
         }
     }
@@ -577,7 +639,7 @@ impl AppModel {
             }
             let tab = request.tab;
             let pane = request.panes[request.checking];
-            if let Some(view) = self.grids.get(&pane).map(|pane| pane.view.read(cx))
+            if let Some(view) = self.terminal(&pane).map(|pane| pane.view.read(cx))
                 && view.channel().is_some()
             {
                 if view.state == PaneState::Live
@@ -701,7 +763,10 @@ impl AppModel {
     }
 
     pub(crate) fn connect(&mut self, cx: &mut Context<Self>) {
-        if self.connection != ConnectionState::Disconnected || self.quitting != Quitting::Idle {
+        if self.connection != ConnectionState::Disconnected
+            || self.quitting != Quitting::Idle
+            || self.server_preferences.control_busy
+        {
             return;
         }
         let Some(generation) = self.generation.checked_add(1) else {
@@ -709,13 +774,14 @@ impl AppModel {
         };
         self.generation = generation;
         self.connection = ConnectionState::Connecting;
+        self.sync_preferences(cx);
         self.pending.clear();
         self.pending_close = None;
         if self.close_prompt.is_none() {
             self.close_request = None;
         }
         self.discarding.clear();
-        for pane in self.grids.values() {
+        for pane in self.grids.values().filter_map(PaneView::terminal) {
             pane.view
                 .update(cx, |pane, cx| pane.set_state(PaneState::Connecting, cx));
         }
@@ -726,7 +792,7 @@ impl AppModel {
     }
 
     pub(crate) fn quit(&mut self, cx: &mut Context<Self>) {
-        if self.quitting != Quitting::Idle {
+        if self.quitting != Quitting::Idle || !self.preferences_before_quit(cx) {
             return;
         }
         self.quitting = Quitting::Preserve;
@@ -736,7 +802,7 @@ impl AppModel {
     }
 
     pub(crate) fn end_all_and_quit(&mut self, cx: &mut Context<Self>) {
-        if self.quitting != Quitting::Idle {
+        if self.quitting != Quitting::Idle || !self.preferences_before_quit(cx) {
             return;
         }
         if self.connection != ConnectionState::Ready {
@@ -827,6 +893,7 @@ impl AppModel {
     }
 
     fn save(&mut self, cx: &mut Context<Self>) -> bool {
+        self.bounds_save = None;
         match store::save(&self.path, &self.state) {
             Ok(()) => true,
             Err(error) => {
@@ -847,20 +914,39 @@ impl AppModel {
         if self.state.window().bounds != Some(bounds)
             && self.state.set_window_bounds(Some(bounds)).is_ok()
         {
-            self.save(cx);
+            self.bounds_save = Some(cx.spawn(async move |model, cx| {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(200))
+                    .await;
+                let _ = model.update(cx, AppModel::save);
+            }));
         }
     }
 
     fn sync_visible(&mut self, cx: &mut Context<Self>) {
         let visible = self.visible_panes();
+        if self
+            .overlay
+            .as_ref()
+            .and_then(Overlay::settings_source)
+            .is_some_and(|source| !visible.contains(&source.pane))
+        {
+            self.dismiss_overlay(cx);
+        }
         let hidden: Vec<_> = self
             .grids
             .keys()
             .copied()
             .filter(|id| !visible.contains(id))
             .collect();
+        self.flush_preferences(&hidden, cx);
         for id in hidden {
-            if let Some(pane) = self.grids.remove(&id) {
+            if matches!(self.grids.get(&id), Some(PaneView::Settings { .. }))
+                && self.pane_tab(id).is_some()
+            {
+                continue;
+            }
+            if let Some(PaneView::Terminal(pane)) = self.grids.remove(&id) {
                 self.font_sizes
                     .insert(id, pane.view.read(cx).terminal.font_size);
                 pane.view.update(cx, |pane, cx| {
@@ -896,57 +982,66 @@ impl AppModel {
         self.retained.retain(|id| panes.contains(id));
         self.loaded.retain(|id| panes.contains(id));
         for id in visible {
-            if self.grids.contains_key(&id) || !self.is_terminal(id) {
+            if self.grids.contains_key(&id) {
                 continue;
             }
-            let mut terminal = self.terminal.clone();
-            if let Some(font_size) = self.font_sizes.get(&id) {
-                terminal.font_size = *font_size;
+            if !self.is_terminal(id) {
+                self.create_settings_view(id, cx);
+                self.focus_requested = true;
+                continue;
             }
-            let open_context = self.opener_context(id);
-            let snapshot = self.snapshots.remove(&id);
-            let state = self.pane_state(id);
-            let view = cx.new(|cx| {
-                let mut pane = TerminalPane::new(self.palette, terminal, cx);
-                pane.copy_on_select = self.settings.clipboard.copy_on_select;
-                pane.open_context = open_context;
-                pane.grid = snapshot;
-                pane.set_state(state, cx);
-                pane
-            });
-            let subscription = cx.subscribe(&view, move |model, _, event, cx| match event {
-                PaneEvent::Title(title) => {
-                    let _ = model.state.set_pane_title(id, title.clone());
-                    cx.notify();
-                }
-                PaneEvent::OpenLink(target) => model.open_terminal_link(id, target.clone(), cx),
-                PaneEvent::ContextMenu(position) => model.terminal_menu(id, *position, cx),
-                PaneEvent::Bell => cx.notify(),
-                PaneEvent::Focused => model.focus_pane(id, cx),
-                PaneEvent::History(request) => model.fetch_history(id, *request, cx),
-                PaneEvent::Search(request) => model.search(id, request.clone(), cx),
-                PaneEvent::Viewport(size) => model.viewport(id, *size, cx),
-                PaneEvent::Input(channel, bytes) => {
-                    if model.quitting == Quitting::Idle && !model.retained.contains(&id) {
-                        model.send(Work::Input(*channel, bytes.clone()), cx);
-                    }
-                }
-                PaneEvent::Mouse(channel, event) => {
-                    if model.quitting == Quitting::Idle && !model.retained.contains(&id) {
-                        model.send(Work::Mouse(*channel, *event), cx);
-                    }
-                }
-            });
-            self.grids.insert(
-                id,
-                PaneSession {
-                    view,
-                    _subscription: subscription,
-                },
-            );
-            self.focus_requested = true;
+            self.create_terminal_view(id, cx);
         }
         self.ensure_visible(cx);
+    }
+
+    fn create_terminal_view(&mut self, id: PaneId, cx: &mut Context<Self>) {
+        let mut terminal = self.terminal.clone();
+        if let Some(font_size) = self.font_sizes.get(&id) {
+            terminal.font_size = *font_size;
+        }
+        let open_context = self.opener_context(id);
+        let snapshot = self.snapshots.remove(&id);
+        let state = self.pane_state(id);
+        let view = cx.new(|cx| {
+            let mut pane = TerminalPane::new(self.palette, terminal, cx);
+            pane.copy_on_select = self.settings.clipboard.copy_on_select;
+            pane.open_context = open_context;
+            pane.grid = snapshot;
+            pane.set_state(state, cx);
+            pane
+        });
+        let subscription = cx.subscribe(&view, move |model, _, event, cx| match event {
+            PaneEvent::Title(title) => {
+                let _ = model.state.set_pane_title(id, title.clone());
+                cx.notify();
+            }
+            PaneEvent::OpenLink(target) => model.open_terminal_link(id, target.clone(), cx),
+            PaneEvent::ContextMenu(position) => model.terminal_menu(id, *position, cx),
+            PaneEvent::Bell => cx.notify(),
+            PaneEvent::Focused => model.focus_pane(id, cx),
+            PaneEvent::History(request) => model.fetch_history(id, *request, cx),
+            PaneEvent::Search(request) => model.search(id, request.clone(), cx),
+            PaneEvent::Viewport(size) => model.viewport(id, *size, cx),
+            PaneEvent::Input(channel, bytes) => {
+                if model.quitting == Quitting::Idle && !model.retained.contains(&id) {
+                    model.send(Work::Input(*channel, bytes.clone()), cx);
+                }
+            }
+            PaneEvent::Mouse(channel, event) => {
+                if model.quitting == Quitting::Idle && !model.retained.contains(&id) {
+                    model.send(Work::Mouse(*channel, *event), cx);
+                }
+            }
+        });
+        self.grids.insert(
+            id,
+            PaneView::Terminal(PaneSession {
+                view,
+                _subscription: subscription,
+            }),
+        );
+        self.focus_requested = true;
     }
 
     fn pane_state(&self, id: PaneId) -> PaneState {
@@ -967,7 +1062,7 @@ impl AppModel {
             ConnectionState::Disconnected => PaneState::Disconnected,
             ConnectionState::Ready => self
                 .active_pane()
-                .and_then(|id| self.grids.get(&id))
+                .and_then(|id| self.terminal(&id))
                 .map_or(PaneState::Live, |pane| pane.view.read(cx).state),
         }
     }
@@ -977,14 +1072,17 @@ impl AppModel {
         self.retained = plan.retain.iter().map(|(pane, _)| *pane).collect();
         self.loaded.clear();
         self.pending.clear();
-        for (id, pane) in &self.grids {
+        for (id, pane) in self
+            .grids
+            .iter()
+            .filter_map(|(id, pane)| pane.terminal().map(|pane| (id, pane)))
+        {
             let state = self.pane_state(*id);
             pane.view.update(cx, |pane, cx| pane.set_state(state, cx));
         }
         for pane in plan.create {
             let size = self
-                .grids
-                .get(&pane)
+                .terminal(&pane)
                 .and_then(|pane| pane.view.read(cx).viewport())
                 .unwrap_or(Size { cols: 80, rows: 24 });
             self.start_attach(pane, size, cx);
@@ -1007,7 +1105,7 @@ impl AppModel {
                     self.pending.insert(id);
                     self.send(Work::ReadSaved { pane: id, session }, cx);
                 }
-            } else if let Some(pane) = self.grids.get(&id)
+            } else if let Some(pane) = self.terminal(&id)
                 && pane.view.read(cx).channel().is_none()
                 && let Some(size) = pane.view.read(cx).viewport()
             {
@@ -1055,8 +1153,7 @@ impl AppModel {
             return;
         }
         if let Some(channel) = self
-            .grids
-            .get(&id)
+            .terminal(&id)
             .and_then(|pane| pane.view.read(cx).channel())
         {
             self.send(Work::Resize(channel, size), cx);
@@ -1078,8 +1175,7 @@ impl AppModel {
             return;
         };
         let channel = self
-            .grids
-            .get(&pane)
+            .terminal(&pane)
             .and_then(|pane| pane.view.read(cx).channel());
         if channel.is_none() && !self.retained.contains(&pane) {
             return;
@@ -1108,8 +1204,7 @@ impl AppModel {
             return;
         };
         let channel = self
-            .grids
-            .get(&pane)
+            .terminal(&pane)
             .and_then(|pane| pane.view.read(cx).channel());
         let source = match channel {
             Some(channel) => muxy_protocol::SearchSource::Live(channel),
@@ -1128,12 +1223,20 @@ impl AppModel {
 
     fn receive_connected(&mut self, sessions: &[SessionInfo], cx: &mut Context<Self>) {
         self.connection = ConnectionState::Ready;
+        self.sync_preferences(cx);
         self.error = None;
         if !self.send(Work::Colors(self.palette.terminal_colors()), cx) {
             return;
         }
         self.discard_pending(cx);
         self.apply_restore(sessions, cx);
+        if self
+            .grids
+            .values()
+            .any(|pane| matches!(pane, PaneView::Settings { .. }))
+        {
+            self.read_server_settings(cx);
+        }
         cx.notify();
     }
 
@@ -1142,6 +1245,10 @@ impl AppModel {
             return;
         }
         match update {
+            Update::ServerSettings(result) => self.receive_server_settings(result, cx),
+            Update::ServerStopped { restart, result } => {
+                self.receive_server_stopped(restart, result, cx);
+            }
             Update::Search {
                 pane,
                 request,
@@ -1169,7 +1276,7 @@ impl AppModel {
                     return;
                 }
                 self.save(cx);
-                if let Some(view) = self.grids.get(&pane).map(|pane| pane.view.clone()) {
+                if let Some(view) = self.terminal(&pane).map(|pane| pane.view.clone()) {
                     let channel = attachment.channel;
                     let size = view.update(cx, |pane, cx| pane.attach(attachment, cx));
                     if let Some(size) = size {
@@ -1193,7 +1300,7 @@ impl AppModel {
                 request,
                 result,
             } => {
-                if let Some(pane) = self.grids.get(&pane) {
+                if let Some(pane) = self.terminal(&pane) {
                     pane.view
                         .update(cx, |pane, cx| pane.receive_history(request, result, cx));
                 }
@@ -1311,7 +1418,7 @@ impl AppModel {
             return;
         }
         self.loaded.insert(pane);
-        if let Some(view) = self.grids.get(&pane).map(|pane| pane.view.clone()) {
+        if let Some(view) = self.terminal(&pane).map(|pane| pane.view.clone()) {
             match result {
                 Ok(screen) => view.update(cx, |pane, cx| pane.restore(screen, cx)),
                 Err(error) => {
@@ -1341,6 +1448,7 @@ impl AppModel {
                 let pane = self
                     .grids
                     .values()
+                    .filter_map(PaneView::terminal)
                     .find(|pane| pane.view.read(cx).channel() == Some(channel))
                     .map(|pane| pane.view.clone());
                 if let Some(pane) = pane {
@@ -1363,6 +1471,7 @@ impl AppModel {
                 if let Some(pane) = self
                     .grids
                     .values()
+                    .filter_map(PaneView::terminal)
                     .find(|pane| pane.view.read(cx).channel() == Some(channel))
                     .map(|pane| pane.view.clone())
                 {
@@ -1375,7 +1484,7 @@ impl AppModel {
     fn mark_exited(&mut self, id: PaneId, reason: Option<ExitReason>, cx: &mut Context<Self>) {
         self.retained.insert(id);
         self.loaded.remove(&id);
-        if let Some(pane) = self.grids.get(&id) {
+        if let Some(pane) = self.terminal(&id) {
             pane.view.update(cx, |pane, cx| {
                 pane.set_state(
                     PaneState::Exited {
@@ -1396,7 +1505,7 @@ impl AppModel {
         result: Result<muxy_protocol::SearchPage, muxy_client::ClientError>,
         cx: &mut Context<Self>,
     ) {
-        if let Some(pane) = self.grids.get(&pane) {
+        if let Some(pane) = self.terminal(&pane) {
             pane.view
                 .update(cx, |pane, cx| pane.receive_search(request, result, cx));
         }
@@ -1414,14 +1523,10 @@ impl AppModel {
             return;
         }
         let previous = self.state.clone();
-        let tabs: Vec<_> = self
-            .state
-            .projects()
-            .iter()
-            .flat_map(|project| project.tabs.iter().map(move |tab| (project.id, tab.id)))
-            .collect();
-        for (project, tab) in tabs {
-            let _ = self.state.close_tab(project, tab);
+        if let Err(error) = self.state.clear_terminal_panes() {
+            self.state = previous;
+            self.fail(format!("Could not clear terminal panes: {error}"), cx);
+            return;
         }
         for session in self.state.pending_discards().to_vec() {
             self.state.complete_discard(session);
@@ -1436,6 +1541,16 @@ impl AppModel {
 
     fn disconnect(&mut self, cx: &mut Context<Self>) {
         self.connection = ConnectionState::Disconnected;
+        if self.server_preferences.busy || !self.server_preferences.pending.is_empty() {
+            let message = "Disconnected before settings were confirmed. Reconnect and reload before retrying.";
+            self.preference_result("server", Some(message), cx);
+            for id in self.pending_server_fields() {
+                self.preference_result(&id, Some(message), cx);
+            }
+        }
+        self.server_preferences.busy = false;
+        self.server_preferences.pending.clear();
+        self.sync_preferences(cx);
         self.pending.clear();
         self.pending_close = None;
         if self.close_prompt.is_none() {
@@ -1443,7 +1558,7 @@ impl AppModel {
         }
         self.discarding.clear();
         self.loaded.clear();
-        for pane in self.grids.values() {
+        for pane in self.grids.values().filter_map(PaneView::terminal) {
             pane.view
                 .update(cx, |pane, cx| pane.set_state(PaneState::Disconnected, cx));
         }
@@ -1483,11 +1598,13 @@ mod tests {
     mod find;
     mod links;
     mod mouse;
+    mod preferences;
     mod projects;
     mod scrollback;
     mod sidebar;
     mod splits;
     mod tab_strip;
+    mod window_bounds;
 
     use muxy_client::Client;
     use std::io::{self, Write};
@@ -1810,7 +1927,9 @@ mod tests {
             );
         });
         cx.run_until_parked();
-        let terminal = view.read_with(cx, |model, _| model.grids[&pane].view.clone());
+        let terminal = view.read_with(cx, |model, _| {
+            model.terminal(&pane).expect("terminal").view.clone()
+        });
         let live = terminal.read_with(cx, |pane, _| pane.viewport().expect("viewport"));
         assert!(crate::views::disconnected::label(PaneState::Live).is_none());
         terminal.update(cx, |pane, cx| {
@@ -2074,7 +2193,8 @@ mod tests {
                     cx,
                 );
                 model.select_tab(first, cx);
-                assert!(model.grids[&pane].view.read(cx).channel().is_none());
+                let terminal = model.terminal(&pane).expect("terminal");
+                assert!(terminal.view.read(cx).channel().is_none());
                 model.close_tab(first, cx);
                 model.close_tab(first, cx);
                 assert_eq!(model.pending_close, Some(first));
@@ -2215,7 +2335,9 @@ mod tests {
         let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
         let pane = view.update(cx, |model, cx| {
             model.new_tab(cx);
-            model.grids[&model.active_pane().expect("pane")]
+            model
+                .terminal(&model.active_pane().expect("pane"))
+                .expect("terminal")
                 .view
                 .clone()
         });
@@ -2318,7 +2440,7 @@ mod tests {
             );
             assert!(model.connection == ConnectionState::Ready);
             assert_eq!(model.state.home().tabs[0].id, first);
-            let terminal = model.grids[&pane].view.read(cx);
+            let terminal = model.terminal(&pane).expect("terminal").view.read(cx);
             assert!(terminal.channel().is_none());
             assert!(matches!(terminal.state, PaneState::Exited { .. }));
         });
@@ -2374,7 +2496,15 @@ mod tests {
                 cx,
             );
             assert!(!model.retained.contains(&pane));
-            assert!(model.grids[&pane].view.read(cx).channel().is_some());
+            assert!(
+                model
+                    .terminal(&pane)
+                    .expect("terminal")
+                    .view
+                    .read(cx)
+                    .channel()
+                    .is_some()
+            );
             model.end_all_and_quit(cx);
             model.receive(
                 (
@@ -2555,7 +2685,7 @@ mod tests {
         wait(cx, &view, |model, cx| {
             model
                 .active_pane()
-                .and_then(|pane| model.grids.get(&pane))
+                .and_then(|pane| model.terminal(&pane))
                 .is_some_and(|pane| pane.view.read(cx).bell_flashing)
         })?;
         assert!(cx.debug_bounds("tab-bell").is_some());
@@ -2564,7 +2694,7 @@ mod tests {
         assert!(view.read_with(cx, |model, cx| {
             model
                 .active_pane()
-                .and_then(|pane| model.grids.get(&pane))
+                .and_then(|pane| model.terminal(&pane))
                 .is_some_and(|pane| !pane.view.read(cx).bell_flashing)
         }));
         assert!(cx.debug_bounds("tab-terminal").is_some());
@@ -2582,7 +2712,7 @@ mod tests {
     ) -> Option<&'a muxy_protocol::ForegroundProcess> {
         model
             .active_pane()
-            .and_then(|pane| model.grids.get(&pane))
+            .and_then(|pane| model.terminal(&pane))
             .and_then(|pane| pane.view.read(cx).process.as_ref())
     }
 
@@ -2811,7 +2941,7 @@ mod tests {
         wait(cx, view, |model, cx| {
             model
                 .active_pane()
-                .and_then(|id| model.grids.get(&id))
+                .and_then(|id| model.terminal(&id))
                 .is_some_and(|pane| pane.view.read(cx).channel().is_some())
         })
     }
@@ -2820,7 +2950,7 @@ mod tests {
         wait(cx, view, |model, cx| {
             model
                 .active_pane()
-                .and_then(|id| model.grids.get(&id))
+                .and_then(|id| model.terminal(&id))
                 .is_some_and(|pane| {
                     matches!(
                         pane.view.read(cx).state,
@@ -3065,8 +3195,7 @@ mod tests {
         view.read_with(cx, |model, cx| {
             Some(
                 model
-                    .grids
-                    .get(&model.active_pane()?)?
+                    .terminal(&model.active_pane()?)?
                     .view
                     .read(cx)
                     .terminal
@@ -3150,7 +3279,9 @@ mod tests {
         cx.update(|window, cx| {
             let model = view.read(cx);
             assert!(
-                model.grids[&model.active_pane().expect("active pane")]
+                model
+                    .terminal(&model.active_pane().expect("active pane"))
+                    .expect("terminal")
                     .view
                     .read(cx)
                     .focus
@@ -3329,8 +3460,7 @@ mod tests {
 
     fn active_grid<'a>(model: &'a AppModel, cx: &'a gpui::App) -> Option<&'a RunGrid> {
         model
-            .grids
-            .get(&model.active_pane()?)?
+            .terminal(&model.active_pane()?)?
             .view
             .read(cx)
             .grid

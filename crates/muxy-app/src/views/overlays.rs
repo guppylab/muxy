@@ -5,7 +5,9 @@ use gpui::{
 use muxy_ui::components::SymbolGlyph;
 
 use super::{
+    font_picker::FontPicker,
     menu::{self, Item, Menu},
+    settings::PickerRequest,
     theme_picker::{ThemeEvent, ThemePicker},
 };
 use crate::model::AppModel;
@@ -16,17 +18,34 @@ pub(crate) enum Overlay {
     ProjectColors(super::project_editor::Colors),
     Projects(Entity<super::project_picker::ProjectPicker>),
     Themes {
+        dark: bool,
         picker: Entity<ThemePicker>,
         anchor: Option<Bounds<Pixels>>,
+        source: Option<PickerRequest>,
+    },
+    Fonts {
+        picker: Entity<FontPicker>,
+        source: PickerRequest,
     },
     Notifications {
         anchor: Option<Bounds<Pixels>>,
     },
 }
 
+impl Overlay {
+    pub(crate) fn settings_source(&self) -> Option<&PickerRequest> {
+        match self {
+            Self::Themes { source, .. } => source.as_ref(),
+            Self::Fonts { source, .. } => Some(source),
+            _ => None,
+        }
+    }
+}
+
 impl AppModel {
     pub(crate) fn dismiss_overlay(&mut self, cx: &mut Context<Self>) {
         self.overlay = None;
+        self.settings_picker = None;
         self.overlay_subscription = None;
         self.focus_requested = true;
         cx.notify();
@@ -46,12 +65,22 @@ impl AppModel {
     }
 
     pub(crate) fn open_theme_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_theme_picker_for(self.dark, None, window, cx);
+    }
+
+    pub(crate) fn open_theme_picker_for(
+        &mut self,
+        dark: bool,
+        source: Option<PickerRequest>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if matches!(self.overlay, Some(Overlay::Themes { .. })) {
             self.dismiss_overlay(cx);
             return;
         }
         self.reload_themes(cx);
-        let active = self.themes.active_name(&self.appearance, self.dark);
+        let active = self.themes.active_name(&self.appearance, dark);
         let picker = cx.new(|cx| {
             ThemePicker::new(
                 self.themes.entries.clone(),
@@ -61,22 +90,30 @@ impl AppModel {
                 cx,
             )
         });
+        let close_on_select = source.is_some();
         self.overlay_subscription =
-            Some(cx.subscribe(&picker, |model, _, event, cx| match event {
-                ThemeEvent::Selected(name) => {
-                    if model.dark {
-                        model.appearance.dark_theme.clone_from(name);
-                    } else {
-                        model.appearance.light_theme.clone_from(name);
+            Some(
+                cx.subscribe(&picker, move |model, _, event, cx| match event {
+                    ThemeEvent::Selected(name) => {
+                        if dark {
+                            model.appearance.dark_theme.clone_from(name);
+                        } else {
+                            model.appearance.light_theme.clone_from(name);
+                        }
+                        model.refresh_theme(cx);
+                        model.save_appearance(cx);
+                        if close_on_select {
+                            model.dismiss_overlay(cx);
+                        }
                     }
-                    model.refresh_theme(cx);
-                    model.save_appearance(cx);
-                }
-                ThemeEvent::Dismiss => model.dismiss_overlay(cx),
-            }));
+                    ThemeEvent::Dismiss => model.dismiss_overlay(cx),
+                }),
+            );
         self.overlay = Some(Overlay::Themes {
+            dark,
             picker,
             anchor: self.theme_anchor,
+            source,
         });
         self.overlay_focus.focus(window);
         cx.notify();
@@ -125,7 +162,15 @@ pub(crate) fn layer(model: &AppModel, window: &Window, cx: &mut Context<AppModel
             super::project_editor::render_colors(colors, model, window, cx)
         }
         Some(Overlay::Projects(picker)) => picker.clone().into_any_element(),
-        Some(Overlay::Themes { picker, anchor }) => {
+        Some(Overlay::Themes {
+            picker,
+            source: Some(source),
+            ..
+        }) => super::settings::dropdown(picker.clone().into_any_element(), source.clone(), cx),
+        Some(Overlay::Fonts { picker, source }) => {
+            super::settings::dropdown(picker.clone().into_any_element(), source.clone(), cx)
+        }
+        Some(Overlay::Themes { picker, anchor, .. }) => {
             let origin = anchor.map_or(point(px(8.0), viewport.height - px(12.0)), |anchor| {
                 anchor.origin
             });

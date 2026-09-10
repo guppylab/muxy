@@ -29,11 +29,14 @@ struct State {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ServerEvent {
     SessionEnded { id: SessionId, reason: ExitReason },
+    StopRequested,
 }
 
 #[derive(Debug)]
 pub struct Registry {
-    settings: ServerSettings,
+    settings: Mutex<ServerSettings>,
+    settings_write: Mutex<()>,
+    persist: crate::settings::Persistence,
     shell_integration: Option<crate::ShellIntegration>,
     events: Sender<ServerEvent>,
     sessions: Sessions,
@@ -45,7 +48,9 @@ impl Registry {
     pub fn new(settings: ServerSettings, events: Sender<ServerEvent>) -> Self {
         Self {
             archive: Archive::memory(settings.history_budget_bytes),
-            settings,
+            settings: Mutex::new(settings),
+            settings_write: Mutex::new(()),
+            persist: crate::settings::Persistence(Box::new(|_| Ok(()))),
             shell_integration: None,
             events,
             sessions: Sessions::default(),
@@ -71,8 +76,40 @@ impl Registry {
         self
     }
 
-    pub fn settings(&self) -> &ServerSettings {
-        &self.settings
+    pub fn settings(&self) -> ServerSettings {
+        self.settings
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    #[must_use]
+    pub fn with_settings_persistence(
+        mut self,
+        persist: impl Fn(&ServerSettings) -> io::Result<()> + Send + Sync + 'static,
+    ) -> Self {
+        self.persist = crate::settings::Persistence(Box::new(persist));
+        self
+    }
+
+    pub fn write_settings(&self, settings: ServerSettings) -> Result<(), ServerError> {
+        settings.validate()?;
+        let _write = self
+            .settings_write
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        (self.persist.0)(&settings).map_err(|error| {
+            ServerError::new(
+                ErrorCode::BadRequest,
+                format!("Could not save server settings: {error}"),
+            )
+        })?;
+        *self.settings.lock().unwrap_or_else(PoisonError::into_inner) = settings;
+        Ok(())
+    }
+
+    pub fn request_stop(&self) {
+        let _ = self.events.send(ServerEvent::StopRequested);
     }
 
     pub fn create(&self, directory: &Path, size: Size) -> Result<SessionInfo, ServerError> {
@@ -104,7 +141,8 @@ impl Registry {
                 break id;
             }
         };
-        let budget = usize::try_from(self.settings.history_budget_bytes).unwrap_or(usize::MAX);
+        let settings = self.settings();
+        let budget = usize::try_from(settings.history_budget_bytes).unwrap_or(usize::MAX);
         let info = SessionInfo {
             id,
             directory: ServerPath(directory.as_os_str().as_bytes().to_vec()),
@@ -113,7 +151,7 @@ impl Registry {
         let events = self.events.clone();
         let completed = Arc::clone(&self.completed);
         let handle = spawn_shell(
-            &self.settings,
+            &settings,
             self.shell_integration.as_ref(),
             directory,
             session::pty_size(size),

@@ -37,7 +37,9 @@ fn terminal_menu_focuses_the_clicked_split_and_routes_clipboard_actions(cx: &mut
         }
     });
     cx.run_until_parked();
-    let terminal = view.read_with(cx, |model, _| model.grids[&first].view.clone());
+    let terminal = view.read_with(cx, |model, _| {
+        model.terminal(&first).expect("terminal").view.clone()
+    });
     terminal.update(cx, |pane, cx| {
         pane.apply(
             &muxy_protocol::ScreenFrame {
@@ -68,7 +70,13 @@ fn terminal_menu_focuses_the_clicked_split_and_routes_clipboard_actions(cx: &mut
     cx.run_until_parked();
     assert!(terminal.read_with(cx, |pane, _| pane.selection.is_some()));
     assert!(view.read_with(cx, |model, cx| {
-        model.grids[&second].view.read(cx).selection.is_none()
+        model
+            .terminal(&second)
+            .expect("terminal")
+            .view
+            .read(cx)
+            .selection
+            .is_none()
     }));
     cx.simulate_keystrokes("cmd-c");
     assert!(cx.read(|cx| {
@@ -131,7 +139,9 @@ fn prompt_shortcuts_and_command_output_menu_act_on_the_focused_terminal(cx: &mut
     let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
     let terminal = view.update(cx, |model, cx| {
         model.new_tab(cx);
-        model.grids[&model.active_pane().expect("pane")]
+        model
+            .terminal(&model.active_pane().expect("pane"))
+            .expect("terminal")
             .view
             .clone()
     });
@@ -227,7 +237,9 @@ fn run_shell_integration_live_walkthrough(cx: &mut TestAppContext) -> Result {
         active_grid(model, cx).is_some_and(|grid| !grid.prompts.is_empty())
     })?;
     let terminal = view.read_with(cx, |model, _| {
-        model.grids[&model.active_pane().expect("pane")]
+        model
+            .terminal(&model.active_pane().expect("pane"))
+            .expect("terminal")
             .view
             .clone()
     });

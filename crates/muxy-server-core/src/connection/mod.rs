@@ -52,7 +52,7 @@ pub fn serve(
                     Ok(ServerEvent::SessionEnded { id, reason }) => {
                         output.session_ended(id, reason);
                     }
-                    Err(RecvTimeoutError::Timeout) => {}
+                    Ok(ServerEvent::StopRequested) | Err(RecvTimeoutError::Timeout) => {}
                     Err(RecvTimeoutError::Disconnected) => {
                         output.close();
                         break;

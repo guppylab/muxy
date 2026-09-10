@@ -70,8 +70,8 @@ tab. Sessions that no pane references are listed so the user can attach one to
 a new pane or end it.
 
 Quitting the app leaves sessions running. End All Sessions and Quit ends all
-live sessions on the current-device server and clears the app's terminal tabs
-and their saved content before quitting.
+live sessions on the current-device server and clears terminal panes and their
+saved content before quitting. App-only panes remain, including in mixed tabs.
 
 ## Navigation and visible context
 
@@ -128,9 +128,11 @@ and does not depend on any server being available. A settings pane may expose:
 - settings owned by the main app; and
 - settings for a selected server, defaulting to the current-device server.
 
-App settings live in one configuration file that is their source of truth; the
-settings pane edits that file. Keyboard shortcuts are settings: every action is
+App preferences live in `settings.toml`, terminal preferences in `ghostty.conf`,
+and custom themes in `themes/`. The settings pane edits these sources and applies
+changes without relaunching. Keyboard shortcuts are settings: every action is
 registered in one shared system that the user may override. This includes app
 actions, text fields, menus, pickers, and buttons, with their contexts and aliases.
 Ordinary terminal keystrokes remain terminal input. Server settings belong to
-the server.
+the server. Stopping or restarting it requires confirmation and ends its running
+sessions without discarding saved terminal output.

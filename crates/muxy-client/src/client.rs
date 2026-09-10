@@ -129,6 +129,30 @@ impl Client {
         !self.shared.pending.is_closed()
     }
 
+    pub fn read_server_settings(&self) -> Result<muxy_protocol::ServerSettingsDoc, ClientError> {
+        match self.request(RequestBody::ReadServerSettings)? {
+            ReplyBody::ServerSettings(settings) => Ok(settings),
+            other => Err(ClientError::UnexpectedReply(other)),
+        }
+    }
+
+    pub fn write_server_settings(
+        &self,
+        settings: muxy_protocol::ServerSettingsDoc,
+    ) -> Result<(), ClientError> {
+        match self.request(RequestBody::WriteServerSettings(settings))? {
+            ReplyBody::ServerSettingsWritten => Ok(()),
+            other => Err(ClientError::UnexpectedReply(other)),
+        }
+    }
+
+    pub fn stop_server(&self) -> Result<(), ClientError> {
+        match self.request(RequestBody::StopServer)? {
+            ReplyBody::ServerStopping => Ok(()),
+            other => Err(ClientError::UnexpectedReply(other)),
+        }
+    }
+
     pub fn list_sessions(&self) -> Result<Vec<SessionInfo>, ClientError> {
         match self.request(RequestBody::ListSessions)? {
             ReplyBody::Sessions(sessions) => Ok(sessions),

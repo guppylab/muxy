@@ -91,6 +91,30 @@ fn unavailable(error: &ClientError) -> bool {
     matches!(error, ClientError::Io(error) if matches!(error.kind(), io::ErrorKind::ConnectionRefused | io::ErrorKind::NotFound))
 }
 
+pub(crate) fn stop_server(client: &Client, socket: &Path) -> Result<(), ClientError> {
+    use std::os::unix::fs::MetadataExt;
+    let identity =
+        std::fs::symlink_metadata(socket).map(|metadata| (metadata.dev(), metadata.ino()))?;
+    client.stop_server()?;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match std::fs::symlink_metadata(socket) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error.into()),
+            Ok(metadata) if (metadata.dev(), metadata.ino()) != identity => return Ok(()),
+            Ok(_) => {}
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "Server has not finished stopping. Use Connect after shutdown completes.",
+            )
+            .into());
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

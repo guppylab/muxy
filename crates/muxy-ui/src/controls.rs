@@ -192,7 +192,14 @@ pub fn picker(
         .find(|choice| choice.value == selected)
         .map(|choice| choice.label.clone())
         .unwrap_or_default();
-    let field = picker_trigger(style, id, &label, popover.is_some(), on_toggle);
+    let field = picker_trigger(
+        style,
+        id,
+        &label,
+        Some(CONTROL_WIDTH),
+        popover.is_some(),
+        on_toggle,
+    );
 
     let Some(popover) = popover else {
         return div()
@@ -230,6 +237,7 @@ pub fn picker_trigger(
     style: Style,
     id: &str,
     label: &str,
+    width: Option<f32>,
     open: bool,
     on_toggle: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> AnyElement {
@@ -241,7 +249,13 @@ pub fn picker_trigger(
         .items_center()
         .justify_between()
         .gap(metrics.spacing3())
-        .w(metrics.scaled(CONTROL_WIDTH))
+        .map(|field| {
+            if let Some(width) = width {
+                field.w(metrics.scaled(width))
+            } else {
+                field.w_full()
+            }
+        })
         .h(metrics.control_medium())
         .px(metrics.spacing4())
         .rounded(metrics.radius_sm())

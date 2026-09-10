@@ -34,8 +34,7 @@ impl AppModel {
         cx: &mut Context<Self>,
     ) {
         let Some(context) = self
-            .grids
-            .get(&pane)
+            .terminal(&pane)
             .and_then(|pane| pane.view.read(cx).link_context())
         else {
             return;
@@ -64,7 +63,7 @@ impl AppModel {
         position: gpui::Point<gpui::Pixels>,
         cx: &mut Context<Self>,
     ) {
-        let Some(pane) = self.grids.get(&id) else {
+        let Some(pane) = self.terminal(&id) else {
             return;
         };
         let pane = pane.view.read(cx);

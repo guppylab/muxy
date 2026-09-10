@@ -438,3 +438,62 @@ fn duplicate_projects_and_cross_project_tab_or_pane_ids_are_rejected() -> TestRe
     assert!(serde_json::from_value::<AppState>(invalid).is_err());
     Ok(())
 }
+
+#[test]
+fn settings_dedupe_per_project_restore_in_splits_and_never_create_sessions() -> TestResult {
+    let mut state = AppState::bootstrap()?;
+    let home = state.home().id;
+    let settings = state.open_settings_tab(home)?;
+    let pane = state.window().active_pane.ok_or("settings pane")?;
+    assert_eq!(state.open_settings_tab(home)?, settings);
+    assert_eq!(state.home().tabs.len(), 1);
+    assert_eq!(state.home().tabs[0].panes[0].content, PaneContent::Settings);
+    assert!(
+        state
+            .set_pane_session(pane, Some(SessionId::new(20).ok_or("session")?))
+            .is_err()
+    );
+    let terminal = state.split_pane(pane, muxy_app_core::Direction::Right)?;
+    state.toggle_zoom(terminal)?;
+    assert_eq!(state.open_settings_tab(home)?, settings);
+    assert_eq!(state.home().tabs[0].zoomed, Some(pane));
+    assert_eq!(state.home().tabs[0].title(Some(pane)), "Settings");
+    let project = state.add_project(std::env::temp_dir())?;
+    assert_ne!(state.open_settings_tab(project)?, settings);
+    let restored: AppState = serde_json::from_slice(&serde_json::to_vec(&state)?)?;
+    assert_eq!(restored, state);
+    let plan = muxy_app_core::restore::plan(&restored, &[]);
+    assert_eq!(plan.create, vec![terminal]);
+    assert!(plan.attach.is_empty());
+    assert!(plan.retain.is_empty());
+    Ok(())
+}
+
+#[test]
+fn terminal_cleanup_preserves_settings_even_in_missing_projects() -> TestResult {
+    let directory = std::env::temp_dir().join(format!("muxy-settings-{}", ProjectId::new()));
+    std::fs::create_dir(&directory)?;
+    let mut state = AppState::bootstrap()?;
+    let project = state.add_project(directory.clone())?;
+    state.open_settings_tab(project)?;
+    let settings = state.window().active_pane.ok_or("settings pane")?;
+    state.split_pane(settings, muxy_app_core::Direction::Right)?;
+    state.open_terminal_tab(project)?;
+    std::fs::remove_dir(&directory)?;
+    state.refresh_project_statuses();
+    assert_eq!(
+        state.project(project).ok_or("project")?.status(),
+        muxy_app_core::ProjectStatus::Missing
+    );
+    state.clear_terminal_panes()?;
+    let tabs = &state.project(project).ok_or("project")?.tabs;
+    assert_eq!(tabs.len(), 1);
+    assert_eq!(tabs[0].panes.len(), 1);
+    assert_eq!(tabs[0].panes[0].id, settings);
+    assert_eq!(state.window().active_pane, Some(settings));
+    assert_eq!(
+        serde_json::from_value::<AppState>(serde_json::to_value(&state)?)?,
+        state
+    );
+    Ok(())
+}

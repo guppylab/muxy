@@ -255,6 +255,41 @@ impl AppState {
         Ok(sessions)
     }
 
+    pub fn open_settings_tab(&mut self, project: ProjectId) -> Result<TabId, AppError> {
+        let existing = self
+            .project(project)
+            .ok_or(AppError::UnknownProject(project))?
+            .tabs
+            .iter()
+            .find_map(|tab| {
+                tab.panes
+                    .iter()
+                    .find(|pane| pane.content == PaneContent::Settings)
+                    .map(|pane| (tab.id, pane.id))
+            });
+        let (id, pane) = if let Some(existing) = existing {
+            existing
+        } else {
+            let tab = Tab::settings();
+            let ids = (tab.id, tab.panes[0].id);
+            self.project_mut(project)?.tabs.push(tab);
+            ids
+        };
+        self.window.selected_tab.insert(project, id);
+        self.window.current_project = project;
+        self.window.activate(Some(pane));
+        let tab = self
+            .project_mut(project)?
+            .tabs
+            .iter_mut()
+            .find(|tab| tab.id == id)
+            .ok_or(AppError::UnknownTab { project, tab: id })?;
+        if tab.zoomed.is_some() {
+            tab.zoomed = Some(pane);
+        }
+        Ok(id)
+    }
+
     pub fn open_terminal_tab(&mut self, project: ProjectId) -> Result<TabId, AppError> {
         self.project_mut(project)?.require_available()?;
         let tab = Tab::terminal();
@@ -303,6 +338,26 @@ impl AppState {
     }
 
     pub fn close_pane(&mut self, pane: PaneId) -> Result<(), AppError> {
+        self.pane_tab_mut(pane)?;
+        self.remove_pane(pane)
+    }
+
+    pub fn clear_terminal_panes(&mut self) -> Result<(), AppError> {
+        let terminals: Vec<_> = self
+            .projects
+            .iter()
+            .flat_map(|project| &project.tabs)
+            .flat_map(|tab| &tab.panes)
+            .filter(|pane| matches!(pane.content, PaneContent::Terminal { .. }))
+            .map(|pane| pane.id)
+            .collect();
+        for pane in terminals {
+            self.remove_pane(pane)?;
+        }
+        Ok(())
+    }
+
+    fn remove_pane(&mut self, pane: PaneId) -> Result<(), AppError> {
         let (project, tab) = self
             .projects
             .iter()
@@ -315,7 +370,12 @@ impl AppState {
                 })
             })
             .ok_or(AppError::UnknownPane(pane))?;
-        let target = self.tab_mut(tab)?;
+        let target = self
+            .project_mut(project)?
+            .tabs
+            .iter_mut()
+            .find(|item| item.id == tab)
+            .ok_or(AppError::UnknownTab { project, tab })?;
         if target.panes.len() == 1 {
             return self.close_tab(project, tab);
         }

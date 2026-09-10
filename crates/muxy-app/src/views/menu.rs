@@ -144,7 +144,7 @@ impl AppModel {
             | Command::TerminalPaste(id)
             | Command::TerminalSelectAll(id)
             | Command::TerminalSelectCommandOutput(id) => {
-                if let Some(pane) = self.grids.get(&id) {
+                if let Some(pane) = self.terminal(&id) {
                     pane.view.update(cx, |pane, cx| match command {
                         Command::TerminalCopy(_) => pane.copy_selection(cx),
                         Command::TerminalPaste(_) => pane.paste_clipboard(cx),

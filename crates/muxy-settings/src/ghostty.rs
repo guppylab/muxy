@@ -1,4 +1,5 @@
 use std::collections::{HashSet, VecDeque};
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -60,7 +61,17 @@ impl TerminalSettings {
             };
             read_or_create(path, &defaults)?;
         }
+        Self::resolve(path).map(|(settings, _)| settings)
+    }
+
+    /// Supported keys supplied by a config-file include, including equal-value overrides.
+    pub fn included_keys(path: &Path) -> Result<HashSet<String>> {
+        Self::resolve(path).map(|(_, keys)| keys)
+    }
+
+    fn resolve(path: &Path) -> Result<(Self, HashSet<String>)> {
         let mut settings = Self::default();
+        let mut included_keys = HashSet::new();
         let mut families = Vec::new();
         let mut pending = VecDeque::from([(path.to_owned(), false, 0)]);
         let mut loaded = HashSet::new();
@@ -78,7 +89,11 @@ impl TerminalSettings {
             }
             pending.extend(
                 settings
-                    .read(&path, &mut families)?
+                    .read(
+                        &path,
+                        &mut families,
+                        (depth > 0).then_some(&mut included_keys),
+                    )?
                     .into_iter()
                     .map(|(path, optional)| (path, optional, depth + 1)),
             );
@@ -86,10 +101,15 @@ impl TerminalSettings {
         if !families.is_empty() {
             settings.font_families = families;
         }
-        Ok(settings)
+        Ok((settings, included_keys))
     }
 
-    fn read(&mut self, path: &Path, families: &mut Vec<String>) -> Result<Vec<(PathBuf, bool)>> {
+    fn read(
+        &mut self,
+        path: &Path,
+        families: &mut Vec<String>,
+        mut included_keys: Option<&mut HashSet<String>>,
+    ) -> Result<Vec<(PathBuf, bool)>> {
         let source = fs::read_to_string(path)
             .map_err(|error| Error::new(path.display().to_string(), error))?;
         let mut includes = Vec::new();
@@ -108,6 +128,11 @@ impl TerminalSettings {
                 "font-family" | "font-size" | "adjust-cell-height" | "config-file"
             ) {
                 continue;
+            }
+            if key != "config-file"
+                && let Some(keys) = included_keys.as_deref_mut()
+            {
+                keys.insert(key.to_owned());
             }
             let context = format!("{context} {key}");
             let value = value
@@ -155,6 +180,90 @@ impl TerminalSettings {
         Ok(includes)
     }
 
+    /// Rewrites supported values while preserving includes, comments, and unrelated keys.
+    /// Returns the effective settings, including values supplied by included files.
+    pub fn save(&self, path: &Path) -> Result<Self> {
+        if !self.font_size.is_finite() || !(1.0..=256.0).contains(&self.font_size) {
+            return Err(Error::new("font-size", "must be between 1 and 256 points"));
+        }
+        let height = self.cell_height.to_string();
+        parse_height(&height)?;
+        for family in &self.font_families {
+            if family.is_empty() || family.chars().any(|ch| ch.is_control() || ch == '"') {
+                return Err(Error::new(
+                    "font-family",
+                    "must be a nonempty font name without quotes or control characters",
+                ));
+            }
+        }
+        let source = match fs::read_to_string(path) {
+            Ok(source) => source,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(error) => return Err(Error::new("ghostty.conf", error)),
+        };
+        let previous = if path.exists() {
+            Some(Self::resolve(path)?.0)
+        } else {
+            None
+        };
+        let families_changed = previous
+            .as_ref()
+            .is_none_or(|old| old.font_families != self.font_families);
+        let size_changed = previous
+            .as_ref()
+            .is_none_or(|old| old.font_size.to_bits() != self.font_size.to_bits());
+        let height_changed = previous
+            .as_ref()
+            .is_none_or(|old| old.cell_height != self.cell_height);
+        let mut updated = String::new();
+        for line in source.split_inclusive('\n') {
+            let key = line
+                .trim()
+                .split_once('=')
+                .map_or(line.trim(), |(key, _)| key.trim());
+            let rewrite = match key {
+                "font-family" => families_changed,
+                "font-size" => size_changed,
+                "adjust-cell-height" => height_changed,
+                _ => false,
+            };
+            if !rewrite {
+                updated.push_str(line);
+            }
+        }
+        if !updated.is_empty() && !updated.ends_with('\n') {
+            updated.push('\n');
+        }
+        if families_changed {
+            updated.push_str("font-family =\n");
+            for family in &self.font_families {
+                let _ = writeln!(updated, "font-family = \"{family}\"");
+            }
+        }
+        if size_changed {
+            let _ = writeln!(updated, "font-size = {}", self.font_size);
+        }
+        if height_changed {
+            let _ = writeln!(updated, "adjust-cell-height = {height}");
+        }
+        // Resolve before replacing the source, so a broken include never reports a saved value.
+        let temporary = path.with_file_name(format!(
+            ".ghostty-{}-{}.conf",
+            std::process::id(),
+            NEXT_SAVE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        crate::appearance::atomic_write(&temporary, &updated)
+            .map_err(|error| Error::new("ghostty.conf", error))?;
+        let result = Self::load_with_seed(&temporary, None).and_then(|effective| {
+            fs::rename(&temporary, path).map_err(|error| Error::new("ghostty.conf", error))?;
+            Ok(effective)
+        });
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
+        result
+    }
+
     pub fn zoom(&mut self, delta: f32) {
         self.font_size = (self.font_size + delta).clamp(1.0, 256.0);
     }
@@ -170,7 +279,7 @@ fn config_value(value: &str) -> Result<&str> {
     }
 }
 
-fn parse_height(value: &str) -> Result<CellHeight> {
+pub(crate) fn parse_height(value: &str) -> Result<CellHeight> {
     if value.is_empty() || value == "0" {
         return Ok(CellHeight::Natural);
     }
@@ -196,4 +305,23 @@ fn parse_height(value: &str) -> Result<CellHeight> {
         ));
     }
     Ok(CellHeight::Pixels(amount))
+}
+
+static NEXT_SAVE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+impl std::fmt::Display for CellHeight {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Natural => f.write_str("0"),
+            Self::Pixels(value) => write!(f, "{value}"),
+            Self::Percent(value) => write!(f, "{value}%"),
+        }
+    }
+}
+
+impl std::str::FromStr for CellHeight {
+    type Err = Error;
+    fn from_str(value: &str) -> Result<Self> {
+        parse_height(value.trim())
+    }
 }

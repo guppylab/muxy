@@ -96,6 +96,7 @@ fn validate_mouse(event: &MouseEvent) -> Result<(), ErrorCode> {
 
 fn validate_request(body: &RequestBody) -> Result<(), ErrorCode> {
     match body {
+        RequestBody::WriteServerSettings(settings) => settings.validate(),
         RequestBody::Search {
             source,
             query,
@@ -121,7 +122,9 @@ fn validate_request(body: &RequestBody) -> Result<(), ErrorCode> {
             validate_page_size(*max_rows)
         }
         RequestBody::SavedHistoryPage { max_rows, .. } => validate_page_size(*max_rows),
-        RequestBody::ListSessions
+        RequestBody::ReadServerSettings
+        | RequestBody::StopServer
+        | RequestBody::ListSessions
         | RequestBody::EndSession(_)
         | RequestBody::Detach(_)
         | RequestBody::Ping
@@ -133,6 +136,7 @@ fn validate_request(body: &RequestBody) -> Result<(), ErrorCode> {
 
 fn validate_reply(body: &ReplyBody) -> Result<(), ErrorCode> {
     match body {
+        ReplyBody::ServerSettings(settings) => settings.validate(),
         ReplyBody::SearchPage(page) => {
             if page.matches.len() > 500
                 || page.scanned_rows > 2000
@@ -188,7 +192,9 @@ fn validate_reply(body: &ReplyBody) -> Result<(), ErrorCode> {
             )
         }
         ReplyBody::SavedScreen(screen) => validate_saved_screen(screen),
-        ReplyBody::SessionEnded
+        ReplyBody::ServerSettingsWritten
+        | ReplyBody::ServerStopping
+        | ReplyBody::SessionEnded
         | ReplyBody::Detached
         | ReplyBody::Resized
         | ReplyBody::TerminalColorsSet

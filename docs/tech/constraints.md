@@ -68,9 +68,9 @@ cost time to learn.
 ## Shell startup
 
 The server installs private hooks beside its socket. zsh and fish load them
-without editing user startup files. `shell_integration = false` in `server.toml`
-disables them for new sessions after a server restart. Shell-native integration,
-such as fish 4's prompt marks, is left alone.
+without editing user startup files. Disabling shell integration in Settings applies
+to new sessions immediately; manual changes to `server.toml` require a restart.
+Shell-native integration, such as fish 4's prompt marks, is left alone.
 
 Bash keeps its normal login startup. To opt in, source the hook from the
 interactive startup file your Bash profile loads:

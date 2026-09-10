@@ -91,9 +91,14 @@ impl Settings {
         )?;
         let settings: Self = toml::from_str(&source)
             .map_err(|error| Error::new(path.display().to_string(), error))?;
+        settings.validate()?;
+        Ok(settings)
+    }
+
+    pub fn validate(&self) -> Result<()> {
         for (name, value, minimum) in [
-            ("width", settings.window.default_size[0], 640.0),
-            ("height", settings.window.default_size[1], 400.0),
+            ("width", self.window.default_size[0], 640.0),
+            ("height", self.window.default_size[1], 400.0),
         ] {
             if !value.is_finite() || !(minimum..=16384.0).contains(&value) {
                 return Err(Error::new(
@@ -102,7 +107,23 @@ impl Settings {
                 ));
             }
         }
-        Ok(settings)
+        Ok(())
+    }
+
+    pub fn save_window(&self, path: &Path) -> Result<()> {
+        self.validate()?;
+        crate::appearance::save_section(path, "window", &self.window)
+            .map_err(|error| Error::new("window", error))
+    }
+
+    pub fn save_clipboard(&self, path: &Path) -> Result<()> {
+        crate::appearance::save_section(path, "clipboard", &self.clipboard)
+            .map_err(|error| Error::new("clipboard", error))
+    }
+
+    pub fn save_panes(&self, path: &Path) -> Result<()> {
+        crate::appearance::save_section(path, "panes", &self.panes)
+            .map_err(|error| Error::new("panes", error))
     }
 }
 

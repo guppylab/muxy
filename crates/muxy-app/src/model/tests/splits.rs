@@ -60,13 +60,22 @@ fn zoom_and_tab_switch_detach_only_hidden_leaves_and_restore_all(cx: &mut TestAp
         model.toggle_zoom_pane(cx);
         assert_eq!(model.grids.len(), 3);
         assert_eq!(
-            model.grids[&panes[2]].view.read(cx).channel(),
+            model
+                .terminal(&panes[2])
+                .expect("terminal")
+                .view
+                .read(cx)
+                .channel(),
             Some(ChannelId(3))
         );
         for pane in &panes {
-            model.grids[pane].view.update(cx, |pane, cx| {
-                pane.set_viewport(Size { cols: 30, rows: 12 }, cx);
-            });
+            model
+                .terminal(pane)
+                .expect("terminal")
+                .view
+                .update(cx, |pane, cx| {
+                    pane.set_viewport(Size { cols: 30, rows: 12 }, cx);
+                });
         }
         model.ensure_visible(cx);
         let attached: Vec<_> = requests
@@ -120,7 +129,8 @@ fn zoom_controls_frame_the_pane_and_restore_the_split_layout(cx: &mut TestAppCon
     });
     cx.run_until_parked();
     let original_geometry = view.read_with(cx, |model, cx| {
-        model.grids[&panes[2]].view.read(cx).geometry
+        let pane = model.terminal(&panes[2]).expect("terminal");
+        pane.view.read(cx).geometry
     });
     assert!(cx.debug_bounds("zoomed-pane-frame").is_none());
     for (selector, zoomed) in [("maximize-pane", true), ("restore-pane", false)] {
@@ -147,8 +157,19 @@ fn zoom_controls_frame_the_pane_and_restore_the_split_layout(cx: &mut TestAppCon
             assert_eq!(model.state.home().tabs[0].layout, layout);
             assert_eq!(model.active_pane(), Some(panes[2]));
             assert_eq!(model.grids.len(), if zoomed { 1 } else { 3 });
-            assert!(model.grids[&panes[2]].view.read(cx).focused);
-            for (id, pane) in &model.grids {
+            assert!(
+                model
+                    .terminal(&panes[2])
+                    .expect("terminal")
+                    .view
+                    .read(cx)
+                    .focused
+            );
+            for (id, pane) in model
+                .grids
+                .iter()
+                .filter_map(|(id, pane)| pane.terminal().map(|pane| (id, pane)))
+            {
                 assert_eq!(
                     pane.view.read(cx).corner_radius,
                     if zoomed && *id == panes[2] {
@@ -169,7 +190,9 @@ fn zoom_controls_frame_the_pane_and_restore_the_split_layout(cx: &mut TestAppCon
         } else {
             assert!(cx.debug_bounds("split-divider-[]").is_some());
             assert_eq!(
-                view.read_with(cx, |model, cx| model.grids[&panes[2]]
+                view.read_with(cx, |model, cx| model
+                    .terminal(&panes[2])
+                    .expect("terminal")
                     .view
                     .read(cx)
                     .geometry),
@@ -312,7 +335,11 @@ fn shortcuts_split_focus_zoom_and_close_the_expected_pane(cx: &mut TestAppContex
         cx.simulate_keystrokes(shortcut);
         view.read_with(cx, |model, cx| {
             assert_eq!(model.active_pane(), Some(expected));
-            for (id, pane) in &model.grids {
+            for (id, pane) in model
+                .grids
+                .iter()
+                .filter_map(|(id, pane)| pane.terminal().map(|pane| (id, pane)))
+            {
                 assert_eq!(pane.view.read(cx).focused, *id == expected);
             }
         });
@@ -488,7 +515,9 @@ fn divider_drag_persists_ratios_and_click_focus_routes_input(cx: &mut TestAppCon
         assert_eq!(store::load(&model.path).expect("saved"), model.state);
     });
     let position = view.read_with(cx, |model, cx| {
-        model.grids[&panes[0]]
+        model
+            .terminal(&panes[0])
+            .expect("terminal")
             .view
             .read(cx)
             .geometry
@@ -527,6 +556,7 @@ fn divider_drag_persists_ratios_and_click_focus_routes_input(cx: &mut TestAppCon
             model
                 .grids
                 .values()
+                .filter_map(PaneView::terminal)
                 .all(|pane| !pane.view.read(cx).native_visible)
         );
     });
@@ -546,6 +576,7 @@ fn wait_all_panes(cx: &mut VisualTestContext, view: &Entity<AppModel>, count: us
             && model
                 .grids
                 .values()
+                .filter_map(PaneView::terminal)
                 .all(|pane| pane.view.read(cx).channel().is_some())
     })
 }

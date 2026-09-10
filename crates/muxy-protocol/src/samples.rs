@@ -96,6 +96,7 @@ impl Message {
         samples.extend(input_samples());
         samples.extend(search_samples(session, channel));
         samples.extend(color_samples());
+        samples.extend(settings_samples());
         samples.push(Self::Metadata(MetadataEvent::CursorBlinking(true)));
         samples.push(Self::Metadata(MetadataEvent::Links {
             seq: 1,
@@ -234,4 +235,34 @@ fn input_samples() -> [Message; 2] {
             focus_events: true,
         })),
     ]
+}
+
+fn settings_samples() -> Vec<Message> {
+    let settings = crate::ServerSettingsDoc {
+        default_shell: Some(ServerPath(b"/bin/bash".to_vec())),
+        history_budget_bytes: 16 * 1024 * 1024,
+        shell_integration: true,
+    };
+    let mut messages = Vec::new();
+    for body in [
+        RequestBody::ReadServerSettings,
+        RequestBody::WriteServerSettings(settings.clone()),
+        RequestBody::StopServer,
+    ] {
+        messages.push(Message::Request {
+            id: RequestId(25),
+            body,
+        });
+    }
+    for body in [
+        ReplyBody::ServerSettings(settings),
+        ReplyBody::ServerSettingsWritten,
+        ReplyBody::ServerStopping,
+    ] {
+        messages.push(Message::Reply {
+            id: RequestId(25),
+            body,
+        });
+    }
+    messages
 }

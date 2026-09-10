@@ -43,6 +43,9 @@ pub enum RequestBody {
         max_results: u16,
     },
     SetTerminalColors(TerminalColors),
+    ReadServerSettings,
+    WriteServerSettings(ServerSettingsDoc),
+    StopServer,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -71,6 +74,9 @@ pub enum ReplyBody {
     HistoryPage(HistoryPage),
     SearchPage(SearchPage),
     TerminalColorsSet,
+    ServerSettings(ServerSettingsDoc),
+    ServerSettingsWritten,
+    ServerStopping,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -90,4 +96,27 @@ pub enum ErrorCode {
     SavedContentUnavailable,
     StaleHistoryCursor,
     HistoryUnavailable,
+}
+
+/// Server-owned configuration, independent of its storage format.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ServerSettingsDoc {
+    pub default_shell: Option<ServerPath>,
+    pub history_budget_bytes: u64,
+    pub shell_integration: bool,
+}
+
+impl ServerSettingsDoc {
+    pub fn validate(&self) -> Result<(), ErrorCode> {
+        if self.history_budget_bytes > 64 * 1024 * 1024 * 1024 {
+            return Err(ErrorCode::BadRequest);
+        }
+        if let Some(shell) = &self.default_shell {
+            crate::validate_path(shell)?;
+            if !shell.0.starts_with(b"/") || shell.0.contains(&0) {
+                return Err(ErrorCode::BadPath);
+            }
+        }
+        Ok(())
+    }
 }

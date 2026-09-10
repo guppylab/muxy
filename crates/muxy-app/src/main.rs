@@ -8,11 +8,13 @@ mod theme;
 mod views {
     pub(crate) mod confirm;
     pub(crate) mod disconnected;
+    pub(crate) mod font_picker;
     pub(crate) mod menu;
     pub(crate) mod overlays;
     pub(crate) mod project_editor;
     pub(crate) mod project_menu;
     pub(crate) mod project_picker;
+    pub(crate) mod settings;
     pub(crate) mod sidebar;
     pub(crate) mod splits;
     pub(crate) mod status_bar;
@@ -47,9 +49,9 @@ use views::workspace::{
     AddProject, ClosePane, CloseTab, DecreaseFontSize, EndAllSessionsAndQuit, Find, FindNext,
     FindPrevious, FocusPaneDown, FocusPaneLeft, FocusPaneRight, FocusPaneUp, HideApp, HideOthers,
     IncreaseFontSize, Minimize, NewHomeTab, NewTab, NextProject, NextPrompt, NextTab,
-    OpenConfiguration, PreviousProject, PreviousPrompt, PreviousTab, Quit, SelectCommandOutput,
-    SelectTab, ShowAll, SplitDown, SplitRight, ToggleFullScreen, ToggleSidebar, ToggleThemePicker,
-    ToggleZoomPane, Zoom, bind_keys,
+    OpenConfiguration, OpenSettings, PreviousProject, PreviousPrompt, PreviousTab, Quit,
+    SelectCommandOutput, SelectTab, ShowAll, SplitDown, SplitRight, ToggleFullScreen,
+    ToggleSidebar, ToggleThemePicker, ToggleZoomPane, Zoom, bind_keys,
 };
 
 fn main() -> ExitCode {
@@ -168,6 +170,7 @@ fn menus() -> Vec<Menu> {
         Menu {
             name: "Muxy Alpha".into(),
             items: vec![
+                MenuItem::action("Settings…", OpenSettings),
                 MenuItem::action("Open Configuration…", OpenConfiguration),
                 MenuItem::separator(),
                 MenuItem::os_submenu("Services", SystemMenuType::Services),

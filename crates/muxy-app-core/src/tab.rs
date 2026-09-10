@@ -74,6 +74,11 @@ impl Tab {
     }
 
     pub fn title(&self, active: Option<PaneId>) -> &str {
+        self.displayed_pane(active)
+            .map_or("", |pane| pane.title.as_str())
+    }
+
+    pub fn displayed_pane(&self, active: Option<PaneId>) -> Option<&Pane> {
         self.panes
             .iter()
             .find(|pane| Some(pane.id) == active)
@@ -81,14 +86,21 @@ impl Tab {
                 let first = self.layout.leaves().first().copied();
                 self.panes.iter().find(|pane| Some(pane.id) == first)
             })
-            .map_or("", |pane| &pane.title)
     }
 
     pub(crate) fn terminal() -> Self {
+        Self::with_content(PaneContent::Terminal { session: None }, "Terminal")
+    }
+
+    pub(crate) fn settings() -> Self {
+        Self::with_content(PaneContent::Settings, "Settings")
+    }
+
+    fn with_content(content: PaneContent, title: &str) -> Self {
         let pane = Pane {
             id: PaneId::new(),
-            title: "Terminal".into(),
-            content: PaneContent::Terminal { session: None },
+            title: title.into(),
+            content,
         };
         Self {
             id: TabId::new(),

@@ -53,7 +53,10 @@ impl Fixture {
     }
 
     fn ended(&self, id: SessionId) -> Result<ExitReason, Box<dyn Error>> {
-        let ServerEvent::SessionEnded { id: ended, reason } = self.events.recv_timeout(TIMEOUT)?;
+        let ServerEvent::SessionEnded { id: ended, reason } = self.events.recv_timeout(TIMEOUT)?
+        else {
+            return Err("unexpected stop request".into());
+        };
         assert_eq!(ended, id);
         Ok(reason)
     }

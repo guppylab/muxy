@@ -143,6 +143,7 @@ pub enum ShortcutId {
     PreviousPrompt,
     NextPrompt,
     SelectCommandOutput,
+    OpenSettings,
 }
 
 impl ShortcutId {
@@ -1039,5 +1040,11 @@ pub const ALL: &[Shortcut] = &[
         keys: &[],
         contexts: &[Some(WORKSPACE_CLIPBOARD_CONTEXT)],
         key_contexts: &[],
+    },
+    Shortcut {
+        id: "open_settings",
+        keys: &["cmd-,"],
+        contexts: &[None],
+        key_contexts: &[&[None]],
     },
 ];

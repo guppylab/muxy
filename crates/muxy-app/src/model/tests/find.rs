@@ -90,7 +90,9 @@ fn search_maps_reply_totals_and_keeps_frozen_highlights_separate_from_live_outpu
 }
 
 fn pane<'a>(model: &'a AppModel, cx: &'a gpui::App) -> &'a TerminalPane {
-    model.grids[&model.active_pane().expect("pane")]
+    model
+        .terminal(&model.active_pane().expect("pane"))
+        .expect("terminal")
         .view
         .read(cx)
 }
@@ -387,7 +389,9 @@ fn verify_frozen(
 ) -> Result {
     view.update(cx, |model, cx| {
         let id = model.active_pane().expect("pane");
-        model.grids[&id]
+        model
+            .terminal(&id)
+            .expect("terminal")
             .view
             .update(cx, |pane, cx| pane.scroll_rows(3.0, cx));
     });

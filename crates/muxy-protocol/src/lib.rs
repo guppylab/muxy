@@ -13,7 +13,9 @@ mod session;
 mod validate;
 mod version;
 
-pub use control::{ErrorCode, ErrorReply, ReplyBody, RequestBody, TerminalColors};
+pub use control::{
+    ErrorCode, ErrorReply, ReplyBody, RequestBody, ServerSettingsDoc, TerminalColors,
+};
 pub use ids::{CONTROL, ChannelId, RequestId, SessionId};
 pub use message::{ChannelKind, Message};
 pub use path::ServerPath;

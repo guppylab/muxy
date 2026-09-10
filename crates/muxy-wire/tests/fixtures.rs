@@ -37,6 +37,30 @@ fn generate_fixtures() -> Result<(), Box<dyn Error>> {
 fn fixture_path(message: &Message) -> PathBuf {
     let name = match message {
         Message::Request {
+            body: RequestBody::ReadServerSettings,
+            ..
+        } => "read_server_settings",
+        Message::Request {
+            body: RequestBody::WriteServerSettings(_),
+            ..
+        } => "write_server_settings",
+        Message::Request {
+            body: RequestBody::StopServer,
+            ..
+        } => "stop_server",
+        Message::Reply {
+            body: ReplyBody::ServerSettings(_),
+            ..
+        } => "server_settings",
+        Message::Reply {
+            body: ReplyBody::ServerSettingsWritten,
+            ..
+        } => "server_settings_written",
+        Message::Reply {
+            body: ReplyBody::ServerStopping,
+            ..
+        } => "server_stopping",
+        Message::Request {
             body: RequestBody::SetTerminalColors(_),
             ..
         } => "terminal_colors_request",

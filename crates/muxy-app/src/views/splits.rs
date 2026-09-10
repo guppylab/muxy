@@ -8,7 +8,7 @@ use gpui::{
 };
 use muxy_app_core::{Axis, Branch, Layout, TabId};
 
-use crate::model::AppModel;
+use crate::model::{AppModel, PaneView};
 
 #[derive(Clone, Default)]
 pub(crate) struct SplitResizeState(Rc<RefCell<Option<SplitResize>>>);
@@ -68,7 +68,7 @@ pub(crate) fn render(model: &AppModel, cx: &mut Context<AppModel>) -> Option<Any
                         .border_color(model.theme.border)
                         .shadow_md()
                         .overflow_hidden()
-                        .child(pane.view.clone()),
+                        .child(pane.element()),
                 )
                 .into_any_element(),
         );
@@ -141,10 +141,10 @@ fn node(layout: &Layout, tab: TabId, path: Vec<Branch>, model: &AppModel) -> Any
             second,
         } => (axis, ratio, first, second),
         Layout::Leaf(id) => {
-            return model.grids.get(id).map_or_else(
-                || div().size_full().into_any_element(),
-                |pane| pane.view.clone().into_any_element(),
-            );
+            return model
+                .grids
+                .get(id)
+                .map_or_else(|| div().size_full().into_any_element(), PaneView::element);
         }
     };
     let mut first_path = path.clone();

@@ -279,6 +279,30 @@ fn samples_cover_every_message_variant_once_and_use_the_right_channel() {
     for message in Message::samples() {
         let (name, channel) = match &message {
             Message::Request {
+                body: RequestBody::ReadServerSettings,
+                ..
+            } => ("ReadServerSettings", ChannelKind::Control),
+            Message::Request {
+                body: RequestBody::WriteServerSettings(_),
+                ..
+            } => ("WriteServerSettings", ChannelKind::Control),
+            Message::Request {
+                body: RequestBody::StopServer,
+                ..
+            } => ("StopServer", ChannelKind::Control),
+            Message::Reply {
+                body: ReplyBody::ServerSettings(_),
+                ..
+            } => ("ServerSettings", ChannelKind::Control),
+            Message::Reply {
+                body: ReplyBody::ServerSettingsWritten,
+                ..
+            } => ("ServerSettingsWritten", ChannelKind::Control),
+            Message::Reply {
+                body: ReplyBody::ServerStopping,
+                ..
+            } => ("ServerStopping", ChannelKind::Control),
+            Message::Request {
                 body: RequestBody::SetTerminalColors(_),
                 ..
             } => ("TerminalColorsRequest", ChannelKind::Control),
@@ -353,6 +377,12 @@ fn samples_cover_every_message_variant_once_and_use_the_right_channel() {
     assert_eq!(
         seen,
         BTreeSet::from([
+            "ReadServerSettings",
+            "WriteServerSettings",
+            "StopServer",
+            "ServerSettings",
+            "ServerSettingsWritten",
+            "ServerStopping",
             "Hello",
             "Request",
             "SearchRequest",

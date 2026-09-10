@@ -714,3 +714,135 @@ fn prompt_shortcuts_match_main_and_command_selection_can_be_bound() -> Result {
     assert!(claimed.keymap.chord(Action::PreviousPrompt).is_none());
     Ok(())
 }
+
+#[test]
+fn terminal_save_preserves_comments_unknown_keys_and_includes_and_returns_effective_values()
+-> Result {
+    let fixture = Fixture::new()?;
+    fixture.write("included.conf", "font-size = 22\n")?;
+    let path = fixture.write("ghostty.conf", "# keep this comment\r\nunknown-option = keep\r\nconfig-file = included.conf\r\nfont-family = Menlo\r\nfont-size = 13\r\nfont-size = 14\r\nadjust-cell-height = 0")?;
+    let requested = TerminalSettings {
+        font_families: vec!["SF Mono".into(), "Menlo".into()],
+        font_size: 18.0,
+        cell_height: CellHeight::Percent(10.0),
+    };
+    let effective = requested.save(&path)?;
+    assert_eq!(effective.font_size, 22.0);
+    assert_eq!(effective.font_families, requested.font_families);
+    assert_eq!(effective.cell_height, requested.cell_height);
+    let source = fs::read_to_string(&path)?;
+    assert!(source.starts_with(
+        "# keep this comment\r\nunknown-option = keep\r\nconfig-file = included.conf\r\n"
+    ));
+    assert_eq!(source.matches("font-size =").count(), 1);
+    assert_eq!(TerminalSettings::load_with_seed(&path, None)?, effective);
+    Ok(())
+}
+
+#[test]
+fn invalid_terminal_values_or_includes_leave_the_original_file_unchanged() -> Result {
+    let fixture = Fixture::new()?;
+    let path = fixture.write(
+        "ghostty.conf",
+        "# original\nfont-size = 13\nconfig-file = missing.conf\n",
+    )?;
+    let original = fs::read(&path)?;
+    assert!(TerminalSettings::default().save(&path).is_err());
+    assert_eq!(fs::read(&path)?, original);
+    for settings in [
+        TerminalSettings {
+            font_size: f32::NAN,
+            ..TerminalSettings::default()
+        },
+        TerminalSettings {
+            cell_height: CellHeight::Percent(f32::INFINITY),
+            ..TerminalSettings::default()
+        },
+        TerminalSettings {
+            font_families: vec!["Menlo\nfont-size = 32".into()],
+            ..TerminalSettings::default()
+        },
+    ] {
+        assert!(settings.save(&path).is_err());
+        assert_eq!(fs::read(&path)?, original);
+    }
+    Ok(())
+}
+
+#[test]
+fn runtime_keymap_rebinding_reset_and_persistence_preserve_contexts_and_other_sections() -> Result {
+    use muxy_core::shortcuts::ShortcutSettings;
+    let fixture = Fixture::new()?;
+    let path = fixture.0.join("settings.toml");
+    let settings = Settings::load(&path)?;
+    let custom = settings
+        .keymap
+        .with_binding("new_tab", Some("cmd-n".parse()?))?;
+    assert_eq!(custom.binding("new_home_tab"), None);
+    assert!(
+        custom
+            .with_binding("close_tab", Some("cmd-n".parse()?))
+            .is_err()
+    );
+    custom.save(&path)?;
+    let loaded = Settings::load(&path)?;
+    assert_eq!(loaded.keymap, custom);
+    assert_eq!(loaded.window, settings.window);
+    assert_eq!(
+        loaded.keymap.keys("text_input.copy", Some("TextInput")),
+        vec!["cmd-c"]
+    );
+    assert_eq!(
+        loaded
+            .keymap
+            .keys("popover.dismiss", Some("CommandPopover")),
+        vec!["escape"]
+    );
+    let reset = loaded.keymap.with_binding("new_tab", None)?;
+    reset.save(&path)?;
+    assert_eq!(Settings::load(&path)?.keymap, Keymap::default());
+    Ok(())
+}
+
+#[test]
+fn preference_sections_preserve_unrelated_values_and_validate_window_size_before_saving() -> Result
+{
+    let fixture = Fixture::new()?;
+    let path = fixture.0.join("settings.toml");
+    let mut settings = Settings::load(&path)?;
+    settings.window.default_size = [960.0, 720.0];
+    settings.save_window(&path)?;
+    settings.clipboard.copy_on_select = true;
+    settings.save_clipboard(&path)?;
+    settings.panes.new_pane_directory = muxy_settings::NewPaneDirectory::Current;
+    settings.save_panes(&path)?;
+    assert_eq!(Settings::load(&path)?, settings);
+    let original = fs::read(&path)?;
+    settings.window.default_size[0] = 200.0;
+    assert!(settings.save_window(&path).is_err());
+    assert_eq!(fs::read(path)?, original);
+    Ok(())
+}
+
+#[test]
+fn editing_terminal_values_does_not_copy_included_fonts_into_the_root() -> Result {
+    let fixture = Fixture::new()?;
+    fixture.write("included.conf", "font-family = Monaco\nfont-size = 13\n")?;
+    let path = fixture.write(
+        "ghostty.conf",
+        "font-family = Menlo\nfont-size = 13\nconfig-file = included.conf\n",
+    )?;
+    let mut settings = TerminalSettings::load_with_seed(&path, None)?;
+    assert_eq!(settings.font_families, ["Menlo", "Monaco"]);
+    let keys = TerminalSettings::included_keys(&path)?;
+    assert!(keys.contains("font-family") && keys.contains("font-size"));
+    for height in [CellHeight::Pixels(2), CellHeight::Pixels(4)] {
+        settings.cell_height = height;
+        settings = settings.save(&path)?;
+        assert_eq!(settings.font_families, ["Menlo", "Monaco"]);
+        assert!(!fs::read_to_string(&path)?.contains("font-family = Monaco"));
+    }
+    let claimed = Keymap::default().with_binding("new_tab", Some("cmd-n".parse()?))?;
+    assert!(claimed.with_binding("new_home_tab", None).is_err());
+    Ok(())
+}

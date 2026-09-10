@@ -16,6 +16,7 @@ use crate::model::AppModel;
 actions!(
     muxy,
     [
+        OpenSettings,
         NewTab,
         NewHomeTab,
         CloseTab,
@@ -69,6 +70,7 @@ pub(crate) fn bind_keys(keymap: &Keymap, cx: &mut App) {
 
 fn workspace_bindings(keymap: &impl muxy_core::shortcuts::ShortcutSettings) -> Vec<KeyBinding> {
     let mut registry = muxy_ui::shortcuts::Registry::new(keymap);
+    registry.register(ShortcutId::OpenSettings, &OpenSettings);
     registry.register(ShortcutId::NewHomeTab, &NewHomeTab);
     registry.register(ShortcutId::ToggleSidebar, &ToggleSidebar);
     registry.register(ShortcutId::ToggleFullScreen, &ToggleFullScreen);
@@ -132,7 +134,7 @@ impl AppModel {
         if self.overlay.is_some() {
             return;
         }
-        if let Some(pane) = self.active_pane().and_then(|id| self.grids.get(&id)) {
+        if let Some(pane) = self.active_pane().and_then(|id| self.terminal(&id)) {
             pane.view.update(cx, |pane, cx| {
                 pane.open_find(&self.theme, self.metrics, window, cx);
             });
@@ -143,7 +145,7 @@ impl AppModel {
         if self.overlay.is_some() {
             return;
         }
-        if let Some(pane) = self.active_pane().and_then(|id| self.grids.get(&id)) {
+        if let Some(pane) = self.active_pane().and_then(|id| self.terminal(&id)) {
             pane.view
                 .update(cx, |pane, cx| pane.step_find(previous, cx));
         }
@@ -152,7 +154,7 @@ impl AppModel {
         if self.overlay.is_some() || self.close_prompt.is_some() {
             return;
         }
-        if let Some(pane) = self.active_pane().and_then(|id| self.grids.get(&id)) {
+        if let Some(pane) = self.active_pane().and_then(|id| self.terminal(&id)) {
             pane.view.update(cx, |pane, cx| match previous {
                 Some(previous) => pane.jump_prompt(previous, cx),
                 None => pane.select_command_output(None, cx),
@@ -160,7 +162,7 @@ impl AppModel {
         }
     }
     fn zoom_terminal(&mut self, delta: f32, cx: &mut Context<Self>) {
-        if let Some(pane) = self.active_pane().and_then(|pane| self.grids.get(&pane)) {
+        if let Some(pane) = self.active_pane().and_then(|pane| self.terminal(&pane)) {
             pane.view.update(cx, |pane, cx| {
                 pane.terminal.zoom(delta);
                 cx.notify();
@@ -178,7 +180,7 @@ impl AppModel {
 
     pub(crate) fn focus_active(&self, window: &mut Window, cx: &App) {
         if let Some(pane) = self.active_pane().and_then(|id| self.grids.get(&id)) {
-            pane.view.read(cx).focus.focus(window);
+            pane.focus(window, cx);
         } else {
             self.focus.focus(window);
         }
@@ -187,6 +189,9 @@ impl AppModel {
 
 fn action_handlers(cx: &mut Context<AppModel>) -> gpui::Div {
     div()
+        .on_action(
+            cx.listener(|model, _: &OpenSettings, window, cx| model.open_settings(window, cx)),
+        )
         .on_action(cx.listener(|model, _: &Find, window, cx| model.find_terminal(window, cx)))
         .on_action(cx.listener(|model, _: &FindNext, _, cx| model.step_find(false, cx)))
         .on_action(cx.listener(|model, _: &FindPrevious, _, cx| model.step_find(true, cx)))
@@ -273,12 +278,8 @@ fn action_handlers(cx: &mut Context<AppModel>) -> gpui::Div {
         .on_action(cx.listener(|model, _: &DecreaseFontSize, _, cx| model.zoom_terminal(-1.0, cx)))
 }
 
-impl Render for AppModel {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.overlay.is_none() && (self.focus_requested || self.active_pane().is_none()) {
-            self.focus_active(window, cx);
-            self.focus_requested = false;
-        }
+impl AppModel {
+    fn sync_pane_focus(&mut self, cx: &mut Context<Self>) {
         let active = self.active_pane();
         let zoomed = self
             .state
@@ -291,7 +292,11 @@ impl Render for AppModel {
         if self.overlay.is_some() || self.close_prompt.is_some() {
             self.split_resize.end();
         }
-        for (id, pane) in &self.grids {
+        for (id, pane) in self
+            .grids
+            .iter()
+            .filter_map(|(id, pane)| pane.terminal().map(|pane| (id, pane)))
+        {
             pane.view.update(cx, |pane, cx| {
                 pane.set_focused(Some(*id) == active, cx);
                 let border = (pane.focused && split).then_some(self.theme.accent);
@@ -312,6 +317,30 @@ impl Render for AppModel {
                 }
             });
         }
+        for (id, pane) in &self.grids {
+            if let crate::model::PaneView::Settings { view, .. } = pane {
+                view.update(cx, |pane, cx| {
+                    let outline = Some(*id) == active && split;
+                    if pane.focus_outline != outline {
+                        pane.focus_outline = outline;
+                        cx.notify();
+                    }
+                });
+            }
+        }
+    }
+}
+
+impl Render for AppModel {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(request) = self.settings_picker.take() {
+            self.open_settings_picker(request, window, cx);
+        }
+        if self.overlay.is_none() && (self.focus_requested || self.active_pane().is_none()) {
+            self.focus_active(window, cx);
+            self.focus_requested = false;
+        }
+        self.sync_pane_focus(cx);
         let theme = &self.theme;
         let sidebar_width = if self.appearance.sidebar_expanded {
             220.0

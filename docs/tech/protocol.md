@@ -50,6 +50,7 @@ share a supported contract. Any other traffic before hello is fatal.
 | Read saved terminal content, discard session and saved content, and their replies | client, server | control |
 | History page and search, and their replies | client, server | control |
 | Set terminal colors and its reply | client, server | control |
+| Read and write server settings, stop server, and their replies | client, server | control |
 | Ping, pong | client, server | control |
 | Frame ack | client | control |
 | Session ended | server | control |
@@ -86,6 +87,15 @@ The emulator uses them to answer terminal color queries; theme selection
 stays in the app. Like size, defaults are session-wide: the latest update
 or colored attach wins, and detaching leaves them unchanged. Clients resend
 colors on reconnect and theme changes.
+
+## Server settings
+
+Clients can read and write the default shell, per-session history budget, and
+shell integration preference. A successful write confirms validation and durable
+storage before new sessions use the values. Existing sessions are unchanged; the
+saved-history budget takes effect at the next server start. Stop acknowledges the
+request, then gracefully ends sessions and closes connections, preserving saved
+output. Restart is app policy: wait for shutdown before starting and reconnecting.
 
 ## Attach and metadata
 

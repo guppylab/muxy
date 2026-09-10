@@ -5,7 +5,9 @@ use gpui::{
 };
 
 fn pane<'a>(model: &'a AppModel, cx: &'a gpui::App) -> &'a TerminalPane {
-    model.grids[&model.active_pane().expect("pane")]
+    model
+        .terminal(&model.active_pane().expect("pane"))
+        .expect("terminal")
         .view
         .read(cx)
 }

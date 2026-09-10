@@ -46,11 +46,49 @@ pub(crate) fn load(path: &Path) -> io::Result<ServerSettings> {
             format!("{}: {error}", path.display()),
         )
     })?;
-    Ok(ServerSettings {
+    let settings = ServerSettings {
         default_shell: settings.default_shell,
         shell_integration: settings.shell_integration,
         history_budget_bytes: settings.history_budget_bytes,
+    };
+    settings.document().validate().map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Invalid server settings: {error:?}"),
+        )
+    })?;
+    Ok(settings)
+}
+
+pub(crate) fn save(path: &Path, settings: &ServerSettings) -> io::Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
+    let source = toml::to_string_pretty(&SettingsFile {
+        default_shell: settings.default_shell.clone(),
+        history_budget_bytes: settings.history_budget_bytes,
+        shell_integration: settings.shell_integration,
     })
+    .map_err(io::Error::other)?;
+    let temporary = path.with_file_name(format!(
+        ".server-{}-{}.tmp",
+        std::process::id(),
+        NEXT_FILE.fetch_add(1, Ordering::Relaxed)
+    ));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&temporary)?;
+    let result = (|| {
+        file.write_all(source.as_bytes())?;
+        file.sync_all()?;
+        fs::rename(&temporary, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
 }
 
 #[cfg(test)]

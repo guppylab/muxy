@@ -88,3 +88,60 @@ async fn prompt(
         _ => ConfirmationResponse::Cancelled,
     })
 }
+
+pub(crate) async fn prompt_server(
+    window: AnyWindowHandle,
+    restart: bool,
+    cx: &mut AsyncApp,
+) -> Result<bool, String> {
+    let title = if restart {
+        "Restart Server?"
+    } else {
+        "Stop Server?"
+    };
+    let label = if restart { "Restart" } else { "Stop" };
+    let message = "All running terminal sessions on this device will end. Saved terminal output and settings will remain.";
+    server_prompt(window, title, label, message, cx).await
+}
+
+#[cfg(not(test))]
+async fn server_prompt(
+    window: AnyWindowHandle,
+    title: &str,
+    label: &str,
+    message: &str,
+    cx: &mut AsyncApp,
+) -> Result<bool, String> {
+    let (sender, receiver) = async_channel::bounded(1);
+    let _dialog = window
+        .update(cx, |_, _, _| {
+            muxy_ui::dialog::confirm(title, message, label, None, move |response| {
+                let _ = sender.try_send(matches!(response, ConfirmationResponse::Confirmed { .. }));
+            })
+        })
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())?;
+    Ok(receiver.recv().await.unwrap_or(false))
+}
+
+#[cfg(test)]
+async fn server_prompt(
+    window: AnyWindowHandle,
+    title: &str,
+    label: &str,
+    message: &str,
+    cx: &mut AsyncApp,
+) -> Result<bool, String> {
+    let answer = window
+        .update(cx, |_, window, cx| {
+            window.prompt(
+                gpui::PromptLevel::Warning,
+                title,
+                Some(message),
+                &[label, "Cancel"],
+                cx,
+            )
+        })
+        .map_err(|error| error.to_string())?;
+    Ok(answer.await == Ok(0))
+}

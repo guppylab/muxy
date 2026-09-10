@@ -56,6 +56,12 @@ pub(crate) enum Work {
         request: SearchRequest,
     },
     Connect,
+    ReadServerSettings,
+    WriteServerSettings(muxy_protocol::ServerSettingsDoc),
+    StopServer {
+        socket: PathBuf,
+        restart: bool,
+    },
     Attach {
         pane: PaneId,
         session: Option<SessionId>,
@@ -99,6 +105,11 @@ pub(crate) enum Update {
         result: Result<SearchPage, ClientError>,
     },
     Connected(Vec<SessionInfo>),
+    ServerSettings(Result<muxy_protocol::ServerSettingsDoc, ClientError>),
+    ServerStopped {
+        restart: bool,
+        result: Result<(), ClientError>,
+    },
     ConnectFailed(String),
     Attached {
         pane: PaneId,
@@ -260,6 +271,13 @@ fn schedule(
 
 fn rejected(work: Work, error: ClientError) -> Update {
     match work {
+        Work::ReadServerSettings | Work::WriteServerSettings(_) => {
+            Update::ServerSettings(Err(error))
+        }
+        Work::StopServer { restart, .. } => Update::ServerStopped {
+            restart,
+            result: Err(error),
+        },
         Work::Attach { pane, session, .. } => Update::AttachFailed {
             pane,
             session,
@@ -295,6 +313,22 @@ fn rejected(work: Work, error: ClientError) -> Update {
 
 fn perform(work: Work, client: &Client) -> Option<Update> {
     let result = match work {
+        Work::ReadServerSettings => {
+            return Some(Update::ServerSettings(client.read_server_settings()));
+        }
+        Work::WriteServerSettings(settings) => {
+            return Some(Update::ServerSettings(
+                client
+                    .write_server_settings(settings)
+                    .and_then(|()| client.read_server_settings()),
+            ));
+        }
+        Work::StopServer { socket, restart } => {
+            return Some(Update::ServerStopped {
+                restart,
+                result: crate::server::stop_server(client, &socket),
+            });
+        }
         Work::Flush => return Some(Update::Flushed),
         Work::Search {
             pane,
@@ -334,15 +368,7 @@ fn perform(work: Work, client: &Client) -> Option<Update> {
             channel,
             request,
         } => {
-            let result = match channel {
-                Some(channel) => client.history_page(channel, request.before, request.max_rows),
-                None => client.saved_history_page(session, request.before, request.max_rows),
-            };
-            return Some(Update::History {
-                pane,
-                request,
-                result,
-            });
+            return Some(history(client, pane, session, channel, request));
         }
         Work::Discard(session) => {
             return Some(Update::Discarded {
@@ -383,6 +409,24 @@ fn perform(work: Work, client: &Client) -> Option<Update> {
         }
     };
     result.err().map(|error| Update::Error(error.to_string()))
+}
+
+fn history(
+    client: &Client,
+    pane: PaneId,
+    session: SessionId,
+    channel: Option<ChannelId>,
+    request: HistoryRequest,
+) -> Update {
+    let result = match channel {
+        Some(channel) => client.history_page(channel, request.before, request.max_rows),
+        None => client.saved_history_page(session, request.before, request.max_rows),
+    };
+    Update::History {
+        pane,
+        request,
+        result,
+    }
 }
 
 fn end_all(client: &Client, referenced: Vec<SessionId>) -> Result<(), ClientError> {

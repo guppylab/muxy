@@ -639,3 +639,54 @@ fn shell_hooks_are_socket_relative_and_the_setting_controls_new_shells() -> Test
     }
     Ok(())
 }
+
+#[test]
+fn settings_persist_and_protocol_stop_gracefully_ends_sessions_before_restart() -> TestResult {
+    let mut fixture = Fixture::new()?;
+    fixture.start()?;
+    let mut client = Client::new(&fixture.socket())?;
+    let session = client.create(&fixture.directory)?;
+    let settings = muxy_protocol::ServerSettingsDoc {
+        default_shell: Some(ServerPath(b"/bin/bash".to_vec())),
+        history_budget_bytes: 8 * 1024 * 1024,
+        shell_integration: false,
+    };
+    assert_eq!(
+        client.request(RequestBody::WriteServerSettings(settings.clone()))?,
+        ReplyBody::ServerSettingsWritten
+    );
+    assert_eq!(
+        client.request(RequestBody::ReadServerSettings)?,
+        ReplyBody::ServerSettings(settings.clone())
+    );
+    assert_eq!(
+        client.request(RequestBody::StopServer)?,
+        ReplyBody::ServerStopping
+    );
+    assert!(fixture.finish()?.status.success());
+    assert!(!fixture.socket().exists());
+    let saved = fs::read_to_string(fixture.directory.join("server.toml"))?;
+    assert!(saved.contains("/bin/bash"));
+    assert!(saved.contains("shell_integration = false"));
+    drop(client);
+    fixture.start()?;
+    let mut client = Client::new(&fixture.socket())?;
+    assert_eq!(
+        client.request(RequestBody::ReadServerSettings)?,
+        ReplyBody::ServerSettings(settings)
+    );
+    assert_eq!(
+        client.request(RequestBody::ListSessions)?,
+        ReplyBody::Sessions(vec![])
+    );
+    assert!(matches!(
+        client.request(RequestBody::ReadSavedScreen(session))?,
+        ReplyBody::SavedScreen(_)
+    ));
+    assert_eq!(
+        client.request(RequestBody::StopServer)?,
+        ReplyBody::ServerStopping
+    );
+    assert!(fixture.finish()?.status.success());
+    Ok(())
+}

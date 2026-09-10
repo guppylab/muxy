@@ -75,12 +75,11 @@ pub(crate) fn tab_strip(
     for tab in &model.state.current_project().tabs {
         cells = cells.child(tab_cell(
             tab,
-            tab.title(model.state.window().active_pane),
+            tab.displayed_pane(model.state.window().active_pane),
             model.active_tab() == Some(tab.id),
             tab.panes.iter().any(|pane| {
                 model
-                    .grids
-                    .get(&pane.id)
+                    .terminal(&pane.id)
                     .is_some_and(|pane| pane.view.read(cx).bell_flashing)
             }),
             width,
@@ -228,13 +227,15 @@ fn close_control(
 
 fn tab_cell(
     tab: &Tab,
-    title: &str,
+    pane: Option<&muxy_app_core::Pane>,
     active: bool,
     bell: bool,
     width: f32,
     theme: &Theme,
     cx: &mut Context<AppModel>,
 ) -> AnyElement {
+    let title = pane.map_or("", |pane| pane.title.as_str());
+    let settings = pane.is_some_and(|pane| pane.content == muxy_app_core::PaneContent::Settings);
     let shows_title = width >= 80.0;
     let id = tab.id;
     let group = SharedString::from(format!("tab-{id}"));
@@ -294,6 +295,7 @@ fn tab_cell(
             group,
             foreground,
             bell.then_some(theme.accent),
+            settings,
         ))
         .child(close)
         .into_any_element()
@@ -306,6 +308,7 @@ fn tab_label(
     group: SharedString,
     foreground: gpui::Hsla,
     bell: Option<gpui::Hsla>,
+    settings: bool,
 ) -> impl IntoElement {
     div()
         .flex()
@@ -326,6 +329,8 @@ fn tab_label(
                 .debug_selector(|| {
                     if bell.is_some() {
                         "tab-bell".into()
+                    } else if settings {
+                        "tab-settings".into()
                     } else {
                         "tab-terminal".into()
                     }
@@ -333,6 +338,8 @@ fn tab_label(
                 .child(IconGlyph::new(
                     if bell.is_some() {
                         Icon::Bell
+                    } else if settings {
+                        Icon::Settings
                     } else {
                         Icon::Terminal
                     },

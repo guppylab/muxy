@@ -168,6 +168,21 @@ fn ordered_request(
     last_channel: &AtomicU32,
 ) -> Result<Option<ReplyBody>, ServerError> {
     Ok(Some(match body {
+        RequestBody::ReadServerSettings => {
+            ReplyBody::ServerSettings(registry.settings().document())
+        }
+        RequestBody::WriteServerSettings(settings) => {
+            registry.write_settings(settings.into())?;
+            ReplyBody::ServerSettingsWritten
+        }
+        RequestBody::StopServer => {
+            outbox.push_control(Message::Reply {
+                id,
+                body: ReplyBody::ServerStopping,
+            });
+            registry.request_stop();
+            return Ok(None);
+        }
         RequestBody::SetTerminalColors(colors) => {
             outbox.set_colors(colors);
             ReplyBody::TerminalColorsSet
@@ -203,24 +218,7 @@ fn ordered_request(
             channel,
             before,
             max_rows,
-        } => {
-            let handle = outbox
-                .handle(channel)
-                .ok_or_else(|| ServerError::new(ErrorCode::UnknownChannel, "unknown channel"))?;
-            let (reply, page) = mpsc::channel();
-            handle.send(SessionCommand::HistoryPage {
-                before,
-                max_rows,
-                reply,
-            })?;
-            let page = page.recv_timeout(Duration::from_secs(5)).map_err(|_| {
-                ServerError::new(
-                    ErrorCode::HistoryUnavailable,
-                    "history request did not complete",
-                )
-            })??;
-            ReplyBody::HistoryPage(page)
-        }
+        } => live_history(outbox, channel, before, max_rows)?,
         RequestBody::SavedHistoryPage {
             session,
             before,
@@ -256,6 +254,30 @@ fn ordered_request(
         },
         RequestBody::Ping => ReplyBody::Pong,
     }))
+}
+
+fn live_history(
+    outbox: &Arc<Outbox>,
+    channel: ChannelId,
+    before: HistoryCursor,
+    max_rows: u16,
+) -> Result<ReplyBody, ServerError> {
+    let handle = outbox
+        .handle(channel)
+        .ok_or_else(|| ServerError::new(ErrorCode::UnknownChannel, "unknown channel"))?;
+    let (reply, page) = mpsc::channel();
+    handle.send(SessionCommand::HistoryPage {
+        before,
+        max_rows,
+        reply,
+    })?;
+    let page = page.recv_timeout(Duration::from_secs(5)).map_err(|_| {
+        ServerError::new(
+            ErrorCode::HistoryUnavailable,
+            "history request did not complete",
+        )
+    })??;
+    Ok(ReplyBody::HistoryPage(page))
 }
 
 fn live_search(

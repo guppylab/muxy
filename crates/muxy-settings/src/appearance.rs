@@ -42,7 +42,6 @@ impl Appearance {
 }
 
 pub(crate) fn save_section(path: &Path, section: &str, values: &impl Serialize) -> Result<()> {
-    static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
     let mut document = read_document(path)?;
     let values = toml::Value::try_from(values)?;
     let values = values
@@ -55,7 +54,21 @@ pub(crate) fn save_section(path: &Path, section: &str, values: &impl Serialize) 
         .as_table_mut()
         .ok_or_else(|| io::Error::other(format!("{section} must be a table")))?
         .extend(values.clone());
-    let source = toml::to_string_pretty(&document)?;
+    write_document(path, &document)
+}
+
+pub(crate) fn replace_section(path: &Path, section: &str, values: &impl Serialize) -> Result<()> {
+    let mut document = read_document(path)?;
+    document.insert(section.into(), toml::Value::try_from(values)?);
+    write_document(path, &document)
+}
+
+fn write_document(path: &Path, document: &toml::Table) -> Result<()> {
+    atomic_write(path, &toml::to_string_pretty(document)?)
+}
+
+pub(crate) fn atomic_write(path: &Path, source: &str) -> Result<()> {
+    static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
     let parent = path
         .parent()
         .ok_or_else(|| io::Error::other("settings path has no parent"))?;

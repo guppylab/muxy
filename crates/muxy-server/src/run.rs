@@ -98,17 +98,30 @@ pub(crate) fn run(args: &Args) -> io::Result<()> {
     let hooks = muxy_server_core::ShellIntegration::install(
         &directory.with_file_name("shell-integration"),
     )?;
-    let registry =
-        Arc::new(Registry::persistent(settings, sender, &directory)?.with_shell_integration(hooks));
+    let settings_path = args.settings.clone();
+    let registry = Arc::new(
+        Registry::persistent(settings, sender, &directory)?
+            .with_shell_integration(hooks)
+            .with_settings_persistence(move |settings| {
+                settings_file::save(&settings_path, settings)
+            }),
+    );
+    let stopping = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let requested_stop = Arc::clone(&stopping);
+    let requested_listener = Arc::clone(&socket.listener);
     let clients = Clients::default();
     let subscribers = Arc::clone(&clients);
     let sessions = Arc::clone(&registry);
     let broadcast = thread::Builder::new()
         .name("server-events".into())
-        .spawn(move || broadcast(&events, &subscribers, &sessions))?;
+        .spawn(move || {
+            broadcast(&events, &subscribers, &sessions, || {
+                requested_stop.store(true, std::sync::atomic::Ordering::Release);
+                requested_listener.close();
+            });
+        })?;
     let signal_handle = signals.handle();
     let listener = Arc::clone(&socket.listener);
-    let stopping = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let stopped = Arc::clone(&stopping);
     let signal = thread::Builder::new()
         .name("server-signals".into())
@@ -213,14 +226,19 @@ fn accept(
     Err(io::Error::other("client IDs exhausted"))
 }
 
-fn broadcast(events: &Receiver<ServerEvent>, clients: &Clients, registry: &Registry) {
+fn broadcast(
+    events: &Receiver<ServerEvent>,
+    clients: &Clients,
+    registry: &Registry,
+    stop: impl Fn(),
+) {
     loop {
         match events.recv_timeout(POLL) {
-            Ok(event) => publish(&event, clients),
+            Ok(event) => publish(&event, clients, &stop),
             Err(RecvTimeoutError::Timeout) if !registry.is_stopped() => {}
             Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => {
                 for event in events.try_iter() {
-                    publish(&event, clients);
+                    publish(&event, clients, &stop);
                 }
                 break;
             }
@@ -231,12 +249,16 @@ fn broadcast(events: &Receiver<ServerEvent>, clients: &Clients, registry: &Regis
     }
 }
 
-fn publish(event: &ServerEvent, clients: &Clients) {
-    let ServerEvent::SessionEnded { id, reason } = event;
-    log::info!("session ended: {} ({reason:?})", id.get());
-    for client in lock(clients).values() {
-        if let Some(sender) = &client.events {
-            let _ = sender.send(event.clone());
+fn publish(event: &ServerEvent, clients: &Clients, stop: &impl Fn()) {
+    match event {
+        ServerEvent::StopRequested => stop(),
+        ServerEvent::SessionEnded { id, reason } => {
+            log::info!("session ended: {} ({reason:?})", id.get());
+            for client in lock(clients).values() {
+                if let Some(sender) = &client.events {
+                    let _ = sender.send(event.clone());
+                }
+            }
         }
     }
 }
