@@ -3,6 +3,8 @@
 //! This crate owns message meaning and validation, but never framing, I/O,
 //! persistence, UI, PTYs, or runtime policy.
 
+mod build;
+pub use build::{BuildInfo, COMPATIBILITY, ServerInfo};
 mod control;
 mod ids;
 mod message;

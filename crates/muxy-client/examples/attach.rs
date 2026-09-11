@@ -111,7 +111,9 @@ fn attach(client: &Client, session: SessionId) -> Result {
                     return Ok(());
                 }
             }
-            ClientEvent::Disconnected => return Err("disconnected from server".into()),
+            ClientEvent::ServerRestarting | ClientEvent::Disconnected => {
+                return Err("disconnected from server".into());
+            }
         }
     }
     Ok(())
@@ -129,7 +131,9 @@ fn end(client: &Client, session: SessionId) -> Result {
                 writeln!(io::stdout(), "session ended: {reason:?}")?;
                 return Ok(());
             }
-            ClientEvent::Disconnected => return Err("disconnected from server".into()),
+            ClientEvent::ServerRestarting | ClientEvent::Disconnected => {
+                return Err("disconnected from server".into());
+            }
             ClientEvent::Frame { .. }
             | ClientEvent::Metadata { .. }
             | ClientEvent::SessionEnded { .. } => {}

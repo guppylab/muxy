@@ -105,22 +105,75 @@ pub(crate) async fn prompt_server(
     server_prompt(window, title, label, message, cx).await
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum UpdateChoice {
+    Install,
+    Schedule,
+    CancelSchedule,
+    EndSessions,
+    Later,
+}
+
 pub(crate) async fn prompt_update(
     window: AnyWindowHandle,
     version: &str,
+    compatible: bool,
+    scheduled: bool,
+    sessions: usize,
     cx: &mut AsyncApp,
-) -> Result<bool, String> {
-    let message = format!(
-        "Install Muxy {version} and restart? All running terminal sessions on this device will end. Your tabs, saved terminal output, and settings will remain."
-    );
-    server_prompt(
-        window,
-        "Install Beta Update?",
-        "Update and Restart",
-        &message,
-        cx,
-    )
-    .await
+) -> Result<UpdateChoice, String> {
+    let message = if scheduled {
+        format!(
+            "Muxy {version} will install and restart the app when all terminal sessions end. Currently {sessions} sessions are running, including idle shells and detached sessions."
+        )
+    } else if compatible {
+        format!(
+            "Install Muxy {version} and restart the app? Running terminals will continue. The server will update when all terminal sessions end."
+        )
+    } else {
+        format!(
+            "Muxy {version} requires a server restart. You can update automatically when all terminal sessions end, or end them now. Your tabs, saved terminal output, and settings will remain."
+        )
+    };
+    let labels: &[&str] = if scheduled {
+        &[
+            "Keep Waiting",
+            "Update and End Sessions…",
+            "Cancel Scheduled Update",
+        ]
+    } else if compatible {
+        &["Update and Restart App", "Not Now"]
+    } else {
+        &[
+            "Update When Sessions End",
+            "Update and End Sessions…",
+            "Not Now",
+        ]
+    };
+    let answer = window
+        .update(cx, |_, window, cx| {
+            window.prompt(
+                gpui::PromptLevel::Info,
+                "Muxy Update",
+                Some(&message),
+                labels,
+                cx,
+            )
+        })
+        .map_err(|error| error.to_string())?
+        .await
+        .map_err(|error| error.to_string())?;
+    let choice = match (scheduled, compatible, answer) {
+        (true, _, 2) => UpdateChoice::CancelSchedule,
+        (true, _, 1) | (false, false, 1) => UpdateChoice::EndSessions,
+        (false, true, 0) => UpdateChoice::Install,
+        (false, false, 0) => UpdateChoice::Schedule,
+        _ => UpdateChoice::Later,
+    };
+    if choice == UpdateChoice::EndSessions && !server_prompt(window, "Update and End All Sessions?", "Update and End Sessions", "All terminal processes on this device will end, including sessions used by other clients. Your tabs, saved terminal output, and settings will remain.", cx).await? {
+        return Ok(UpdateChoice::Later);
+    }
+    Ok(choice)
 }
 
 #[cfg(not(test))]

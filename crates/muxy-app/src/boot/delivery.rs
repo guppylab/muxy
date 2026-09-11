@@ -95,7 +95,9 @@ impl Delivery {
                 ClientEvent::Frame { channel, .. } | ClientEvent::Metadata { channel, .. } => {
                     channel.0 <= self.installed_through
                 }
-                ClientEvent::SessionEnded { .. } | ClientEvent::Disconnected => false,
+                ClientEvent::SessionEnded { .. }
+                | ClientEvent::ServerRestarting
+                | ClientEvent::Disconnected => false,
             }
     }
 }

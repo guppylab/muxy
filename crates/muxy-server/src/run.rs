@@ -252,6 +252,14 @@ fn broadcast(
 fn publish(event: &ServerEvent, clients: &Clients, stop: &impl Fn()) {
     match event {
         ServerEvent::StopRequested => stop(),
+        ServerEvent::RestartRequested => {
+            for client in lock(clients).values() {
+                if let Some(sender) = &client.events {
+                    let _ = sender.send(event.clone());
+                }
+            }
+            stop();
+        }
         ServerEvent::SessionEnded { id, reason } => {
             log::info!("session ended: {} ({reason:?})", id.get());
             for client in lock(clients).values() {

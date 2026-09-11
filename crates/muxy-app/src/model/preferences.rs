@@ -27,6 +27,10 @@ pub(crate) struct SettingsWindowState {
 
 impl AppModel {
     pub(crate) fn open_settings(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        self.show_settings(cx);
+    }
+
+    pub(super) fn show_settings(&mut self, cx: &mut Context<Self>) {
         if self.quitting != Quitting::Idle || self.close_prompt.is_some() {
             return;
         }
@@ -102,8 +106,11 @@ impl AppModel {
             settings,
             terminal: self.terminal.clone(),
             server: self.server_preferences.document.clone(),
+            server_update: self.server_update_description(),
             connected: self.connection == ConnectionState::Ready,
-            server_busy: self.server_preferences.busy || self.server_preferences.control_busy,
+            server_busy: self.server_preferences.busy
+                || self.server_preferences.control_busy
+                || self.updates.replacing(),
             pending_server_fields: self.pending_server_fields(),
         }
     }
@@ -403,6 +410,7 @@ impl AppModel {
         if self.quitting != Quitting::Idle
             || self.close_prompt.is_some()
             || self.server_preferences.control_busy
+            || self.updates.replacing()
             || self.server_preferences.busy
             || self.connection != ConnectionState::Ready
         {

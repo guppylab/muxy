@@ -5,6 +5,11 @@ use muxy_ui::controls;
 pub(super) fn rows(pane: &SettingsView, cx: &mut Context<SettingsView>) -> Vec<AnyElement> {
     let mut rows = Vec::new();
     let connected = pane.snapshot.connected;
+    if let Some(description) = &pane.snapshot.server_update
+        && pane.matches(Category::Server, "Server update version")
+    {
+        rows.push(pane.note(description, false).into_any_element());
+    }
     if pane.matches(Category::Server, "Current device") {
         rows.push(
             pane.row(

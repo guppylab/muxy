@@ -130,6 +130,11 @@ flowchart LR
 
 ## Lifecycle notes
 
+- Compatible app updates keep the server running. Installation preserves the
+  old bundle until its server instance exits. Cleanup shares installation locks,
+  verifies the current instance, and retains uncommitted recovery bundles. The app coordinates idle server
+  replacement with startup and installation locks, then reconnects. Pending
+  update schedules survive app restarts; no background updater launches the app.
 - Stopping the server ends its sessions. Settings and saved terminal records
   survive. A record holds the last saved screen, bounded history, and any
   known exit reason; recovery never restarts its process.

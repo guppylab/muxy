@@ -14,6 +14,7 @@ pub enum ChannelKind {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Message {
     Hello {
+        compatibility: u64,
         versions: Vec<Version>,
     },
     Request {
@@ -25,9 +26,11 @@ pub enum Message {
         seq: u64,
     },
     HelloReply {
+        server: crate::ServerInfo,
         versions: Vec<Version>,
     },
     VersionUnsupported,
+    ServerRestarting,
     Reply {
         id: RequestId,
         body: ReplyBody,
@@ -50,6 +53,7 @@ impl Message {
             | Self::Request { .. }
             | Self::FrameAck { .. }
             | Self::HelloReply { .. }
+            | Self::ServerRestarting
             | Self::VersionUnsupported
             | Self::Reply { .. }
             | Self::SessionEnded { .. }

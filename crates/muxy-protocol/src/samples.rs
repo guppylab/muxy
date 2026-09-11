@@ -37,7 +37,7 @@ impl Message {
         };
 
         let mut samples = vec![
-            Self::Hello { versions: vec![V1] },
+            hello_sample(),
             Self::Request {
                 id: RequestId(1),
                 body: RequestBody::CreateSession {
@@ -46,7 +46,7 @@ impl Message {
                 },
             },
             Self::FrameAck { channel, seq: 1 },
-            Self::HelloReply { versions: vec![V1] },
+            hello_reply_sample(),
             Self::VersionUnsupported,
             Self::Reply {
                 id: RequestId(2),
@@ -243,11 +243,12 @@ fn settings_samples() -> Vec<Message> {
         history_budget_bytes: 16 * 1024 * 1024,
         shell_integration: true,
     };
-    let mut messages = Vec::new();
+    let mut messages = vec![Message::ServerRestarting];
     for body in [
         RequestBody::ReadServerSettings,
         RequestBody::WriteServerSettings(settings.clone()),
         RequestBody::StopServer,
+        RequestBody::StopServerIfIdle,
     ] {
         messages.push(Message::Request {
             id: RequestId(25),
@@ -258,6 +259,7 @@ fn settings_samples() -> Vec<Message> {
         ReplyBody::ServerSettings(settings),
         ReplyBody::ServerSettingsWritten,
         ReplyBody::ServerStopping,
+        ReplyBody::ServerBusy,
     ] {
         messages.push(Message::Reply {
             id: RequestId(25),
@@ -265,4 +267,24 @@ fn settings_samples() -> Vec<Message> {
         });
     }
     messages
+}
+
+fn hello_reply_sample() -> Message {
+    Message::HelloReply {
+        versions: vec![V1],
+        server: crate::ServerInfo {
+            build: crate::BuildInfo {
+                version: "fixture".into(),
+                compatibility: crate::COMPATIBILITY,
+            },
+            instance: 1,
+        },
+    }
+}
+
+fn hello_sample() -> Message {
+    Message::Hello {
+        versions: vec![V1],
+        compatibility: crate::COMPATIBILITY,
+    }
 }

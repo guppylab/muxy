@@ -8,16 +8,25 @@ pub(super) fn accept(
     encoder: &mut Encoder<impl Write>,
 ) -> Result<Option<Version>, WireError> {
     let message = match decoder.next() {
-        Ok((CONTROL, Message::Hello { versions })) if !versions.is_empty() => {
+        Ok((
+            CONTROL,
+            Message::Hello {
+                versions,
+                compatibility,
+            },
+        )) if !versions.is_empty() => {
             if let Some(version) = versions
                 .into_iter()
-                .filter(|version| SUPPORTED.contains(version))
+                .filter(|version| {
+                    SUPPORTED.contains(version) && compatibility == muxy_protocol::COMPATIBILITY
+                })
                 .max()
             {
                 encoder.send(
                     CONTROL,
                     &Message::HelloReply {
                         versions: SUPPORTED.to_vec(),
+                        server: muxy_protocol::ServerInfo::current(),
                     },
                 )?;
                 return Ok(Some(version));

@@ -107,10 +107,21 @@ def update_metadata(version, repository, directory):
     return {"schema": 1, "version": version, "platforms": platforms}
 
 
+def check_build(version, executable):
+    build_number(version)
+    metadata = json.loads(subprocess.check_output([str(executable), "--build-info"], timeout=5))
+    from beta_compatibility import identifier
+    if metadata != {"version": version, "compatibility": identifier()}:
+        raise ValueError("Packaged server build metadata does not match this release")
+
+
 def main():
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("version")
+    check = commands.add_parser("check-build")
+    check.add_argument("version")
+    check.add_argument("executable", type=Path)
     metadata = commands.add_parser("update")
     metadata.add_argument("version")
     metadata.add_argument("repository")
@@ -126,6 +137,8 @@ def main():
             version = checkout_version(ROOT)
             print(f"version={version}")
             print(f"tag=v{version}")
+        elif args.command == "check-build":
+            check_build(args.version, args.executable)
         elif args.command == "stamp":
             stamp_version(ROOT, args.version)
         elif args.command == "check-version":

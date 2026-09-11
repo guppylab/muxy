@@ -52,7 +52,9 @@ pub fn validate_versions(versions: &[Version]) -> Result<(), ErrorCode> {
 impl Message {
     pub fn validate(&self) -> Result<(), ErrorCode> {
         match self {
-            Self::Hello { versions } | Self::HelloReply { versions } => validate_versions(versions),
+            Self::Hello { versions, .. } | Self::HelloReply { versions, .. } => {
+                validate_versions(versions)
+            }
             Self::Request { body, .. } => validate_request(body),
             Self::Reply { body, .. } => validate_reply(body),
             Self::Input(input) => validate_input(input),
@@ -62,7 +64,8 @@ impl Message {
             }
             Self::Metadata(MetadataEvent::Links { rows, .. }) => validate_links(rows),
             Self::Metadata(MetadataEvent::Directory(path)) => validate_path(path),
-            Self::FrameAck { .. }
+            Self::ServerRestarting
+            | Self::FrameAck { .. }
             | Self::VersionUnsupported
             | Self::SessionEnded { .. }
             | Self::Fatal(_)
@@ -123,6 +126,7 @@ fn validate_request(body: &RequestBody) -> Result<(), ErrorCode> {
         }
         RequestBody::SavedHistoryPage { max_rows, .. } => validate_page_size(*max_rows),
         RequestBody::ReadServerSettings
+        | RequestBody::StopServerIfIdle
         | RequestBody::StopServer
         | RequestBody::ListSessions
         | RequestBody::EndSession(_)
@@ -193,6 +197,7 @@ fn validate_reply(body: &ReplyBody) -> Result<(), ErrorCode> {
         }
         ReplyBody::SavedScreen(screen) => validate_saved_screen(screen),
         ReplyBody::ServerSettingsWritten
+        | ReplyBody::ServerBusy
         | ReplyBody::ServerStopping
         | ReplyBody::SessionEnded
         | ReplyBody::Detached

@@ -116,6 +116,7 @@ impl Fixture {
                 CONTROL,
                 Message::Hello {
                     versions: SUPPORTED.to_vec(),
+                    compatibility: muxy_protocol::COMPATIBILITY,
                 },
             )?;
             assert_eq!(
@@ -123,7 +124,8 @@ impl Fixture {
                 (
                     CONTROL,
                     Message::HelloReply {
-                        versions: SUPPORTED.to_vec()
+                        versions: SUPPORTED.to_vec(),
+                        server: muxy_protocol::ServerInfo::current()
                     }
                 )
             );
@@ -317,6 +319,7 @@ fn incompatible_versions_are_rejected_and_closed() -> TestResult {
         CONTROL,
         Message::Hello {
             versions: vec![Version(99)],
+            compatibility: muxy_protocol::COMPATIBILITY,
         },
     )?;
     assert_eq!(client.receive()?, (CONTROL, Message::VersionUnsupported));
@@ -328,7 +331,13 @@ fn invalid_or_misplaced_hellos_are_fatal() -> TestResult {
     let fixture = Fixture::new()?;
     for (channel, versions) in [(CONTROL, vec![]), (ChannelId(1), SUPPORTED.to_vec())] {
         let mut client = fixture.client(false)?;
-        client.send(channel, Message::Hello { versions })?;
+        client.send(
+            channel,
+            Message::Hello {
+                versions,
+                compatibility: muxy_protocol::COMPATIBILITY,
+            },
+        )?;
         assert!(matches!(client.receive()?, (CONTROL, Message::Fatal(_))));
         client.closed()?;
     }
@@ -365,6 +374,7 @@ fn server_messages_repeated_hello_and_unknown_input_are_fatal() -> TestResult {
             CONTROL,
             Message::Hello {
                 versions: SUPPORTED.to_vec(),
+                compatibility: muxy_protocol::COMPATIBILITY,
             },
         ),
         (
@@ -622,6 +632,7 @@ fn fatal_is_the_last_message_even_with_an_attach_in_progress() -> TestResult {
             CONTROL,
             Message::Hello {
                 versions: SUPPORTED.to_vec(),
+                compatibility: muxy_protocol::COMPATIBILITY,
             },
         )?;
         loop {
@@ -851,6 +862,7 @@ fn reader_eof_and_fatal_cancel_a_blocked_writer() -> TestResult {
         let mut decoder = Decoder::new(peer.try_clone()?);
         let hello = Message::Hello {
             versions: SUPPORTED.to_vec(),
+            compatibility: muxy_protocol::COMPATIBILITY,
         };
         encoder.send(CONTROL, &hello)?;
         assert!(matches!(
@@ -979,6 +991,7 @@ fn writer_failure_cancels_an_idle_reader_and_returns_the_error() -> TestResult {
         CONTROL,
         &Message::Hello {
             versions: SUPPORTED.to_vec(),
+            compatibility: muxy_protocol::COMPATIBILITY,
         },
     )?;
     assert!(matches!(
@@ -1001,5 +1014,46 @@ fn writer_failure_cancels_an_idle_reader_and_returns_the_error() -> TestResult {
     assert!(
         matches!(result?, Err(WireError::Io(error)) if error.kind() == io::ErrorKind::BrokenPipe)
     );
+    Ok(())
+}
+
+#[test]
+fn idle_shutdown_counts_sessions_from_other_clients_and_blocks_new_spawns() -> TestResult {
+    let fixture = Fixture::new()?;
+    let mut owner = fixture.client(true)?;
+    let session = fixture.create(&mut owner)?;
+    drop(owner);
+    let mut updater = fixture.client(true)?;
+    assert_eq!(
+        updater.request(RequestBody::StopServerIfIdle)?,
+        ReplyBody::ServerBusy
+    );
+    assert_eq!(fixture.registry.list(), vec![session.clone()]);
+    fixture.registry.end(session.id)?;
+    assert!(
+        matches!(updater.receive()?, (CONTROL, Message::SessionEnded { session: ended, .. }) if ended == session.id)
+    );
+    assert_eq!(
+        updater.request(RequestBody::StopServerIfIdle)?,
+        ReplyBody::ServerStopping
+    );
+    assert!(fixture.registry.create(&fixture.directory, SIZE).is_err());
+    Ok(())
+}
+
+#[test]
+fn incompatible_beta_hello_never_opens_a_request_channel() -> TestResult {
+    let fixture = Fixture::new()?;
+    let session = fixture.registry.create(&fixture.directory, SIZE)?;
+    let mut client = fixture.client(false)?;
+    client.send(
+        CONTROL,
+        Message::Hello {
+            versions: SUPPORTED.to_vec(),
+            compatibility: muxy_protocol::COMPATIBILITY + 1,
+        },
+    )?;
+    assert_eq!(client.receive()?, (CONTROL, Message::VersionUnsupported));
+    assert_eq!(fixture.registry.list(), vec![session]);
     Ok(())
 }

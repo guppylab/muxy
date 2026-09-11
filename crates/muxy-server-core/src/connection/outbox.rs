@@ -495,6 +495,7 @@ mod tests {
         outbox.push_frame(ChannelId(1), frame(1, 0));
         outbox.push_control(Message::HelloReply {
             versions: vec![muxy_protocol::V1],
+            server: muxy_protocol::ServerInfo::current(),
         });
         assert!(matches!(
             outbox.next(),

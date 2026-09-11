@@ -13,7 +13,7 @@ can always communicate with an older release.
 
 Until the first official release there is one mutable development schema, V1.
 All current messages use it. Do not add versions or pre-release compatibility
-adapters. Development app and server builds must use the same schema. This does
+adapters. Development app and server builds must use the same schema and beta compatibility identifier. This does
 not permit losing saved user data when storage formats change.
 
 After release, versioned contracts are immutable and the envelope and hello
@@ -35,7 +35,10 @@ zero in v1.
 
 ## Handshake
 
-The client opens with a hello listing its versions and waits. The server
+The client opens with a hello listing its versions and beta compatibility
+identifier and waits. The reply identifies the running server build and process
+instance. The hello encoding and update metadata stay stable across beta schema
+changes; incompatible identifiers are rejected before ordinary requests. The server
 replies with its own; both choose a mutually supported contract. A malformed or
 unsupported implementation may be rejected and closed. Official releases always
 share a supported contract. Any other traffic before hello is fatal.
@@ -53,7 +56,7 @@ share a supported contract. Any other traffic before hello is fatal.
 | Read and write server settings, stop server, and their replies | client, server | control |
 | Ping, pong | client, server | control |
 | Frame ack | client | control |
-| Session ended | server | control |
+| Session ended, server restarting for an update | server | control |
 | Error | server | control |
 | Input | client | session |
 | Screen frame, metadata event | server | session |
@@ -95,7 +98,10 @@ shell integration preference. A successful write confirms validation and durable
 storage before new sessions use the values. Existing sessions are unchanged; the
 saved-history budget takes effect at the next server start. Stop acknowledges the
 request, then gracefully ends sessions and closes connections, preserving saved
-output. Restart is app policy: wait for shutdown before starting and reconnecting.
+output. Conditional stop atomically reserves shutdown only if no session is live
+or being created; otherwise it replies busy and leaves the server running. An accepted idle
+update stop notifies all clients that the server is restarting, so they can
+reconnect with bounded retries. Ordinary stop never requests reconnection. Restart is app policy: wait for shutdown before starting and reconnecting.
 
 ## Attach and metadata
 
@@ -141,3 +147,18 @@ metadata watermark, detach, and session end.
 Compression, chunking, frame merging, credits, and flow control are runtime
 work for the connectivity epics; D6 and D8 remain the target. Any wire changes
 follow the version policy above.
+
+### Beta update compatibility
+
+The compatibility identifier is separate from the build and V1 wire version.
+Bump it when encoding, required behavior, or shared storage and resources make
+mixed builds unsafe. Wire fixtures and the beta compatibility declaration are
+checked in CI; behavior and storage compatibility also require release review.
+Regenerate the declaration with `python3 scripts/beta_compatibility.py --write`
+after reviewing and changing the identifier. No beta schema adapters are kept.
+
+Signed update candidates report build metadata without starting a server.
+Matching identifiers permit an app update while the older server continues;
+otherwise installation waits for an atomic idle stop or explicit destructive
+confirmation. Scheduling stays in the app. Pre-metadata beta updaters retain
+their existing restart behavior for the transition release.

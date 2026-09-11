@@ -37,6 +37,14 @@ fn generate_fixtures() -> Result<(), Box<dyn Error>> {
 fn fixture_path(message: &Message) -> PathBuf {
     let name = match message {
         Message::Request {
+            body: RequestBody::StopServerIfIdle,
+            ..
+        } => "stop_server_if_idle",
+        Message::Reply {
+            body: ReplyBody::ServerBusy,
+            ..
+        } => "server_busy",
+        Message::Request {
             body: RequestBody::ReadServerSettings,
             ..
         } => "read_server_settings",
@@ -109,20 +117,7 @@ fn fixture_path(message: &Message) -> PathBuf {
             body: ReplyBody::Attached { snapshot, .. },
             ..
         } if !snapshot.history.is_empty() => "attached_history_reply",
-        _ => match MessageKind::from(message) {
-            MessageKind::Hello => "hello",
-            MessageKind::Request => "request",
-            MessageKind::FrameAck => "frame_ack",
-            MessageKind::HelloReply => "hello_reply",
-            MessageKind::VersionUnsupported => "version_unsupported",
-            MessageKind::Reply => "reply",
-            MessageKind::SessionEnded => "session_ended",
-            MessageKind::Fatal => "fatal",
-            MessageKind::Input => "input",
-            MessageKind::Frame => "frame",
-            MessageKind::Metadata => "metadata",
-            MessageKind::Mouse => "mouse",
-        },
+        _ => kind_name(MessageKind::from(message)),
     };
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
@@ -153,4 +148,22 @@ fn development_messages_share_one_version_and_reject_unknown_schemas() -> Result
         }
     }
     Ok(())
+}
+
+fn kind_name(kind: MessageKind) -> &'static str {
+    match kind {
+        MessageKind::Hello => "hello",
+        MessageKind::Request => "request",
+        MessageKind::FrameAck => "frame_ack",
+        MessageKind::HelloReply => "hello_reply",
+        MessageKind::ServerRestarting => "server_restarting",
+        MessageKind::VersionUnsupported => "version_unsupported",
+        MessageKind::Reply => "reply",
+        MessageKind::SessionEnded => "session_ended",
+        MessageKind::Fatal => "fatal",
+        MessageKind::Input => "input",
+        MessageKind::Frame => "frame",
+        MessageKind::Metadata => "metadata",
+        MessageKind::Mouse => "mouse",
+    }
 }

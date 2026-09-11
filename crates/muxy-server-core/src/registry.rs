@@ -30,6 +30,7 @@ struct State {
 pub enum ServerEvent {
     SessionEnded { id: SessionId, reason: ExitReason },
     StopRequested,
+    RestartRequested,
 }
 
 #[derive(Debug)]
@@ -106,6 +107,20 @@ impl Registry {
         })?;
         *self.settings.lock().unwrap_or_else(PoisonError::into_inner) = settings;
         Ok(())
+    }
+
+    /// Reserves shutdown against all concurrent session creation.
+    pub fn stop_if_idle(&self) -> bool {
+        let mut state = lock(&self.sessions);
+        if state.stopping || !state.sessions.is_empty() || !state.starting.is_empty() {
+            return false;
+        }
+        state.stopping = true;
+        true
+    }
+
+    pub fn request_restart(&self) {
+        let _ = self.events.send(ServerEvent::RestartRequested);
     }
 
     pub fn request_stop(&self) {
@@ -293,4 +308,54 @@ fn saved_content_error(error: &io::Error) -> ServerError {
         ErrorCode::SavedContentUnavailable,
         format!("saved terminal content: {error}"),
     )
+}
+
+#[cfg(test)]
+mod update_tests {
+    use super::*;
+
+    #[test]
+    fn shutdown_reservation_includes_in_progress_spawns() {
+        let (events, _receiver) = std::sync::mpsc::channel();
+        let registry = Registry::new(ServerSettings::default(), events);
+        let session = SessionId::new(1).expect("session");
+        lock(&registry.sessions).starting.insert(session);
+        assert!(!registry.stop_if_idle());
+        assert!(!lock(&registry.sessions).stopping);
+        lock(&registry.sessions).starting.remove(&session);
+        assert!(registry.stop_if_idle());
+        assert!(!registry.stop_if_idle());
+    }
+
+    #[test]
+    fn creation_racing_idle_shutdown_is_either_preserved_or_rejected() {
+        for _ in 0..8 {
+            let (events, _receiver) = std::sync::mpsc::channel();
+            let registry = Arc::new(Registry::new(
+                ServerSettings {
+                    default_shell: Some("/bin/sh".into()),
+                    ..ServerSettings::default()
+                },
+                events,
+            ));
+            let gate = Arc::new(std::sync::Barrier::new(2));
+            let spawning = registry.clone();
+            let start = gate.clone();
+            let worker = std::thread::spawn(move || {
+                start.wait();
+                spawning.create(Path::new("/tmp"), Size { cols: 80, rows: 24 })
+            });
+            gate.wait();
+            let stopped = registry.stop_if_idle();
+            let created = worker.join().expect("spawn thread");
+            if stopped {
+                assert!(created.is_err());
+                assert!(registry.list().is_empty());
+            } else {
+                let session = created.expect("session preserved");
+                assert_eq!(registry.list(), vec![session.clone()]);
+                registry.end(session.id).expect("end fixture");
+            }
+        }
+    }
 }

@@ -13,7 +13,7 @@ use muxy_protocol::{
     SearchSource, SessionId, SessionInfo, Size, TerminalColors,
 };
 
-use crate::server::stop_for_update;
+use crate::server::{ServerUpdate, UpdateMode, prepare_update};
 use crate::views::terminal::find::SearchRequest;
 use crate::views::terminal::scroll::HistoryRequest;
 
@@ -57,13 +57,23 @@ pub(crate) enum Work {
         request: SearchRequest,
     },
     Connect,
+    ReconnectAfterUpdate(u64),
     ReadServerSettings,
     WriteServerSettings(muxy_protocol::ServerSettingsDoc),
     StopServer {
         socket: PathBuf,
         restart: bool,
     },
-    PrepareUpdate(PathBuf),
+    PrepareUpdate {
+        socket: PathBuf,
+        update: crate::updater::PreparedUpdate,
+        mode: UpdateMode,
+        server: muxy_protocol::ServerInfo,
+    },
+    CheckServerUpdate {
+        socket: PathBuf,
+        replace: bool,
+    },
     Attach {
         pane: PaneId,
         session: Option<SessionId>,
@@ -112,7 +122,9 @@ pub(crate) enum Update {
         restart: bool,
         result: Result<(), ClientError>,
     },
-    StoppedForInstall(Result<std::fs::File, ClientError>),
+    PreparedForInstall(Result<Option<std::fs::File>, ClientError>),
+    ServerInfo(muxy_protocol::ServerInfo),
+    ServerChecked(Result<ServerUpdate, ClientError>),
     ConnectFailed(String),
     Attached {
         pane: PaneId,
@@ -170,17 +182,26 @@ fn bridge(socket: PathBuf) -> std::io::Result<(Worker, async_channel::Receiver<(
                 if matches!(work, Work::Completed(_)) {
                     requests.running = false;
                 }
-                let mut ready = if matches!(work, Work::Connect) {
+                let mut ready = if matches!(work, Work::Connect | Work::ReconnectAfterUpdate(_)) {
                     generation = requested;
                     delivery = delivery::Delivery::default();
                     requests.reset();
                     if let Some(client) = client.take() {
                         Client::disconnect(&client);
                     }
-                    match connect(&socket, generation, &event_sender) {
+                    match connect(
+                        &socket,
+                        generation,
+                        &event_sender,
+                        match work {
+                            Work::ReconnectAfterUpdate(instance) => Some(instance),
+                            _ => None,
+                        },
+                    ) {
                         Ok((connected, sessions)) => {
+                            let info = connected.server_info().clone();
                             client = Some(connected);
-                            vec![Update::Connected(sessions)]
+                            vec![Update::ServerInfo(info), Update::Connected(sessions)]
                         }
                         Err(error) => vec![Update::ConnectFailed(error.to_string())],
                     }
@@ -226,8 +247,13 @@ fn connect(
     socket: &std::path::Path,
     generation: u64,
     sender: &Worker,
+    after_update: Option<u64>,
 ) -> Result<(Client, Vec<SessionInfo>), ClientError> {
-    let client = crate::server::ensure_server_running(socket)?;
+    let client = if let Some(instance) = after_update {
+        crate::server::reconnect_after_update(socket, instance)?
+    } else {
+        crate::server::ensure_server_running(socket)?
+    };
     let events = client
         .events()
         .ok_or_else(|| std::io::Error::other("client events already taken"))?;
@@ -281,7 +307,8 @@ fn rejected(work: Work, error: ClientError) -> Update {
             restart,
             result: Err(error),
         },
-        Work::PrepareUpdate(_) => Update::StoppedForInstall(Err(error)),
+        Work::PrepareUpdate { .. } => Update::PreparedForInstall(Err(error)),
+        Work::CheckServerUpdate { .. } => Update::ServerChecked(Err(error)),
         Work::Attach { pane, session, .. } => Update::AttachFailed {
             pane,
             session,
@@ -315,17 +342,17 @@ fn rejected(work: Work, error: ClientError) -> Update {
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "Keep work dispatch exhaustive in one place"
+)]
 fn perform(work: Work, client: &Client) -> Option<Update> {
     let result = match work {
         Work::ReadServerSettings => {
             return Some(Update::ServerSettings(client.read_server_settings()));
         }
         Work::WriteServerSettings(settings) => {
-            return Some(Update::ServerSettings(
-                client
-                    .write_server_settings(settings)
-                    .and_then(|()| client.read_server_settings()),
-            ));
+            return Some(write_server_settings(client, settings));
         }
         Work::StopServer { socket, restart } => {
             return Some(Update::ServerStopped {
@@ -333,8 +360,20 @@ fn perform(work: Work, client: &Client) -> Option<Update> {
                 result: crate::server::stop_server(client, &socket),
             });
         }
-        Work::PrepareUpdate(socket) => {
-            return Some(Update::StoppedForInstall(stop_for_update(client, &socket)));
+        Work::PrepareUpdate {
+            socket,
+            update,
+            mode,
+            server,
+        } => {
+            return Some(Update::PreparedForInstall(prepare_update(
+                client, &socket, &update, mode, &server,
+            )));
+        }
+        Work::CheckServerUpdate { socket, replace } => {
+            return Some(Update::ServerChecked(crate::server::check_update(
+                client, &socket, replace,
+            )));
         }
         Work::Flush => return Some(Update::Flushed),
         Work::Search {
@@ -342,18 +381,7 @@ fn perform(work: Work, client: &Client) -> Option<Update> {
             source,
             request,
         } => {
-            let result = client.search(
-                source,
-                &request.query,
-                request.ignore_case,
-                request.before,
-                500,
-            );
-            return Some(Update::Search {
-                pane,
-                request,
-                result,
-            });
+            return Some(search(client, pane, source, request));
         }
         Work::Attach {
             pane,
@@ -411,11 +439,38 @@ fn perform(work: Work, client: &Client) -> Option<Update> {
         Work::Input(channel, bytes) => client.send_input(channel, &bytes),
         Work::Mouse(channel, event) => client.send_mouse(channel, event),
         Work::Ack(channel, seq) => client.ack(channel, seq),
-        Work::Connect | Work::Event(_) | Work::Stop | Work::Completed(_) => {
+        Work::Connect
+        | Work::ReconnectAfterUpdate(_)
+        | Work::Event(_)
+        | Work::Stop
+        | Work::Completed(_) => {
             return None;
         }
     };
     result.err().map(|error| Update::Error(error.to_string()))
+}
+
+fn write_server_settings(client: &Client, settings: muxy_protocol::ServerSettingsDoc) -> Update {
+    Update::ServerSettings(
+        client
+            .write_server_settings(settings)
+            .and_then(|()| client.read_server_settings()),
+    )
+}
+
+fn search(client: &Client, pane: PaneId, source: SearchSource, request: SearchRequest) -> Update {
+    let result = client.search(
+        source,
+        &request.query,
+        request.ignore_case,
+        request.before,
+        500,
+    );
+    Update::Search {
+        pane,
+        request,
+        result,
+    }
 }
 
 fn history(

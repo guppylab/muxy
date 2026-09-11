@@ -169,6 +169,7 @@ impl Client {
             CONTROL,
             &Message::Hello {
                 versions: SUPPORTED.to_vec(),
+                compatibility: muxy_protocol::COMPATIBILITY,
             },
         )?;
         assert!(matches!(
@@ -690,6 +691,72 @@ fn settings_persist_and_protocol_stop_gracefully_ends_sessions_before_restart() 
         client.request(RequestBody::StopServer)?,
         ReplyBody::ServerStopping
     );
+    assert!(fixture.finish()?.status.success());
+    Ok(())
+}
+
+#[test]
+fn build_info_has_no_server_or_storage_side_effects() -> TestResult {
+    let fixture = Fixture::new()?;
+    let output = fixture.command().arg("--build-info").output()?;
+    assert!(output.status.success());
+    let build: muxy_protocol::BuildInfo = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(build, muxy_protocol::BuildInfo::current());
+    assert_eq!(fs::read_dir(&fixture.directory)?.count(), 0);
+    Ok(())
+}
+
+#[test]
+fn replacing_the_binary_and_reconnecting_preserves_the_shell_process() -> TestResult {
+    let mut fixture = Fixture::new()?;
+    let executable = fixture.directory.join("muxy-server");
+    fs::copy(env!("CARGO_BIN_EXE_muxy-server"), &executable)?;
+    let mut command = Command::new(&executable);
+    command
+        .env("MUXY_DIR", &fixture.directory)
+        .env("SHELL", "/bin/sh");
+    fixture.start_command(command, &fixture.socket())?;
+    let server_pid = fixture.child.as_ref().ok_or("server")?.id();
+    let mut client = Client::new(&fixture.socket())?;
+    let session = client.create(&fixture.directory)?;
+    let channel = client.attach(session)?;
+    client
+        .encoder
+        .send(channel, &Message::Input(b"echo $$ > before.pid\n".to_vec()))?;
+    wait_until(|| Ok(fixture.directory.join("before.pid").exists()))?;
+    let pid = fs::read(fixture.directory.join("before.pid"))?;
+    drop(client);
+    fs::rename(&executable, fixture.directory.join("previous-server"))?;
+    fs::copy(env!("CARGO_BIN_EXE_muxy-server"), &executable)?;
+    let mut client = Client::new(&fixture.socket())?;
+    let channel = client.attach(session)?;
+    client
+        .encoder
+        .send(channel, &Message::Input(b"echo $$ > after.pid\n".to_vec()))?;
+    wait_until(|| Ok(fixture.directory.join("after.pid").exists()))?;
+    assert_eq!(fs::read(fixture.directory.join("after.pid"))?, pid);
+    assert_eq!(fixture.child.as_ref().ok_or("server")?.id(), server_pid);
+    assert_eq!(
+        client.request(RequestBody::StopServerIfIdle)?,
+        ReplyBody::ServerBusy
+    );
+    drop(client);
+    fixture.stop("-TERM")?;
+    Ok(())
+}
+
+#[test]
+fn idle_update_notifies_every_client_before_disconnecting() -> TestResult {
+    let mut fixture = Fixture::new()?;
+    fixture.start()?;
+    let mut updater = Client::new(&fixture.socket())?;
+    let observer = Client::new(&fixture.socket())?;
+    assert_eq!(
+        updater.request(RequestBody::StopServerIfIdle)?,
+        ReplyBody::ServerStopping
+    );
+    assert_eq!(observer.receive()?, (CONTROL, Message::ServerRestarting));
+    observer.closed()?;
     assert!(fixture.finish()?.status.success());
     Ok(())
 }

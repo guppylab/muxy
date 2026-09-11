@@ -84,7 +84,7 @@ pub(crate) fn status_bar(model: &AppModel, cx: &mut Context<AppModel>) -> impl I
                         .text_color(theme.fg_muted)
                         .cursor_pointer()
                         .child(status)
-                        .on_click(cx.listener(|model, _, _, cx| model.check_for_updates(true, cx)))
+                        .on_click(cx.listener(|model, _, _, cx| model.show_update_status(cx)))
                 }))
                 .children(super::disconnected::status(model, cx).map(|status| {
                     div()

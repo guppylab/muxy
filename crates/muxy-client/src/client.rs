@@ -36,6 +36,7 @@ struct Shared {
     events: Mutex<Option<Receiver<ClientEvent>>>,
     cancellation: Box<dyn StreamCancellation>,
     version: Version,
+    server: muxy_protocol::ServerInfo,
 }
 
 impl Drop for Shared {
@@ -95,7 +96,7 @@ impl Client {
                 RecvTimeoutError::Disconnected => ClientError::Disconnected,
             })
             .and_then(std::convert::identity);
-        let version = match negotiated {
+        let (version, server) = match negotiated {
             Ok(version) => version,
             Err(error) => {
                 cancellation.cancel();
@@ -108,6 +109,7 @@ impl Client {
             events: Mutex::new(Some(receiver)),
             cancellation,
             version,
+            server,
         });
         Ok(Self {
             shared,
@@ -142,6 +144,19 @@ impl Client {
     ) -> Result<(), ClientError> {
         match self.request(RequestBody::WriteServerSettings(settings))? {
             ReplyBody::ServerSettingsWritten => Ok(()),
+            other => Err(ClientError::UnexpectedReply(other)),
+        }
+    }
+
+    pub fn server_info(&self) -> &muxy_protocol::ServerInfo {
+        &self.shared.server
+    }
+
+    /// Atomically refuses to stop if a terminal is running or being created.
+    pub fn stop_server_if_idle(&self) -> Result<bool, ClientError> {
+        match self.request(RequestBody::StopServerIfIdle)? {
+            ReplyBody::ServerStopping => Ok(true),
+            ReplyBody::ServerBusy => Ok(false),
             other => Err(ClientError::UnexpectedReply(other)),
         }
     }

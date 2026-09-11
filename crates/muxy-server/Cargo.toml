@@ -13,6 +13,8 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+muxy-protocol = { path = "../muxy-protocol" }
+serde_json.workspace = true
 log = { version = "0.4", features = ["std"] }
 muxy-core = { path = "../muxy-core" }
 muxy-server-core = { path = "../muxy-server-core" }
@@ -22,5 +24,4 @@ signal-hook = "0.4"
 toml = "1.1"
 
 [dev-dependencies]
-muxy-protocol = { path = "../muxy-protocol" }
 muxy-wire = { path = "../muxy-wire" }

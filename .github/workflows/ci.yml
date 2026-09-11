@@ -19,6 +19,11 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: python3 scripts/beta_compatibility.py --base "$COMPATIBILITY_BASE"
+        env:
+          COMPATIBILITY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
       - run: python3 -m unittest discover -s scripts/tests -v
       - uses: dtolnay/rust-toolchain@stable
         with:

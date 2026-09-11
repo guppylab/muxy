@@ -93,12 +93,20 @@ fn version_lists_require_an_entry_without_negotiating_support() {
         };
         assert_eq!(
             Message::Hello {
-                versions: versions.clone()
+                versions: versions.clone(),
+                compatibility: muxy_protocol::COMPATIBILITY
             }
             .validate(),
             expected
         );
-        assert_eq!(Message::HelloReply { versions }.validate(), expected);
+        assert_eq!(
+            Message::HelloReply {
+                versions,
+                server: muxy_protocol::ServerInfo::current()
+            }
+            .validate(),
+            expected
+        );
     }
 }
 
@@ -279,6 +287,14 @@ fn samples_cover_every_message_variant_once_and_use_the_right_channel() {
     for message in Message::samples() {
         let (name, channel) = match &message {
             Message::Request {
+                body: RequestBody::StopServerIfIdle,
+                ..
+            } => ("StopServerIfIdle", ChannelKind::Control),
+            Message::Reply {
+                body: ReplyBody::ServerBusy,
+                ..
+            } => ("ServerBusy", ChannelKind::Control),
+            Message::Request {
                 body: RequestBody::ReadServerSettings,
                 ..
             } => ("ReadServerSettings", ChannelKind::Control),
@@ -330,6 +346,7 @@ fn samples_cover_every_message_variant_once_and_use_the_right_channel() {
                 body: ReplyBody::SearchPage(_),
                 ..
             } => ("SearchReply", ChannelKind::Control),
+            Message::ServerRestarting => ("ServerRestarting", ChannelKind::Control),
             Message::Hello { .. } => ("Hello", ChannelKind::Control),
             Message::Request {
                 body: RequestBody::HistoryPage { .. },
@@ -380,10 +397,13 @@ fn samples_cover_every_message_variant_once_and_use_the_right_channel() {
             "ReadServerSettings",
             "WriteServerSettings",
             "StopServer",
+            "StopServerIfIdle",
+            "ServerBusy",
             "ServerSettings",
             "ServerSettingsWritten",
             "ServerStopping",
             "Hello",
+            "ServerRestarting",
             "Request",
             "SearchRequest",
             "SavedSearchRequest",

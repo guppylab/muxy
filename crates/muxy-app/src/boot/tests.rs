@@ -26,6 +26,7 @@ fn blocked_client_request_does_not_block_input_or_acks_and_flush_waits() -> Test
     let server = thread::spawn(move || fake_server(&listener, &progress, &gate));
     let (work, updates) = bridge(socket)?;
     work.send((1, Work::Connect))?;
+    assert!(matches!(updates.recv_blocking()?.1, Update::ServerInfo(_)));
     assert!(matches!(updates.recv_blocking()?.1, Update::Connected(_)));
     let session = SessionId::from(std::num::NonZeroU64::MIN);
     work.send((
@@ -82,6 +83,7 @@ fn fake_server(
         CONTROL,
         &Message::HelloReply {
             versions: SUPPORTED.to_vec(),
+            server: muxy_protocol::ServerInfo::current(),
         },
     )?;
     let (

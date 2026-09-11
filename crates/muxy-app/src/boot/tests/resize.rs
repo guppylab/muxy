@@ -23,6 +23,7 @@ fn check_resize_delivery(saturated: bool) -> TestResult {
     let server = thread::spawn(move || resize_server(&listener, &progress, &gate));
     let (work, updates) = bridge(socket)?;
     work.send((1, Work::Connect))?;
+    assert!(matches!(updates.recv_blocking()?.1, Update::ServerInfo(_)));
     assert!(matches!(updates.recv_blocking()?.1, Update::Connected(_)));
     let session = SessionId::from(std::num::NonZeroU64::MIN);
     let read = || Work::ReadSaved {
@@ -120,6 +121,7 @@ fn resize_server(
         CONTROL,
         &Message::HelloReply {
             versions: SUPPORTED.to_vec(),
+            server: muxy_protocol::ServerInfo::current(),
         },
     )?;
     let mut blocked = true;
@@ -180,6 +182,7 @@ fn reconnect_discards_old_resizes_and_stale_completion_unblocks_new_work() -> Te
     let server = thread::spawn(move || reconnect_server(&listener, &started));
     let (work, updates) = bridge(socket)?;
     work.send((1, Work::Connect))?;
+    assert!(matches!(updates.recv_blocking()?.1, Update::ServerInfo(_)));
     assert!(matches!(
         updates.recv_blocking()?,
         (1, Update::Connected(_))
@@ -219,6 +222,7 @@ fn reconnect_discards_old_resizes_and_stale_completion_unblocks_new_work() -> Te
     let mut flushed = false;
     while !flushed && Instant::now() < deadline {
         match updates.try_recv() {
+            Ok((2, Update::ServerInfo(_))) => {}
             Ok((2, Update::Connected(_))) => connected = true,
             Ok((2, Update::Flushed)) => {
                 assert!(connected);
@@ -251,6 +255,7 @@ fn reconnect_server(listener: &UnixListener, started: &Sender<()>) -> TestResult
             CONTROL,
             &Message::HelloReply {
                 versions: SUPPORTED.to_vec(),
+                server: muxy_protocol::ServerInfo::current(),
             },
         )?;
         let (

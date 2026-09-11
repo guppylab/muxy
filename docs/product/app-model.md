@@ -141,3 +141,14 @@ sessions without discarding saved terminal output.
 Settings uses the active theme, with searchable categories and controls that
 apply changes immediately. Existing saved settings panes are removed on restore
 without removing neighboring terminal panes or their sessions.
+
+### App updates
+
+Compatible app updates preserve running terminal sessions. The bundled server
+is replaced when all its sessions end, including idle shells and detached
+sessions. Server settings show when a server update is pending.
+
+An incompatible beta update can wait until all sessions end. Choosing this
+option schedules installation and app restart while the app is running; users
+can cancel it. Updating immediately instead requires confirmation that all
+terminal processes on the device will end. Tabs and saved output remain.

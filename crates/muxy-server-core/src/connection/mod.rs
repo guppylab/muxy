@@ -52,6 +52,9 @@ pub fn serve(
                     Ok(ServerEvent::SessionEnded { id, reason }) => {
                         output.session_ended(id, reason);
                     }
+                    Ok(ServerEvent::RestartRequested) => {
+                        output.push_control(muxy_protocol::Message::ServerRestarting);
+                    }
                     Ok(ServerEvent::StopRequested) | Err(RecvTimeoutError::Timeout) => {}
                     Err(RecvTimeoutError::Disconnected) => {
                         output.close();

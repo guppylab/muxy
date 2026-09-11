@@ -4,16 +4,18 @@ use std::process::Command;
 
 use super::{Result, build_number, client, download, latest, replacement};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct Installation {
     bundle: PathBuf,
     team: String,
 }
 
+#[derive(Clone, Debug)]
 pub(crate) struct PreparedUpdate {
     pub(crate) version: String,
     installation: Installation,
-    staging: tempfile::TempDir,
+    staging: PathBuf,
+    pub(crate) build: Option<muxy_protocol::BuildInfo>,
 }
 
 impl Installation {
@@ -86,11 +88,111 @@ impl Installation {
         let candidate = staging.path().join("Muxy Beta.app");
         run(Command::new("/usr/bin/ditto").arg(&source).arg(&candidate))?;
         self.verify_app(&candidate, &release.version)?;
+        let build =
+            crate::server::read_build_info(&candidate.join("Contents/MacOS/muxy-server")).ok();
+        if build
+            .as_ref()
+            .is_some_and(|info| info.version != release.version)
+        {
+            return Err("The server version does not match the signed app".into());
+        }
         Ok(Some(PreparedUpdate {
             version: release.version,
             installation: self.clone(),
-            staging,
+            staging: staging.keep(),
+            build,
         }))
+    }
+
+    pub(crate) fn restore(&self, path: &Path) -> Result<Option<(PreparedUpdate, bool)>> {
+        let bytes = match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        let record: serde_json::Value = serde_json::from_slice(&bytes)?;
+        let version = record["version"]
+            .as_str()
+            .ok_or("Invalid pending update")?
+            .to_owned();
+        if build_number(&version) <= build_number(env!("CARGO_PKG_VERSION")) {
+            std::fs::remove_file(path)?;
+            return Ok(None);
+        }
+        let staging = PathBuf::from(
+            record["staging"]
+                .as_str()
+                .ok_or("Invalid pending update path")?,
+        );
+        if !self.owns_staging(&staging) {
+            return Err("Pending update is outside the installation directory".into());
+        }
+        let candidate = staging.join("Muxy Beta.app");
+        self.verify_app(&candidate, &version)?;
+        let build =
+            crate::server::read_build_info(&candidate.join("Contents/MacOS/muxy-server")).ok();
+        if build.as_ref().is_some_and(|build| build.version != version) {
+            return Err("Pending update version mismatch".into());
+        }
+        Ok(Some((
+            PreparedUpdate {
+                version,
+                installation: self.clone(),
+                staging,
+                build,
+            },
+            record["scheduled"].as_bool() == Some(true),
+        )))
+    }
+
+    fn owns_staging(&self, path: &Path) -> bool {
+        path.parent() == self.bundle.parent()
+            && path
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with(".muxy-beta-update-"))
+            && std::fs::symlink_metadata(path).is_ok_and(|m| m.is_dir() && !m.is_symlink())
+    }
+
+    pub(crate) fn cleanup(&self, socket: &Path) -> Result<()> {
+        let _server_lock = match crate::server::lock_for_update(socket) {
+            Ok(lock) => lock,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(()),
+            Err(error) => return Err(error.into()),
+        };
+        let _bundle_lock = replacement::lock(
+            self.bundle
+                .parent()
+                .ok_or("Missing application directory")?,
+        )?;
+        let client = muxy_client::Client::connect(socket)?;
+        self.cleanup_retired(client.server_info())
+    }
+
+    fn cleanup_retired(&self, server: &muxy_protocol::ServerInfo) -> Result<()> {
+        for entry in std::fs::read_dir(
+            self.bundle
+                .parent()
+                .ok_or("Missing application directory")?,
+        )? {
+            let path = entry?.path();
+            if !self.owns_staging(&path) {
+                continue;
+            }
+            let Ok(bytes) = std::fs::read(path.join("retained.json")) else {
+                continue;
+            };
+            let record: serde_json::Value = serde_json::from_slice(&bytes)?;
+            if record["bundle"].as_str() == self.bundle.to_str()
+                && record["committed"].as_bool() == Some(true)
+                && record["instance"]
+                    .as_u64()
+                    .is_some_and(|instance| instance != server.instance)
+                && path.join("previous.app").is_dir()
+            {
+                std::fs::remove_dir_all(path)?;
+            }
+        }
+        Ok(())
     }
 
     fn verify_signature(&self, path: &Path, app: bool) -> Result<()> {
@@ -149,29 +251,77 @@ impl PreparedUpdate {
                 bundle: staging.path().join("installed.app"),
                 team: "TESTTEAM00".into(),
             },
-            staging,
+            staging: staging.keep(),
+            build: Some(muxy_protocol::BuildInfo::current()),
         })
     }
 
-    pub(crate) fn install(self, _server_lock: std::fs::File) -> Result<tempfile::TempDir> {
+    pub(crate) fn compatible_with(&self, server: &muxy_protocol::ServerInfo) -> bool {
+        self.build
+            .as_ref()
+            .is_some_and(|build| build.compatibility == server.build.compatibility)
+    }
+
+    pub(crate) fn validate(&self) -> Result<()> {
+        self.installation
+            .verify_app(&self.candidate(), &self.version)?;
+        self.installation
+            .verify_app(&self.installation.bundle, env!("CARGO_PKG_VERSION"))?;
+        let build =
+            crate::server::read_build_info(&self.candidate().join("Contents/MacOS/muxy-server"))
+                .ok();
+        if build != self.build {
+            return Err("The staged update metadata changed. Check for updates again.".into());
+        }
+        Ok(())
+    }
+
+    fn candidate(&self) -> PathBuf {
+        self.staging.join("Muxy Beta.app")
+    }
+
+    pub(crate) fn persist(&self, path: &Path, scheduled: bool) -> Result<()> {
+        let record = serde_json::json!({"version": self.version, "staging": self.staging, "scheduled": scheduled});
+        write_record(path, &record)
+    }
+
+    fn retain_bundle(&self, server: &muxy_protocol::ServerInfo) -> Result<()> {
+        write_record(
+            &self.staging.join("retained.json"),
+            &serde_json::json!({
+                "bundle": self.installation.bundle, "committed": false, "instance": if server.build.version == env!("CARGO_PKG_VERSION") { server.instance } else { 0 }
+            }),
+        )
+    }
+
+    fn commit_retirement(&self) -> Result<()> {
+        let path = self.staging.join("retained.json");
+        let mut record: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+        record["committed"] = true.into();
+        write_record(&path, &record)
+    }
+
+    pub(crate) fn install(
+        &self,
+        _server_lock: std::fs::File,
+        server: &muxy_protocol::ServerInfo,
+    ) -> Result<()> {
         let _bundle_lock = replacement::lock(
             self.installation
                 .bundle
                 .parent()
                 .ok_or("Missing application directory")?,
         )?;
-        let candidate = self.staging.path().join("Muxy Beta.app");
-        self.installation.verify_app(&candidate, &self.version)?;
-        self.installation
-            .verify_app(&self.installation.bundle, env!("CARGO_PKG_VERSION"))?;
-        let backup = self.staging.path().join("previous.app");
+        let candidate = self.staging.join("Muxy Beta.app");
+        self.validate()?;
+        let backup = self.staging.join("previous.app");
+        self.retain_bundle(server)?;
         if let Err(error) =
             replacement::replace_and_restart(&self.installation.bundle, &candidate, &backup, || {
                 restart(&self.installation.bundle)
             })
         {
             if backup.exists() {
-                let _ = self.staging.keep();
                 return Err(format!(
                     "{error}. The previous app is available at {}",
                     backup.display()
@@ -180,7 +330,14 @@ impl PreparedUpdate {
             }
             return Err(error);
         }
-        Ok(self.staging)
+        if let Err(error) = self.commit_retirement() {
+            use std::io::Write;
+            let _ = writeln!(
+                std::io::stderr(),
+                "Retaining update recovery files: {error}"
+            );
+        }
+        Ok(())
     }
 }
 
@@ -300,6 +457,62 @@ mod tests {
         assert!(installation.verify_signature(&app, true).is_err());
         std::fs::write(binaries.join("muxy-server"), b"changed helper")?;
         assert!(verify_code(&app, "identifier \"com.muxy-beta.app\"").is_err());
+        Ok(())
+    }
+}
+
+fn write_record(path: &Path, value: &serde_json::Value) -> Result<()> {
+    use std::io::Write;
+    let mut file =
+        tempfile::NamedTempFile::new_in(path.parent().ok_or("Missing update directory")?)?;
+    serde_json::to_writer(file.as_file_mut(), value)?;
+    file.flush()?;
+    file.as_file().sync_all()?;
+    file.persist(path)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod smoke;
+
+#[cfg(test)]
+mod retirement_tests {
+    use super::*;
+
+    #[test]
+    fn only_committed_unused_bundles_are_retired() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let installation = Installation {
+            bundle: root.path().join("Muxy Beta.app"),
+            team: "TESTTEAM00".into(),
+        };
+        let server = muxy_protocol::ServerInfo::current();
+        let mut directories = Vec::new();
+        for (name, committed, instance) in [
+            ("active", true, server.instance),
+            ("recovery", false, 0),
+            ("unused", true, 0),
+        ] {
+            let path = root.path().join(format!(".muxy-beta-update-{name}"));
+            std::fs::create_dir_all(path.join("previous.app"))?;
+            write_record(
+                &path.join("retained.json"),
+                &serde_json::json!({"bundle": installation.bundle, "committed": committed, "instance": instance}),
+            )?;
+            directories.push(path);
+        }
+        let socket = root.path().join("server.sock");
+        let lock = crate::server::lock_for_update(&socket)?;
+        installation.cleanup(&socket)?;
+        assert!(directories.iter().all(|path| path.exists()));
+        lock.unlock()?;
+        drop(lock);
+        assert!(installation.cleanup(&socket).is_err());
+        assert!(directories.iter().all(|path| path.exists()));
+        installation.cleanup_retired(&server)?;
+        assert!(directories[0].exists());
+        assert!(directories[1].exists());
+        assert!(!directories[2].exists());
         Ok(())
     }
 }

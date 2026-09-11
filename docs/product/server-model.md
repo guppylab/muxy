@@ -42,7 +42,8 @@ flowchart TB
   sessions outlive the app.
 - The current-device server is bundled with the app. The app starts it at
   launch if it is not already running, and it keeps running, with or without
-  sessions, until stopped from settings. Remote servers provide the same
+  sessions, until stopped from settings or replaced for a pending update after
+  all sessions end. Remote servers provide the same
   capabilities and are defined per type, such as SSH, Docker, or kubectl; how
   each is installed and reached is deferred.
 - Stopping or restarting a server ends every session it owns. Its settings

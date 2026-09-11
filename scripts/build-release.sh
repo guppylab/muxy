@@ -107,6 +107,7 @@ for BINARY in muxy-server muxy-app; do
 done
 codesign "${SIGN_ARGS[@]}" "$APP"
 codesign --verify --deep --strict --verbose=2 "$APP"
+python3 "$ROOT/scripts/beta_release.py" check-build "$VERSION" "$APP/Contents/MacOS/muxy-server"
 
 ln -s /Applications "$STAGING/dmg/Applications"
 DMG="$STAGING/artifacts/Muxy-${VERSION}-${ARCH}.dmg"

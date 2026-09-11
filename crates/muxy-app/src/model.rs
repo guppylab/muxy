@@ -742,6 +742,10 @@ impl AppModel {
     }
 
     pub(crate) fn connect(&mut self, cx: &mut Context<Self>) {
+        self.connect_to_server(false, cx);
+    }
+
+    fn connect_to_server(&mut self, after_update: bool, cx: &mut Context<Self>) {
         if self.connection != ConnectionState::Disconnected
             || self.quitting != Quitting::Idle
             || self.server_preferences.control_busy
@@ -764,7 +768,17 @@ impl AppModel {
             pane.view
                 .update(cx, |pane, cx| pane.set_state(PaneState::Connecting, cx));
         }
-        if self.work.send((generation, Work::Connect)).is_err() {
+        let work = if after_update {
+            Work::ReconnectAfterUpdate(
+                self.updates
+                    .server
+                    .as_ref()
+                    .map_or(0, |server| server.instance),
+            )
+        } else {
+            Work::Connect
+        };
+        if self.work.send((generation, work)).is_err() {
             self.disconnect(cx);
             self.fail("The server connection worker stopped".into(), cx);
         }
@@ -1074,6 +1088,10 @@ impl AppModel {
     }
 
     fn start_attach(&mut self, pane: PaneId, size: Size, cx: &mut Context<Self>) {
+        if self.updates.replacing() {
+            self.updates.queued_attaches.insert(pane, size);
+            return;
+        }
         if !self.is_terminal(pane) {
             return;
         }
@@ -1189,6 +1207,7 @@ impl AppModel {
         }
         self.discard_pending(cx);
         self.apply_restore(sessions, cx);
+        self.resume_update_attaches(cx);
         if self.settings_window.is_some() {
             self.read_server_settings(cx);
         }
@@ -1200,18 +1219,25 @@ impl AppModel {
             return;
         }
         match update {
+            Update::ServerInfo(server) => self.receive_server_info(server, cx),
+            Update::ServerChecked(result) => self.receive_server_update(result, cx),
             Update::ServerSettings(result) => self.receive_server_settings(result, cx),
             Update::ServerStopped { restart, result } => {
                 self.receive_server_stopped(restart, result, cx);
             }
-            Update::StoppedForInstall(result) => self.receive_update_prepared(result, cx),
+            Update::PreparedForInstall(result) => self.receive_update_prepared(result, cx),
             Update::Search {
                 pane,
                 request,
                 result,
             } => self.receive_search(pane, &request, result, cx),
-            Update::Connected(sessions) => self.receive_connected(&sessions, cx),
+            Update::Connected(sessions) => {
+                self.updates.sessions = sessions.len();
+                self.receive_connected(&sessions, cx);
+                self.reconcile_server_update(cx);
+            }
             Update::ConnectFailed(error) => {
+                self.update_connect_failed();
                 self.disconnect(cx);
                 self.fail(error, cx);
             }
@@ -1221,27 +1247,7 @@ impl AppModel {
                 attachment,
                 created,
             } => {
-                self.pending.remove(&pane);
-                self.initial_directories.remove(&pane);
-                if self.state.set_pane_session(pane, Some(session)).is_err() {
-                    if created {
-                        self.discard_created(session, cx);
-                    } else {
-                        self.send(Work::Detach(attachment.channel), cx);
-                    }
-                    return;
-                }
-                self.save(cx);
-                if let Some(view) = self.terminal(&pane).map(|pane| pane.view.clone()) {
-                    let channel = attachment.channel;
-                    let size = view.update(cx, |pane, cx| pane.attach(attachment, cx));
-                    if let Some(size) = size {
-                        self.send(Work::Resize(channel, size), cx);
-                    }
-                } else {
-                    self.send(Work::Detach(attachment.channel), cx);
-                    self.snapshots.insert(pane, attachment.grid);
-                }
+                self.receive_attached(pane, session, attachment, created, cx);
             }
             Update::AttachFailed {
                 pane,
@@ -1296,6 +1302,37 @@ impl AppModel {
             Update::Error(error) => self.fail(error, cx),
         }
         cx.notify();
+    }
+
+    fn receive_attached(
+        &mut self,
+        pane: PaneId,
+        session: SessionId,
+        attachment: muxy_client::Attachment,
+        created: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.pending.remove(&pane);
+        self.initial_directories.remove(&pane);
+        if self.state.set_pane_session(pane, Some(session)).is_err() {
+            if created {
+                self.discard_created(session, cx);
+            } else {
+                self.send(Work::Detach(attachment.channel), cx);
+            }
+            return;
+        }
+        self.save(cx);
+        if let Some(view) = self.terminal(&pane).map(|pane| pane.view.clone()) {
+            let channel = attachment.channel;
+            let size = view.update(cx, |pane, cx| pane.attach(attachment, cx));
+            if let Some(size) = size {
+                self.send(Work::Resize(channel, size), cx);
+            }
+        } else {
+            self.send(Work::Detach(attachment.channel), cx);
+            self.snapshots.insert(pane, attachment.grid);
+        }
     }
 
     fn receive_attach_failed(
@@ -1414,6 +1451,7 @@ impl AppModel {
                 }
             }
             ClientEvent::SessionEnded { session, reason } => {
+                self.updates.sessions = self.updates.sessions.saturating_sub(1);
                 let panes: Vec<_> = self.state.projects().iter().flat_map(|project| &project.tabs).flat_map(|tab| &tab.panes)
                     .filter(|pane| matches!(pane.content, PaneContent::Terminal { session: Some(id) } if id == session))
                     .map(|pane| pane.id).collect();
@@ -1421,8 +1459,10 @@ impl AppModel {
                     self.mark_exited(pane, Some(reason), cx);
                 }
                 self.ensure_visible(cx);
+                self.reconcile_server_update(cx);
             }
-            ClientEvent::Disconnected => self.disconnect(cx),
+            ClientEvent::ServerRestarting => self.expect_server_restart(),
+            ClientEvent::Disconnected => self.receive_disconnect(cx),
             ClientEvent::Metadata { channel, event } => {
                 if let Some(pane) = self
                     .grids

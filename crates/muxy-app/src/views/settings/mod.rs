@@ -82,6 +82,7 @@ pub(crate) struct Snapshot {
     pub(crate) server: Option<muxy_protocol::ServerSettingsDoc>,
     pub(crate) connected: bool,
     pub(crate) server_busy: bool,
+    pub(crate) server_update: Option<String>,
     pub(crate) pending_server_fields: HashSet<String>,
 }
 
@@ -362,6 +363,11 @@ impl SettingsView {
             let value = self.fields[id].read(cx).text().trim().to_owned();
             cx.emit(SettingsEvent::Change(Change::Field(id, value)));
         }
+    }
+
+    pub(crate) fn show_server(&mut self, cx: &mut Context<Self>) {
+        self.category = Category::Server;
+        cx.notify();
     }
 
     fn matches(&self, category: Category, label: &str) -> bool {

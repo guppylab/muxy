@@ -46,6 +46,7 @@ pub enum RequestBody {
     ReadServerSettings,
     WriteServerSettings(ServerSettingsDoc),
     StopServer,
+    StopServerIfIdle,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -77,6 +78,7 @@ pub enum ReplyBody {
     ServerSettings(ServerSettingsDoc),
     ServerSettingsWritten,
     ServerStopping,
+    ServerBusy,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

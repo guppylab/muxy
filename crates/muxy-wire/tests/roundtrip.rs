@@ -51,8 +51,18 @@ fn input_is_raw_including_empty_and_non_utf8_bytes() -> Result<(), WireError> {
 #[test]
 fn postcard_payload_has_no_duplicate_message_discriminant() -> Result<(), WireError> {
     let mut bytes = Vec::new();
-    encode(&Message::Hello { versions: vec![V1] }, CONTROL, &mut bytes)?;
-    assert_eq!(&bytes[HEADER_LEN..], &[1, 1]);
+    encode(
+        &Message::Hello {
+            versions: vec![V1],
+            compatibility: muxy_protocol::COMPATIBILITY,
+        },
+        CONTROL,
+        &mut bytes,
+    )?;
+    assert_eq!(
+        &bytes[HEADER_LEN..],
+        postcard::to_allocvec(&(vec![V1], muxy_protocol::COMPATIBILITY))?.as_slice()
+    );
     encode(&Message::VersionUnsupported, CONTROL, &mut bytes)?;
     assert_eq!(bytes.len(), HEADER_LEN);
     Ok(())
@@ -89,6 +99,7 @@ fn kind_numbers_and_both_reserved_flags_are_checked() -> Result<(), WireError> {
         MessageKind::Frame,
         MessageKind::Metadata,
         MessageKind::Mouse,
+        MessageKind::ServerRestarting,
     ];
     for (number, kind) in (1_u8..).zip(kinds) {
         assert_eq!(kind as u8, number);
@@ -107,7 +118,7 @@ fn kind_numbers_and_both_reserved_flags_are_checked() -> Result<(), WireError> {
                 Err(WireError::FlagsSet(value)) if value == kind
             ));
             assert!(matches!(decode(header, &[]), Err(WireError::FlagsSet(_))));
-        } else if kind == 0 || kind > 12 {
+        } else if kind == 0 || kind > 13 {
             assert!(matches!(
                 Header::from_bytes(header.to_bytes()),
                 Err(WireError::UnknownKind(value)) if value == kind

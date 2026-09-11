@@ -175,12 +175,17 @@ fn ordered_request(
             registry.write_settings(settings.into())?;
             ReplyBody::ServerSettingsWritten
         }
-        RequestBody::StopServer => {
+        RequestBody::StopServerIfIdle if !registry.stop_if_idle() => ReplyBody::ServerBusy,
+        RequestBody::StopServer | RequestBody::StopServerIfIdle => {
             outbox.push_control(Message::Reply {
                 id,
                 body: ReplyBody::ServerStopping,
             });
-            registry.request_stop();
+            if matches!(body, RequestBody::StopServerIfIdle) {
+                registry.request_restart();
+            } else {
+                registry.request_stop();
+            }
             return Ok(None);
         }
         RequestBody::SetTerminalColors(colors) => {

@@ -14,12 +14,14 @@ pub fn encode(
     }
     output.resize(HEADER_LEN, 0);
     match message {
-        Message::Hello { versions } | Message::HelloReply { versions } => {
-            serialize(versions, output)?;
-        }
+        Message::Hello {
+            versions,
+            compatibility,
+        } => serialize(&(versions, compatibility), output)?,
+        Message::HelloReply { versions, server } => serialize(&(versions, server), output)?,
         Message::Request { id, body } => serialize(&(id, body), output)?,
         Message::FrameAck { channel, seq } => serialize(&(channel, seq), output)?,
-        Message::VersionUnsupported => serialize(&(), output)?,
+        Message::ServerRestarting | Message::VersionUnsupported => serialize(&(), output)?,
         Message::Reply { id, body } => serialize(&(id, body), output)?,
         Message::SessionEnded { session, reason } => serialize(&(session, reason), output)?,
         Message::Fatal(error) => serialize(error, output)?,
@@ -44,9 +46,13 @@ pub fn decode(header: Header, payload: &[u8]) -> Result<(ChannelId, Message), Wi
         return Err(postcard::Error::DeserializeBadEncoding.into());
     }
     let message = match MessageKind::from_u8(header.kind)? {
-        MessageKind::Hello => Message::Hello {
-            versions: deserialize(payload)?,
-        },
+        MessageKind::Hello => {
+            let (versions, compatibility) = deserialize(payload)?;
+            Message::Hello {
+                versions,
+                compatibility,
+            }
+        }
         MessageKind::Request => {
             let (id, body) = deserialize(payload)?;
             Message::Request { id, body }
@@ -55,9 +61,14 @@ pub fn decode(header: Header, payload: &[u8]) -> Result<(ChannelId, Message), Wi
             let (channel, seq) = deserialize(payload)?;
             Message::FrameAck { channel, seq }
         }
-        MessageKind::HelloReply => Message::HelloReply {
-            versions: deserialize(payload)?,
-        },
+        MessageKind::HelloReply => {
+            let (versions, server) = deserialize(payload)?;
+            Message::HelloReply { versions, server }
+        }
+        MessageKind::ServerRestarting => {
+            deserialize::<()>(payload)?;
+            Message::ServerRestarting
+        }
         MessageKind::VersionUnsupported => {
             deserialize::<()>(payload)?;
             Message::VersionUnsupported

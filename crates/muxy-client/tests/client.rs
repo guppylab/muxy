@@ -410,7 +410,7 @@ fn server_exit_disconnects_the_client() -> TestResult {
     connection.finished.recv_timeout(TIMEOUT)??;
     loop {
         match connection.events.recv_timeout(TIMEOUT)? {
-            ClientEvent::Disconnected => break,
+            ClientEvent::ServerRestarting | ClientEvent::Disconnected => break,
             ClientEvent::Frame { .. } | ClientEvent::Metadata { .. } => {}
             other @ ClientEvent::SessionEnded { .. } => {
                 return Err(format!("expected disconnect, got {other:?}").into());
@@ -461,6 +461,7 @@ fn a_late_handshake_reply_after_the_connect_timeout_is_closed() -> TestResult {
             CONTROL,
             &Message::HelloReply {
                 versions: muxy_protocol::SUPPORTED.to_vec(),
+                server: muxy_protocol::ServerInfo::current(),
             },
         );
         match (sent, decoder.next()) {
@@ -516,6 +517,7 @@ fn a_misplaced_server_message_closes_the_client() -> TestResult {
             CONTROL,
             &Message::HelloReply {
                 versions: muxy_protocol::SUPPORTED.to_vec(),
+                server: muxy_protocol::ServerInfo::current(),
             },
         )?;
         encoder.send(CONTROL, &Message::Input(b"x".to_vec()))?;

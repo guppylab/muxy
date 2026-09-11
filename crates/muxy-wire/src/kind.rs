@@ -17,6 +17,7 @@ pub enum MessageKind {
     Frame = 10,
     Metadata = 11,
     Mouse = 12,
+    ServerRestarting = 13,
 }
 
 impl MessageKind {
@@ -37,6 +38,7 @@ impl MessageKind {
             10 => Ok(Self::Frame),
             11 => Ok(Self::Metadata),
             12 => Ok(Self::Mouse),
+            13 => Ok(Self::ServerRestarting),
             _ => Err(WireError::UnknownKind(value)),
         }
     }
@@ -57,6 +59,7 @@ impl From<&Message> for MessageKind {
             Message::Frame(_) => Self::Frame,
             Message::Metadata(_) => Self::Metadata,
             Message::Mouse(_) => Self::Mouse,
+            Message::ServerRestarting => Self::ServerRestarting,
         }
     }
 }

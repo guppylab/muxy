@@ -26,17 +26,18 @@ pub enum ClientEvent {
         reason: ExitReason,
     },
     Disconnected,
+    ServerRestarting,
 }
 
 pub(crate) fn route(
     decoder: &mut Decoder<impl Read>,
     pending: &Pending,
     events: &Sender<ClientEvent>,
-    connected: &Sender<Result<Version, ClientError>>,
+    connected: &Sender<Result<(Version, muxy_protocol::ServerInfo), ClientError>>,
     cancellation: &dyn StreamCancellation,
 ) {
     let handshake = handshake::accept(decoder.next());
-    let accepted = handshake.as_ref().ok().copied();
+    let accepted = handshake.as_ref().ok().map(|(version, _)| *version);
     let _ = connected.send(handshake);
     if let Some(version) = accepted {
         while let Some(event) = next_event(decoder, pending, version) {
@@ -61,6 +62,7 @@ fn next_event(
             return None;
         }
         match (channel, message) {
+            (CONTROL, Message::ServerRestarting) => return Some(ClientEvent::ServerRestarting),
             (CONTROL, Message::Reply { id, body }) => pending.resolve(id, body),
             (CONTROL, Message::SessionEnded { session, reason }) => {
                 return Some(ClientEvent::SessionEnded { session, reason });

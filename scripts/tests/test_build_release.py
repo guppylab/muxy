@@ -48,7 +48,8 @@ class BuildReleaseTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         for relative in (
-            "scripts/build-release.sh", "scripts/beta_release.py", "LICENSE",
+            "scripts/build-release.sh", "scripts/beta_release.py", "scripts/beta_compatibility.py",
+            "crates/muxy-protocol/src/build.rs", "LICENSE",
             "packaging/macos/AppIcon.png", "packaging/macos/AppIconBeta.png",
         ):
             destination = self.root / relative
@@ -58,7 +59,7 @@ class BuildReleaseTests(unittest.TestCase):
             binaries = self.root / "target" / target / "release"
             binaries.mkdir(parents=True)
             for name in ("muxy-app", "muxy-server"):
-                (binaries / name).write_bytes(b"binary")
+                (binaries / name).write_text(f"#!{sys.executable}\nimport json\nprint(json.dumps({{'version': '{VERSION}', 'compatibility': 1}}))\n")
                 (binaries / f"{name}.dSYM").mkdir()
         tools = self.root / "tools"
         tools.mkdir()
