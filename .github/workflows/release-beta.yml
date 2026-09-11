@@ -143,6 +143,9 @@ jobs:
           rm -f "$RUNNER_TEMP/muxy-beta-certificate.p12"
 
   release:
+    concurrency:
+      group: muxy-beta-2.x-feed
+      cancel-in-progress: false
     needs: [validate, build]
     runs-on: ubuntu-latest
     timeout-minutes: 15

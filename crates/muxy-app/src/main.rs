@@ -5,6 +5,7 @@ mod opener;
 mod picker;
 mod server;
 mod theme;
+mod updater;
 mod views {
     pub(crate) mod confirm;
     pub(crate) mod disconnected;
@@ -46,10 +47,10 @@ use gpui::{
 
 use model::AppModel;
 use views::workspace::{
-    AddProject, ClosePane, CloseTab, DecreaseFontSize, EndAllSessionsAndQuit, Find, FindNext,
-    FindPrevious, FocusPaneDown, FocusPaneLeft, FocusPaneRight, FocusPaneUp, HideApp, HideOthers,
-    IncreaseFontSize, Minimize, NewHomeTab, NewTab, NextProject, NextPrompt, NextTab,
-    OpenConfiguration, OpenSettings, PreviousProject, PreviousPrompt, PreviousTab, Quit,
+    AddProject, CheckForUpdates, ClosePane, CloseTab, DecreaseFontSize, EndAllSessionsAndQuit,
+    Find, FindNext, FindPrevious, FocusPaneDown, FocusPaneLeft, FocusPaneRight, FocusPaneUp,
+    HideApp, HideOthers, IncreaseFontSize, Minimize, NewHomeTab, NewTab, NextProject, NextPrompt,
+    NextTab, OpenConfiguration, OpenSettings, PreviousProject, PreviousPrompt, PreviousTab, Quit,
     SelectCommandOutput, SelectTab, ShowAll, SplitDown, SplitRight, ToggleFullScreen,
     ToggleSidebar, ToggleThemePicker, ToggleZoomPane, Zoom, bind_keys,
 };
@@ -174,6 +175,7 @@ fn menus() -> Vec<Menu> {
             items: vec![
                 MenuItem::action("Settings…", OpenSettings),
                 MenuItem::action("Open Configuration…", OpenConfiguration),
+                MenuItem::action("Check for Updates…", CheckForUpdates),
                 MenuItem::separator(),
                 MenuItem::os_submenu("Services", SystemMenuType::Services),
                 MenuItem::separator(),

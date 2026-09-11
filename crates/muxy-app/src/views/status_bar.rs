@@ -71,10 +71,26 @@ pub(crate) fn status_bar(model: &AppModel, cx: &mut Context<AppModel>) -> impl I
                         .child(super::project_picker::display_path(&project.directory)),
                 ),
         )
-        .children(super::disconnected::status(model, cx).map(|status| {
+        .child(
             div()
-                .debug_selector(|| "project-connection-status".into())
-                .flex_none()
-                .child(status)
-        }))
+                .flex()
+                .items_center()
+                .gap(m.spacing4())
+                .children(model.update_status().map(|status| {
+                    div()
+                        .id("beta-update-status")
+                        .flex_none()
+                        .text_size(m.font_footnote())
+                        .text_color(theme.fg_muted)
+                        .cursor_pointer()
+                        .child(status)
+                        .on_click(cx.listener(|model, _, _, cx| model.check_for_updates(true, cx)))
+                }))
+                .children(super::disconnected::status(model, cx).map(|status| {
+                    div()
+                        .debug_selector(|| "project-connection-status".into())
+                        .flex_none()
+                        .child(status)
+                })),
+        )
 }

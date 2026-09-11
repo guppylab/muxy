@@ -13,6 +13,7 @@ use muxy_protocol::{
     SearchSource, SessionId, SessionInfo, Size, TerminalColors,
 };
 
+use crate::server::stop_for_update;
 use crate::views::terminal::find::SearchRequest;
 use crate::views::terminal::scroll::HistoryRequest;
 
@@ -62,6 +63,7 @@ pub(crate) enum Work {
         socket: PathBuf,
         restart: bool,
     },
+    PrepareUpdate(PathBuf),
     Attach {
         pane: PaneId,
         session: Option<SessionId>,
@@ -110,6 +112,7 @@ pub(crate) enum Update {
         restart: bool,
         result: Result<(), ClientError>,
     },
+    StoppedForInstall(Result<std::fs::File, ClientError>),
     ConnectFailed(String),
     Attached {
         pane: PaneId,
@@ -278,6 +281,7 @@ fn rejected(work: Work, error: ClientError) -> Update {
             restart,
             result: Err(error),
         },
+        Work::PrepareUpdate(_) => Update::StoppedForInstall(Err(error)),
         Work::Attach { pane, session, .. } => Update::AttachFailed {
             pane,
             session,
@@ -328,6 +332,9 @@ fn perform(work: Work, client: &Client) -> Option<Update> {
                 restart,
                 result: crate::server::stop_server(client, &socket),
             });
+        }
+        Work::PrepareUpdate(socket) => {
+            return Some(Update::StoppedForInstall(stop_for_update(client, &socket)));
         }
         Work::Flush => return Some(Update::Flushed),
         Work::Search {

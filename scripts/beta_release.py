@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import json
 import plistlib
 import re
 import subprocess
@@ -89,10 +90,31 @@ def bundle_info(version):
     }
 
 
+def update_metadata(version, repository, directory):
+    build_number(version)
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
+        raise ValueError("invalid GitHub repository")
+    platforms = {}
+    for platform, arch in (("macos-aarch64", "arm64"), ("macos-x86_64", "x86_64")):
+        filename = f"Muxy-{version}-{arch}.dmg"
+        size = (directory / filename).stat().st_size
+        if not 0 < size <= 2 * 1024**3:
+            raise ValueError(f"invalid update size for {arch}")
+        platforms[platform] = {
+            "url": f"https://github.com/{repository}/releases/download/v{version}/{filename}",
+            "size": size,
+        }
+    return {"schema": 1, "version": version, "platforms": platforms}
+
+
 def main():
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("version")
+    metadata = commands.add_parser("update")
+    metadata.add_argument("version")
+    metadata.add_argument("repository")
+    metadata.add_argument("directory", type=Path)
     for command in ("stamp", "check-version", "plist"):
         subparser = commands.add_parser(command)
         subparser.add_argument("version")
@@ -108,6 +130,9 @@ def main():
             stamp_version(ROOT, args.version)
         elif args.command == "check-version":
             build_number(args.version)
+        elif args.command == "update":
+            metadata = update_metadata(args.version, args.repository, args.directory)
+            (args.directory / "update.json").write_text(json.dumps(metadata, indent=2) + "\n")
         else:
             args.output.write_bytes(plistlib.dumps(bundle_info(args.version)))
     except (ValueError, OSError, subprocess.CalledProcessError) as error:

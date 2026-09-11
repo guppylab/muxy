@@ -1,5 +1,6 @@
 mod links;
 mod preferences;
+mod updates;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -46,6 +47,7 @@ enum Quitting {
     Idle,
     Preserve,
     EndAll,
+    Update,
 }
 
 struct CloseRequest {
@@ -99,6 +101,7 @@ pub(crate) struct AppModel {
     generation: u64,
     connection: ConnectionState,
     quitting: Quitting,
+    updates: updates::Updater,
     _events: Task<()>,
     _appearance: Subscription,
     _bounds: Subscription,
@@ -274,6 +277,7 @@ impl AppModel {
             generation: 1,
             connection: ConnectionState::Connecting,
             quitting: Quitting::Idle,
+            updates: updates::Updater::default(),
             _events: events,
             _appearance: appearance,
             _bounds: bounds,
@@ -289,6 +293,7 @@ impl AppModel {
                 .navigation
                 .record((model.state.current_project().id, tab));
         }
+        model.start_update_checks(cx);
         model
     }
 
@@ -1199,6 +1204,7 @@ impl AppModel {
             Update::ServerStopped { restart, result } => {
                 self.receive_server_stopped(restart, result, cx);
             }
+            Update::StoppedForInstall(result) => self.receive_update_prepared(result, cx),
             Update::Search {
                 pane,
                 request,
@@ -1284,6 +1290,7 @@ impl AppModel {
                     self.quitting = Quitting::Idle;
                 }
             }
+            Update::Flushed if self.quitting == Quitting::Update => self.flush_before_update(cx),
             Update::Flushed => {}
             Update::Event(event) => self.receive_event(event, cx),
             Update::Error(error) => self.fail(error, cx),
@@ -1552,6 +1559,7 @@ mod tests {
     mod sidebar;
     mod splits;
     mod tab_strip;
+    mod updates;
     mod window_bounds;
 
     use muxy_client::Client;

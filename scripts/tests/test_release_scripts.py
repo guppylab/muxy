@@ -44,11 +44,23 @@ if name == "git":
         sys.exit("unexpected git arguments: " + repr(args))
 elif name == "gh":
     if args[:2] == ["release", "view"]:
-        state = os.environ.get("RELEASE_STATE", "missing")
+        channel = args[2] == "beta-2.x"
+        state = os.environ.get("CHANNEL_STATE" if channel else "RELEASE_STATE", "missing")
         if state == "missing":
             sys.exit(1)
         print(json.dumps({"isDraft": state == "draft", "isPrerelease": state != "stable",
+                          "assets": [{"name": "update.json"}] if os.environ.get("CHANNEL_VERSION") else [],
                           "targetCommitish": os.environ["GITHUB_SHA"]}))
+    elif args[:2] == ["release", "download"]:
+        if os.environ.get("DOWNLOAD_EXIT"):
+            sys.exit(1)
+        version = os.environ["CHANNEL_VERSION"] if args[2] == "beta-2.x" else args[2][1:]
+        directory = Path(args[args.index("--dir") + 1])
+        metadata = {"schema": 1, "version": version, "platforms": {
+            "macos-" + platform: {"url": f"https://github.com/example/muxy/releases/download/v{version}/Muxy-{version}-{arch}.dmg", "size": len(arch)}
+            for platform, arch in [("aarch64", "arm64"), ("x86_64", "x86_64")]
+        }}
+        (directory / "update.json").write_text(json.dumps(metadata))
     elif args[:2] == ["release", "upload"]:
         sys.exit(int(os.environ.get("UPLOAD_EXIT", "0")))
     elif args[0] == "api":
@@ -109,13 +121,17 @@ class ReleaseScriptTests(unittest.TestCase):
         return [entry for line in self.log.read_text().splitlines()
                 if (entry := json.loads(line))[0] == tool]
 
+    def version_release_calls(self):
+        return [call for call in self.calls("gh")
+                if call[1] == "release" and call[2] != "download" and call[3] == f"v{VERSION}"]
+
     def publish(self):
         return self.run_script("publish-beta.sh", VERSION, self.directory)
 
     def test_publishes_both_architectures_at_exact_sha_without_latest(self):
         result = self.publish()
         self.assertEqual(result.returncode, 0, result.stderr)
-        calls = self.calls("gh")
+        calls = self.version_release_calls()
         self.assertEqual([call[2] for call in calls], ["view", "create", "upload", "edit"])
         for call in (calls[1], calls[3]):
             self.assertEqual(call[3], f"v{VERSION}")
@@ -161,13 +177,59 @@ class ReleaseScriptTests(unittest.TestCase):
         self.env.update(RELEASE_STATE="published", TAG_SHA=SHA)
         result = self.publish()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual([call[2] for call in self.calls("gh")], ["view"])
+        self.assertEqual([call[2] for call in self.version_release_calls()], ["view"])
 
     def test_draft_rerun_resumes_upload_and_publish(self):
         self.env.update(RELEASE_STATE="draft")
         result = self.publish()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual([call[2] for call in self.calls("gh")], ["view", "upload", "edit"])
+        self.assertEqual([call[2] for call in self.version_release_calls()], ["view", "upload", "edit"])
+
+    def test_feed_is_promoted_only_after_versioned_assets_are_published(self):
+        self.assertEqual(self.publish().returncode, 0)
+        calls = self.calls("gh")
+        published = next(i for i, call in enumerate(calls) if call[2:4] == ["edit", f"v{VERSION}"])
+        promoted = next(i for i, call in enumerate(calls) if call[2:4] == ["upload", "beta-2.x"])
+        self.assertLess(published, promoted)
+        metadata = json.loads((self.directory / "update.json").read_text())
+        self.assertEqual(metadata["version"], VERSION)
+        self.assertEqual(set(metadata["platforms"]), {"macos-aarch64", "macos-x86_64"})
+        self.assertEqual(metadata["platforms"]["macos-aarch64"]["size"], 5)
+        for call in calls:
+            if call[2] in ("create", "edit"):
+                self.assertIn("--prerelease", call)
+                self.assertIn("--latest=false", call)
+
+    def test_older_finishing_build_does_not_roll_back_the_feed(self):
+        self.env.update(CHANNEL_STATE="published", CHANNEL_VERSION="2.0.0-beta-1235")
+        result = self.publish()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(any(call[2:4] == ["upload", "beta-2.x"] for call in self.calls("gh")))
+
+    def test_newer_build_replaces_existing_feed(self):
+        self.env.update(CHANNEL_STATE="published", CHANNEL_VERSION="2.0.0-beta-999")
+        result = self.publish()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(any(call[2:4] == ["upload", "beta-2.x"] for call in self.calls("gh")))
+
+    def test_published_rerun_resumes_feed_promotion_from_published_metadata(self):
+        self.env.update(RELEASE_STATE="published", TAG_SHA=SHA)
+        result = self.publish()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.calls("gh")
+        self.assertTrue(any(call[2:4] == ["download", f"v{VERSION}"] for call in calls))
+        self.assertTrue(any(call[2:4] == ["upload", "beta-2.x"] for call in calls))
+        self.assertFalse(any(call[2:4] == ["upload", f"v{VERSION}"] for call in calls))
+
+    def test_stable_channel_and_failed_metadata_download_are_never_promoted(self):
+        for override in ({"CHANNEL_STATE": "stable"}, {"DOWNLOAD_EXIT": "1"}):
+            with self.subTest(override=override):
+                self.log.unlink(missing_ok=True)
+                before = self.env.copy()
+                self.env.update(override)
+                self.assertNotEqual(self.publish().returncode, 0)
+                self.assertFalse(any(call[2:4] == ["upload", "beta-2.x"] for call in self.calls("gh")))
+                self.env = before
 
     def test_upload_failure_leaves_draft_unpublished(self):
         self.env["UPLOAD_EXIT"] = "1"

@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use muxy_client::{Client, ClientError};
 
 pub(crate) fn ensure_server_running(socket: &Path) -> Result<Client, ClientError> {
+    let _installation = lock_for_update(socket)?;
     match Client::connect(socket) {
         Ok(client) => return Ok(client),
         Err(error) if unavailable(&error) => {}
@@ -115,9 +116,55 @@ pub(crate) fn stop_server(client: &Client, socket: &Path) -> Result<(), ClientEr
     }
 }
 
+pub(crate) fn stop_for_update(
+    client: &Client,
+    socket: &Path,
+) -> Result<std::fs::File, ClientError> {
+    let installation = lock_for_update(socket)?;
+    stop_server(client, socket)?;
+    match std::fs::symlink_metadata(socket) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(installation),
+        Err(error) => Err(error.into()),
+        Ok(_) => Err(io::Error::other("Another server started during update preparation; close other Muxy Beta instances and retry").into()),
+    }
+}
+
+fn lock_for_update(socket: &Path) -> io::Result<std::fs::File> {
+    if let Some(parent) = socket.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(socket.with_extension("update-lock"))?;
+    file.try_lock().map_err(|error| {
+        io::Error::other(format!(
+            "A beta update or server startup is already in progress: {error}"
+        ))
+    })?;
+    Ok(file)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn server_startup_respects_the_update_lock_and_releases_it_after_failure() -> io::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let socket = directory.path().join("server.sock");
+        let lock = lock_for_update(&socket)?;
+        assert!(
+            ensure_server_running(&socket)
+                .is_err_and(|error| error.to_string().contains("already in progress"))
+        );
+        assert!(lock_for_update(&socket).is_err());
+        drop(lock);
+        assert!(lock_for_update(&socket).is_ok());
+        Ok(())
+    }
 
     #[test]
     fn only_a_missing_or_refused_socket_can_start_a_server() {

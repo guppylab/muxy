@@ -166,6 +166,9 @@ impl AppModel {
     }
 
     pub(crate) fn change_preference(&mut self, change: Change, cx: &mut Context<Self>) {
+        if self.quitting != Quitting::Idle {
+            return;
+        }
         let id = change_id(&change).to_owned();
         if matches!(
             &change,
@@ -298,7 +301,8 @@ impl AppModel {
     }
 
     pub(crate) fn read_server_settings(&mut self, cx: &mut Context<Self>) {
-        if self.connection == ConnectionState::Ready
+        if self.quitting == Quitting::Idle
+            && self.connection == ConnectionState::Ready
             && !self.server_preferences.busy
             && !self.server_preferences.control_busy
         {
@@ -396,7 +400,8 @@ impl AppModel {
         window: gpui::AnyWindowHandle,
         cx: &mut Context<Self>,
     ) {
-        if self.close_prompt.is_some()
+        if self.quitting != Quitting::Idle
+            || self.close_prompt.is_some()
             || self.server_preferences.control_busy
             || self.server_preferences.busy
             || self.connection != ConnectionState::Ready

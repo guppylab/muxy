@@ -46,6 +46,7 @@ for ARCH in arm64 x86_64; do
     fi
 done
 shasum -a 256 "Muxy-${VERSION}-arm64.dmg" "Muxy-${VERSION}-x86_64.dmg" > SHA256SUMS
+python3 "$ROOT/scripts/beta_release.py" update "$VERSION" "$GITHUB_REPOSITORY" "$ARTIFACTS"
 
 if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
     --json isDraft,isPrerelease,targetCommitish > release.json; then
@@ -53,6 +54,7 @@ if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
         "$GITHUB_SHA" < release.json
     if [[ "$(python3 -c 'import json, sys; print(json.load(sys.stdin)["isDraft"])' < release.json)" == False ]]; then
         echo "==> $TAG is already published; leaving its assets unchanged"
+        python3 "$ROOT/scripts/publish-update.py" "$VERSION"
         exit 0
     fi
 else
@@ -62,7 +64,8 @@ Experimental Rust/GPUI beta from the \`2.x\` branch. Not intended for production
 - macOS 14 or newer. Choose \`arm64\` for Apple Silicon or \`x86_64\` for Intel.
 - Drag \`Muxy Beta.app\` to Applications. The app includes its matching \`muxy-server\`.
 - Installs alongside Muxy, with separate settings and sessions in \`~/Library/Application Support/Muxy Beta\`.
-- Updates are manual. Before replacing an earlier beta, use **End All Sessions and Quit** to stop its persistent server. This ends running terminal sessions.
+- Newer 2.x betas download automatically. Use **Check for Updates…** or **Restart to Update…** to install. Updating ends running terminal sessions and preserves tabs, saved output, and settings.
+- When replacing a beta manually, stop its server in Settings before replacing the app.
 
 Source: https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA
 EOF
@@ -78,8 +81,9 @@ fi
 
 # A failed upload leaves a resumable draft, never a half-populated public release.
 gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
-    "Muxy-${VERSION}-arm64.dmg" "Muxy-${VERSION}-x86_64.dmg" SHA256SUMS
+    "Muxy-${VERSION}-arm64.dmg" "Muxy-${VERSION}-x86_64.dmg" SHA256SUMS update.json
 cd "$ROOT"
 check_source
 gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
     --draft=false --prerelease --latest=false
+python3 "$ROOT/scripts/publish-update.py" "$VERSION"

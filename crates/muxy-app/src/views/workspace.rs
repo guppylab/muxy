@@ -17,6 +17,7 @@ actions!(
     muxy,
     [
         OpenSettings,
+        CheckForUpdates,
         NewTab,
         NewHomeTab,
         CloseTab,
@@ -234,6 +235,9 @@ fn action_handlers(cx: &mut Context<AppModel>) -> gpui::Div {
         )
         .on_action(cx.listener(|model, _: &FocusPaneDown, _, cx| {
             model.focus_direction(Direction::Down, cx);
+        }))
+        .on_action(cx.listener(|model, _: &CheckForUpdates, _, cx| {
+            model.check_for_updates(true, cx);
         }))
         .on_action(cx.listener(|model, _: &Quit, _, cx| {
             model.quit(cx);

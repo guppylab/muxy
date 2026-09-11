@@ -105,6 +105,24 @@ pub(crate) async fn prompt_server(
     server_prompt(window, title, label, message, cx).await
 }
 
+pub(crate) async fn prompt_update(
+    window: AnyWindowHandle,
+    version: &str,
+    cx: &mut AsyncApp,
+) -> Result<bool, String> {
+    let message = format!(
+        "Install Muxy {version} and restart? All running terminal sessions on this device will end. Your tabs, saved terminal output, and settings will remain."
+    );
+    server_prompt(
+        window,
+        "Install Beta Update?",
+        "Update and Restart",
+        &message,
+        cx,
+    )
+    .await
+}
+
 #[cfg(not(test))]
 async fn server_prompt(
     window: AnyWindowHandle,
