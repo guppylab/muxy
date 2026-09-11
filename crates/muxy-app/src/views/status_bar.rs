@@ -18,6 +18,7 @@ pub(crate) fn status_bar(model: &AppModel, cx: &mut Context<AppModel>) -> impl I
         .flex()
         .flex_none()
         .items_center()
+        .justify_between()
         .h(m.status_bar_height())
         .bg(theme.bg)
         .border_t_1()
@@ -27,8 +28,9 @@ pub(crate) fn status_bar(model: &AppModel, cx: &mut Context<AppModel>) -> impl I
         .child(
             div()
                 .id("status-path")
+                .debug_selector(|| "status-path".into())
                 .flex()
-                .flex_1()
+                .flex_initial()
                 .min_w(px(0.0))
                 .items_center()
                 .gap(m.spacing2())

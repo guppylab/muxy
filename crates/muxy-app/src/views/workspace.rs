@@ -274,6 +274,7 @@ fn action_handlers(cx: &mut Context<AppModel>) -> gpui::Div {
         .on_action(cx.listener(|model, _: &NavigateForward, _, cx| model.navigate(true, cx)))
         .on_action(cx.listener(|_, _: &Minimize, window, _| window.minimize_window()))
         .on_action(cx.listener(|_, _: &Zoom, window, _| window.zoom_window()))
+        .on_action(cx.listener(titlebar::begin_window_move))
         .on_action(cx.listener(|model, _: &IncreaseFontSize, _, cx| model.zoom_terminal(1.0, cx)))
         .on_action(cx.listener(|model, _: &DecreaseFontSize, _, cx| model.zoom_terminal(-1.0, cx)))
 }
@@ -340,6 +341,11 @@ impl Render for AppModel {
             self.focus_active(window, cx);
             self.focus_requested = false;
         }
+        if self.overlay.is_some() || self.close_prompt.is_some() {
+            self.cancel_titlebar_drag(cx);
+        }
+        self.tab_drag
+            .cancel_unavailable(self.state.current_project(), false);
         self.sync_pane_focus(cx);
         let theme = &self.theme;
         let sidebar_width = if self.appearance.sidebar_expanded {

@@ -19,3 +19,6 @@ pub mod shortcuts;
 pub mod symbols;
 pub mod text_input;
 pub mod theme;
+#[cfg(target_os = "macos")]
+#[allow(unsafe_code)]
+pub mod window_drag;

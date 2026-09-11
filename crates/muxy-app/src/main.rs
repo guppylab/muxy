@@ -95,6 +95,8 @@ fn main() -> ExitCode {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 window_min_size: Some(size(px(640.0), px(400.0))),
                 window_background: WindowBackgroundAppearance::Transparent,
+                // Empty titlebar space explicitly starts native movement, not tab presses.
+                is_movable: !cfg!(target_os = "macos"),
                 titlebar: Some(TitlebarOptions {
                     title: Some("Muxy Alpha".into()),
                     appears_transparent: true,

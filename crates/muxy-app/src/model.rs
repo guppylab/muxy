@@ -98,6 +98,9 @@ pub(crate) struct AppModel {
     pub(crate) overlay_focus: FocusHandle,
     pub(crate) focus_requested: bool,
     pub(crate) split_resize: crate::views::splits::SplitResizeState,
+    pub(crate) tab_drag: crate::views::tab_strip::TabDragState,
+    #[cfg(target_os = "macos")]
+    pub(crate) window_drag: Option<muxy_ui::window_drag::WindowDrag>,
     pub(crate) theme_anchor: Option<gpui::Bounds<gpui::Pixels>>,
     pub(crate) notification_anchor: Option<gpui::Bounds<gpui::Pixels>>,
     pub(crate) overlay_subscription: Option<Subscription>,
@@ -237,6 +240,8 @@ impl AppModel {
         let activation = cx.observe_window_activation(window, |model: &mut Self, window, cx| {
             if window.is_window_active() {
                 model.refresh_project_statuses(cx);
+            } else {
+                model.cancel_titlebar_drag(cx);
             }
             if let Some(pane) = model.active_pane().and_then(|id| model.terminal(&id)) {
                 pane.view.update(cx, |pane, cx| {
@@ -273,6 +278,9 @@ impl AppModel {
             overlay_focus: cx.focus_handle(),
             focus_requested: false,
             split_resize: crate::views::splits::SplitResizeState::default(),
+            tab_drag: crate::views::tab_strip::TabDragState::default(),
+            #[cfg(target_os = "macos")]
+            window_drag: muxy_ui::window_drag::WindowDrag::new(&window.window_title()),
             theme_anchor: None,
             notification_anchor: None,
             overlay_subscription: None,

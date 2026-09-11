@@ -449,6 +449,56 @@ fn project_editor_and_color_shortcuts_apply_to_the_requested_project(cx: &mut Te
 }
 
 #[gpui::test]
+fn status_bar_empty_space_does_not_reveal_the_path_or_open_its_menu(cx: &mut TestAppContext) {
+    for expanded in [false, true] {
+        for connection in [ConnectionState::Ready, ConnectionState::Disconnected] {
+            let mut state = AppState::bootstrap().expect("state");
+            state.add_project(std::env::temp_dir()).expect("project");
+            let (mut boot, _requests) = stub_boot(state);
+            boot.settings.appearance.sidebar_expanded = expanded;
+            let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
+            view.update(cx, |model, cx| {
+                model.connection = connection;
+                cx.notify();
+            });
+            cx.simulate_resize(size(px(1000.0), px(600.0)));
+            cx.run_until_parked();
+            let bar = cx.debug_bounds("project-status-bar").expect("status bar");
+            let path = cx.debug_bounds("status-path").expect("path button");
+            for position in [
+                gpui::point(bar.left() + px(2.0), bar.center().y),
+                bar.center(),
+                gpui::point(bar.right() - px(2.0), bar.center().y),
+            ] {
+                assert!(
+                    !path.contains(&position),
+                    "empty space must not be a path target"
+                );
+                cx.simulate_click(position, Modifiers::none());
+                cx.simulate_mouse_down(position, gpui::MouseButton::Right, Modifiers::none());
+                cx.simulate_mouse_up(position, gpui::MouseButton::Right, Modifiers::none());
+                cx.run_until_parked();
+                assert!(view.read_with(cx, |model, _| model.overlay.is_none()));
+            }
+            if connection == ConnectionState::Disconnected {
+                let controls = cx
+                    .debug_bounds("project-connection-status")
+                    .expect("connection controls");
+                assert!(path.right() < controls.left());
+                assert_eq!(controls.right(), bar.right() - px(10.0));
+            }
+            cx.simulate_mouse_down(path.center(), gpui::MouseButton::Right, Modifiers::none());
+            cx.simulate_mouse_up(path.center(), gpui::MouseButton::Right, Modifiers::none());
+            cx.run_until_parked();
+            assert!(view.read_with(cx, |model, _| matches!(
+                model.overlay,
+                Some(Overlay::Menu(_))
+            )));
+        }
+    }
+}
+
+#[gpui::test]
 fn long_project_paths_leave_connection_controls_inside_a_narrow_window(cx: &mut TestAppContext) {
     let root = std::env::temp_dir().join(format!("muxy-long-path-{}", ProjectId::new()));
     let mut directory = root.clone();
@@ -471,6 +521,10 @@ fn long_project_paths_leave_connection_controls_inside_a_narrow_window(cx: &mut 
     assert!(controls.left() >= bar.left());
     assert!(controls.right() <= bar.right());
     assert!(controls.size.width > px(0.0));
+    let path = cx.debug_bounds("status-path").expect("path button");
+    assert!(path.size.width > px(0.0));
+    assert!(path.left() >= bar.left());
+    assert!(path.right() < controls.left());
     std::fs::remove_dir_all(root).expect("cleanup");
 }
 

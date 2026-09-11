@@ -1,10 +1,53 @@
-use gpui::StatefulInteractiveElement;
-use gpui::{AnyElement, Context, InteractiveElement, IntoElement, ParentElement, Styled, div, px};
+use gpui::{
+    AnyElement, App, Context, Div, InteractiveElement, IntoElement, MouseButton, ParentElement,
+    Stateful, StatefulInteractiveElement, Styled, Window, div, px,
+};
 use muxy_ui::components::IconGlyph;
 use muxy_ui::icon::Icon;
 
 use super::menu::{Command, Item};
 use crate::model::AppModel;
+
+#[derive(Clone, PartialEq, Debug, gpui::Action)]
+#[action(namespace = muxy, no_json)]
+pub(crate) struct BeginWindowMove;
+
+pub(crate) fn begin_window_move(
+    model: &mut AppModel,
+    _: &BeginWindowMove,
+    _window: &mut Window,
+    _: &mut Context<AppModel>,
+) {
+    if model.overlay.is_some() || model.close_prompt.is_some() {
+        return;
+    }
+    #[cfg(target_os = "macos")]
+    if let Some(drag) = &model.window_drag {
+        drag.begin();
+    }
+    #[cfg(not(target_os = "macos"))]
+    _window.start_window_move();
+}
+
+pub(crate) fn background(id: &'static str) -> Stateful<Div> {
+    div()
+        .id(id)
+        .debug_selector(move || id.into())
+        .on_mouse_down(MouseButton::Left, |event, window, cx| {
+            cx.stop_propagation();
+            if event.click_count == 1 {
+                window.dispatch_action(Box::new(BeginWindowMove), cx);
+            }
+        })
+        .on_click(background_click)
+}
+
+fn background_click(event: &gpui::ClickEvent, window: &mut Window, cx: &mut App) {
+    if event.click_count() == 2 {
+        cx.stop_propagation();
+        window.dispatch_action(Box::new(super::workspace::Zoom), cx);
+    }
+}
 
 pub(crate) fn navigation(
     model: &AppModel,
@@ -13,7 +56,7 @@ pub(crate) fn navigation(
 ) -> AnyElement {
     let m = model.metrics;
     let theme = &model.theme;
-    div()
+    background("titlebar-navigation")
         .occlude()
         .absolute()
         .top_0()
@@ -33,6 +76,7 @@ pub(crate) fn navigation(
         .child(
             div()
                 .id("layout-menu")
+                .debug_selector(|| "layout-menu".into())
                 .group("layout-menu")
                 .flex()
                 .flex_none()
@@ -40,7 +84,9 @@ pub(crate) fn navigation(
                 .justify_center()
                 .size(m.scaled(22.0))
                 .cursor_pointer()
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(|model, event: &gpui::ClickEvent, window, cx| {
+                    cx.stop_propagation();
                     model.open_menu(
                         vec![
                             Item::action("Project Focused", Command::Dismiss).checked(),
@@ -90,14 +136,21 @@ fn arrow(model: &AppModel, forward: bool, cx: &mut Context<AppModel>) -> AnyElem
         .flex_none()
         .items_center()
         .justify_center()
-        .size(m.scaled(22.0));
+        .size(m.scaled(22.0))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
     if enabled {
         arrow
             .cursor_pointer()
-            .on_click(cx.listener(move |model, _, _, cx| model.navigate(forward, cx)))
+            .on_click(cx.listener(move |model, _, _, cx| {
+                cx.stop_propagation();
+                model.navigate(forward, cx);
+            }))
             .child(glyph.hover_in_group(id, theme.fg))
             .into_any_element()
     } else {
-        arrow.child(glyph).into_any_element()
+        arrow
+            .on_click(|_, _, cx| cx.stop_propagation())
+            .child(glyph)
+            .into_any_element()
     }
 }

@@ -1,5 +1,5 @@
 use super::*;
-use crate::views::workspace::Zoom;
+use crate::views::{titlebar::BeginWindowMove, workspace::Zoom};
 use gpui::{
     InteractiveElement, IntoElement, MouseButton, ParentElement, Render, Styled, div, point,
 };
@@ -7,6 +7,7 @@ use gpui::{
 struct WindowZoomObserver {
     model: Entity<AppModel>,
     zoom_requests: usize,
+    move_requests: usize,
 }
 
 impl Render for WindowZoomObserver {
@@ -15,6 +16,10 @@ impl Render for WindowZoomObserver {
             .size_full()
             .capture_action(cx.listener(|observer, _: &Zoom, _, cx| {
                 observer.zoom_requests += 1;
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|observer, _: &BeginWindowMove, _, cx| {
+                observer.move_requests += 1;
                 cx.stop_propagation();
             }))
             .child(self.model.clone())
@@ -29,6 +34,7 @@ fn observe_window_zoom(
     let result = cx.add_window_view(|window, cx| WindowZoomObserver {
         model: cx.new(|cx| AppModel::new(boot, window, cx)),
         zoom_requests: 0,
+        move_requests: 0,
     });
     result.1.simulate_resize(size(px(1000.0), px(600.0)));
     result.1.run_until_parked();
@@ -56,6 +62,11 @@ fn click(
     cx.run_until_parked();
 }
 
+fn strip_background(cx: &mut VisualTestContext) -> gpui::Point<gpui::Pixels> {
+    let viewport = cx.debug_bounds("tabs-scroll").expect("tabs viewport");
+    point(viewport.right() - px(16.0), viewport.center().y)
+}
+
 #[gpui::test]
 fn tab_strip_background_double_click_requests_native_zoom_each_time(cx: &mut TestAppContext) {
     for has_tabs in [false, true] {
@@ -71,8 +82,7 @@ fn tab_strip_background_double_click_requests_native_zoom_each_time(cx: &mut Tes
                 cx.notify();
             });
             cx.run_until_parked();
-            let strip = cx.debug_bounds("tab-strip").expect("tab strip");
-            let background = point(strip.right() - px(16.0), strip.center().y);
+            let background = strip_background(cx);
             let before = observer.read_with(cx, |observer, _| observer.zoom_requests);
             for (button, count) in [
                 (MouseButton::Left, 1),
@@ -196,4 +206,446 @@ fn collapsed_titlebar_navigation_does_not_click_through_to_tab_strip(cx: &mut Te
             );
         }
     }
+}
+
+fn tabs(count: usize) -> (AppState, Vec<TabId>) {
+    let mut state = AppState::bootstrap().expect("state");
+    let ids = (0..count)
+        .map(|_| state.open_terminal_tab(state.home().id).expect("tab"))
+        .collect();
+    (state, ids)
+}
+
+fn tab_bounds(cx: &mut VisualTestContext, index: usize) -> gpui::Bounds<gpui::Pixels> {
+    let selector = match index {
+        0 => "tab-cell-0",
+        1 => "tab-cell-1",
+        2 => "tab-cell-2",
+        10 => "tab-cell-10",
+        12 => "tab-cell-12",
+        _ => panic!("unconfigured test tab index"),
+    };
+    cx.debug_bounds(selector).expect("tab cell")
+}
+
+fn tab_order(view: &Entity<AppModel>, cx: &VisualTestContext) -> Vec<TabId> {
+    view.read_with(cx, |model, _| {
+        model
+            .state
+            .current_project()
+            .tabs
+            .iter()
+            .map(|tab| tab.id)
+            .collect()
+    })
+}
+
+fn pointer(cx: &mut VisualTestContext, position: gpui::Point<gpui::Pixels>, pressed: bool) {
+    cx.simulate_event(gpui::MouseMoveEvent {
+        position,
+        pressed_button: pressed.then_some(MouseButton::Left),
+        ..Default::default()
+    });
+    cx.run_until_parked();
+}
+
+fn press(cx: &mut VisualTestContext, position: gpui::Point<gpui::Pixels>) {
+    pointer(cx, position, false);
+    cx.simulate_event(gpui::MouseDownEvent {
+        position,
+        button: MouseButton::Left,
+        click_count: 1,
+        ..Default::default()
+    });
+    cx.run_until_parked();
+}
+
+fn release(cx: &mut VisualTestContext, position: gpui::Point<gpui::Pixels>) {
+    cx.simulate_event(gpui::MouseUpEvent {
+        position,
+        button: MouseButton::Left,
+        click_count: 1,
+        ..Default::default()
+    });
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn tabs_select_on_press_and_reorder_live_without_a_drag_preview(cx: &mut TestAppContext) {
+    for wide in [true, false] {
+        let (state, ids) = tabs(3);
+        let (mut boot, _requests) = stub_boot(state);
+        boot.settings.appearance.sidebar_expanded = wide;
+        let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
+        cx.simulate_resize(size(px(1000.0), px(600.0)));
+        cx.run_until_parked();
+        let from = tab_bounds(cx, 0).center();
+        let to = tab_bounds(cx, 2).center();
+        press(cx, from);
+        assert_eq!(
+            view.read_with(cx, |model, _| model.active_tab()),
+            Some(ids[0])
+        );
+        let pane = view.read_with(cx, |model, _| model.active_pane());
+        pointer(cx, from + point(px(3.0), px(0.0)), true);
+        assert!(!view.read_with(cx, |model, _| model.tab_drag.is_active()));
+        pointer(cx, from + point(px(4.0), px(0.0)), true);
+        assert!(view.read_with(cx, |model, _| model.tab_drag.is_active()));
+        pointer(cx, to, true);
+        assert_eq!(tab_order(&view, cx), [ids[1], ids[2], ids[0]]);
+        assert!(
+            !cx.update(|_, cx| cx.has_active_drag()),
+            "no floating preview"
+        );
+        pointer(cx, to, true);
+        assert_eq!(tab_order(&view, cx), [ids[1], ids[2], ids[0]]);
+        pointer(cx, from, true);
+        assert_eq!(tab_order(&view, cx), ids);
+        pointer(cx, to, true);
+        release(cx, to);
+        assert!(!view.read_with(cx, |model, _| model.tab_drag.is_active()));
+        assert_eq!(tab_order(&view, cx), [ids[1], ids[2], ids[0]]);
+        view.read_with(cx, |model, _| {
+            assert_eq!(model.active_pane(), pane);
+            assert!(model.error.is_none());
+            let saved = store::load(&model.path).expect("saved order");
+            assert_eq!(
+                saved
+                    .home()
+                    .tabs
+                    .iter()
+                    .map(|tab| tab.id)
+                    .collect::<Vec<_>>(),
+                [ids[1], ids[2], ids[0]]
+            );
+        });
+    }
+}
+
+#[gpui::test]
+fn tab_reordering_handles_fast_release_and_does_not_close_a_drop_target(cx: &mut TestAppContext) {
+    let (state, ids) = tabs(3);
+    let (boot, _requests) = stub_boot(state);
+    let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
+    cx.simulate_resize(size(px(1000.0), px(600.0)));
+    cx.run_until_parked();
+    let from = tab_bounds(cx, 0).center();
+    let close = cx
+        .debug_bounds("close-tab-button")
+        .expect("last tab close")
+        .center();
+    press(cx, from);
+    release(cx, close);
+    assert_eq!(tab_order(&view, cx), [ids[1], ids[2], ids[0]]);
+    assert_eq!(
+        view.read_with(cx, |model, _| model.active_tab()),
+        Some(ids[0])
+    );
+}
+
+#[gpui::test]
+fn compact_and_scrolled_tabs_can_be_dragged_without_closing_them(cx: &mut TestAppContext) {
+    for scrolled in [false, true] {
+        let (state, ids) = tabs(if scrolled { 24 } else { 7 });
+        let (boot, _requests) = stub_boot(state);
+        let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
+        cx.simulate_resize(size(px(700.0), px(440.0)));
+        cx.run_until_parked();
+        let viewport = cx.debug_bounds("tabs-scroll").expect("viewport");
+        if scrolled {
+            cx.simulate_event(gpui::ScrollWheelEvent {
+                position: viewport.center(),
+                delta: gpui::ScrollDelta::Pixels(point(px(-300.0), px(0.0))),
+                ..Default::default()
+            });
+            cx.run_until_parked();
+        }
+        let (source, target) = if scrolled { (10, 12) } else { (0, 2) };
+        let source_bounds = tab_bounds(cx, source);
+        assert!(source_bounds.size.width < px(80.0));
+        let from = point(source_bounds.left() + px(5.0), source_bounds.center().y);
+        let to = tab_bounds(cx, target).center();
+        assert!(viewport.contains(&from) && viewport.contains(&to));
+        press(cx, from);
+        pointer(cx, point(viewport.left() - px(5.0), from.y), true);
+        assert_eq!(tab_order(&view, cx), ids, "clipped tabs are not targets");
+        pointer(cx, to, true);
+        let mut expected = ids;
+        let dragged = expected.remove(source);
+        expected.insert(target, dragged);
+        assert_eq!(tab_order(&view, cx), expected);
+        release(cx, to);
+        assert_eq!(tab_order(&view, cx), expected);
+        assert_eq!(
+            view.read_with(cx, |model, _| model.active_tab()),
+            Some(dragged)
+        );
+    }
+}
+
+#[gpui::test]
+fn tab_close_controls_do_not_select_or_start_a_drag(cx: &mut TestAppContext) {
+    let (mut state, ids) = tabs(3);
+    state
+        .select_tab(state.home().id, ids[0])
+        .expect("select first");
+    let (boot, _requests) = stub_boot(state);
+    let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
+    cx.run_until_parked();
+    let close = cx
+        .debug_bounds("close-tab-button")
+        .expect("last tab close")
+        .center();
+    press(cx, close);
+    assert_eq!(
+        view.read_with(cx, |model, _| model.active_tab()),
+        Some(ids[0])
+    );
+    let target = tab_bounds(cx, 0).center();
+    pointer(cx, target, true);
+    assert!(!view.read_with(cx, |model, _| model.tab_drag.is_active()));
+    release(cx, target);
+    assert_eq!(tab_order(&view, cx), ids);
+    click(cx, close, MouseButton::Left, 1);
+    assert_eq!(tab_order(&view, cx), ids[..2]);
+    assert_eq!(
+        view.read_with(cx, |model, _| model.active_tab()),
+        Some(ids[0])
+    );
+    let middle = tab_bounds(cx, 1).center();
+    click(cx, middle, MouseButton::Middle, 1);
+    assert_eq!(tab_order(&view, cx), ids[..1]);
+}
+
+#[gpui::test]
+fn interrupted_tab_drags_cannot_resume_on_later_pointer_motion(cx: &mut TestAppContext) {
+    for interruption in [
+        "outside",
+        "lost-release",
+        "deactivate",
+        "project",
+        "overlay",
+    ] {
+        let (mut state, ids) = tabs(3);
+        let home = state.home().id;
+        let other = state.add_project(std::env::temp_dir()).expect("project");
+        state.select_project(home).expect("home");
+        let (boot, _requests) = stub_boot(state);
+        let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
+        cx.run_until_parked();
+        cx.update(|window, _| window.activate_window());
+        cx.run_until_parked();
+        let from = tab_bounds(cx, 0).center();
+        press(cx, from);
+        pointer(cx, from + point(px(5.0), px(0.0)), true);
+        assert!(view.read_with(cx, |model, _| model.tab_drag.is_active()));
+        match interruption {
+            "outside" => release(cx, point(px(500.0), px(250.0))),
+            "lost-release" => pointer(cx, from, false),
+            "deactivate" => cx.deactivate_window(),
+            "project" => {
+                view.update(cx, |model, cx| model.select_project(other, cx));
+                cx.run_until_parked();
+                view.update(cx, |model, cx| model.select_project(home, cx));
+            }
+            "overlay" => cx.update(|window, cx| {
+                view.update(cx, |model, cx| model.open_theme_picker(window, cx));
+            }),
+            _ => unreachable!(),
+        }
+        cx.run_until_parked();
+        assert!(
+            !view.read_with(cx, |model, _| model.tab_drag.is_active()),
+            "{interruption}"
+        );
+        let target = tab_bounds(cx, 2).center();
+        pointer(cx, target, true);
+        release(cx, target);
+        assert_eq!(tab_order(&view, cx), ids, "{interruption}");
+    }
+}
+
+#[gpui::test]
+fn only_empty_titlebar_space_requests_window_movement(cx: &mut TestAppContext) {
+    for has_tabs in [false, true] {
+        let (state, ids) = tabs(if has_tabs { 3 } else { 0 });
+        let (observer, cx) = observe_window_zoom(state, cx);
+        let model = observer.read_with(cx, |observer, _| observer.model.clone());
+        for expanded in [true, false] {
+            model.update(cx, |model, cx| {
+                model.appearance.sidebar_expanded = expanded;
+                cx.notify();
+            });
+            cx.run_until_parked();
+            let strip = cx.debug_bounds("tab-strip").expect("tab strip");
+            let back = cx.debug_bounds("nav-back").expect("back button");
+            for from in [
+                strip_background(cx),
+                point(back.left() - px(4.0), back.center().y),
+            ] {
+                let before = observer.read_with(cx, |observer, _| observer.move_requests);
+                for button in [MouseButton::Right, MouseButton::Middle] {
+                    click(cx, from, button, 1);
+                }
+                click(cx, from, MouseButton::Left, 2);
+                assert_eq!(
+                    observer.read_with(cx, |observer, _| observer.move_requests),
+                    before
+                );
+                press(cx, from);
+                let to = point(strip.left() + px(200.0), strip.center().y);
+                pointer(cx, to, true);
+                release(cx, to);
+                assert_eq!(
+                    observer.read_with(cx, |observer, _| observer.move_requests),
+                    before + 1
+                );
+                assert_eq!(tab_order(&model, cx), ids);
+                assert!(!model.read_with(cx, |model, _| model.tab_drag.is_active()));
+            }
+        }
+    }
+}
+
+#[gpui::test]
+fn tabs_and_titlebar_controls_never_request_window_movement(cx: &mut TestAppContext) {
+    for expanded in [true, false] {
+        let (mut state, ids) = tabs(3);
+        let pane = state.home().tabs[2].panes[0].id;
+        state.split_pane(pane, Direction::Right).expect("split");
+        let (observer, cx) = observe_window_zoom(state, cx);
+        let model = observer.read_with(cx, |observer, _| observer.model.clone());
+        model.update(cx, |model, cx| {
+            model.appearance.sidebar_expanded = expanded;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let background = strip_background(cx);
+        for selector in [
+            "settings-button",
+            "new-tab-button",
+            "close-tab-button",
+            "maximize-pane",
+            "nav-back",
+            "nav-forward",
+            "layout-menu",
+        ] {
+            let from = cx.debug_bounds(selector).expect("control").center();
+            press(cx, from);
+            pointer(cx, background, true);
+            release(cx, background);
+            assert_eq!(tab_order(&model, cx), ids, "{selector}");
+            assert!(!model.read_with(cx, |model, _| model.tab_drag.is_active()));
+        }
+        for id in &ids[..2] {
+            model.update(cx, |model, cx| model.select_tab(*id, cx));
+        }
+        cx.run_until_parked();
+        assert!(model.read_with(cx, |model, _| model.can_navigate(false)));
+        let back = cx.debug_bounds("nav-back").expect("back button").center();
+        press(cx, back);
+        pointer(cx, background, true);
+        release(cx, background);
+        let from = tab_bounds(cx, 0).center();
+        let to = tab_bounds(cx, 2).center();
+        press(cx, from);
+        pointer(cx, to, true);
+        release(cx, to);
+        assert_eq!(tab_order(&model, cx), [ids[1], ids[2], ids[0]]);
+        assert_eq!(
+            observer.read_with(cx, |observer, _| observer.move_requests),
+            0
+        );
+    }
+}
+
+#[gpui::test]
+fn settings_button_stays_at_the_right_and_reuses_the_settings_pane(cx: &mut TestAppContext) {
+    for expanded in [false, true] {
+        for count in [0, 3, 24] {
+            let (mut state, ids) = tabs(count);
+            if count == 3 {
+                let pane = state.home().tabs[2].panes[0].id;
+                state.split_pane(pane, Direction::Right).expect("split");
+            }
+            let (observer, cx) = observe_window_zoom(state, cx);
+            let model = observer.read_with(cx, |observer, _| observer.model.clone());
+            model.update(cx, |model, cx| {
+                model.appearance.sidebar_expanded = expanded;
+                model.connection = ConnectionState::Disconnected;
+                cx.notify();
+            });
+            for width in [640.0, 1000.0] {
+                cx.simulate_resize(size(px(width), px(600.0)));
+                cx.run_until_parked();
+                let strip = cx.debug_bounds("tab-strip").expect("strip");
+                let gear = cx.debug_bounds("settings-button").expect("settings button");
+                let viewport = cx.debug_bounds("tabs-scroll").expect("tabs viewport");
+                assert_eq!(gear.right(), strip.right());
+                assert_eq!(gear.center().y, strip.center().y);
+                assert!(gear.size.width > px(0.0));
+                assert!(viewport.right() <= gear.left());
+                for selector in ["new-tab-button", "maximize-pane"] {
+                    if let Some(control) = cx.debug_bounds(selector) {
+                        assert!(control.right() <= gear.left());
+                    }
+                }
+                if count == 24 {
+                    cx.simulate_event(gpui::ScrollWheelEvent {
+                        position: viewport.center(),
+                        delta: gpui::ScrollDelta::Pixels(point(px(-300.0), px(0.0))),
+                        ..Default::default()
+                    });
+                    cx.run_until_parked();
+                    assert_eq!(cx.debug_bounds("settings-button"), Some(gear));
+                }
+            }
+            let gear = cx.debug_bounds("settings-button").expect("settings button");
+            click(cx, gear.center(), MouseButton::Left, 1);
+            let settings = model.read_with(cx, |model, _| {
+                let pane = model.active_pane().expect("settings pane");
+                assert!(matches!(model.grids[&pane], PaneView::Settings { .. }));
+                assert_eq!(model.state.home().tabs.len(), count + 1);
+                pane
+            });
+            if let Some(first) = ids.first() {
+                model.update(cx, |model, cx| model.select_tab(*first, cx));
+                cx.run_until_parked();
+            }
+            click(cx, gear.center(), MouseButton::Left, 2);
+            model.read_with(cx, |model, _| {
+                assert_eq!(model.active_pane(), Some(settings));
+                assert_eq!(model.state.home().tabs.len(), count + 1);
+                assert!(!model.tab_drag.is_active());
+            });
+            observer.read_with(cx, |observer, _| {
+                assert_eq!(observer.zoom_requests, 0);
+                assert_eq!(observer.move_requests, 0);
+            });
+        }
+    }
+}
+
+#[gpui::test]
+fn settings_button_remains_available_when_the_project_directory_is_missing(
+    cx: &mut TestAppContext,
+) {
+    let directory = std::env::temp_dir().join(format!("muxy-settings-button-{}", ProjectId::new()));
+    std::fs::create_dir(&directory).expect("mkdir");
+    let mut state = AppState::bootstrap().expect("state");
+    state.add_project(directory.clone()).expect("project");
+    std::fs::remove_dir(&directory).expect("remove project directory");
+    state.refresh_project_statuses();
+    let (observer, cx) = observe_window_zoom(state, cx);
+    let gear = cx.debug_bounds("settings-button").expect("settings button");
+    let strip = cx.debug_bounds("tab-strip").expect("strip");
+    assert_eq!(gear.right(), strip.right());
+    click(cx, gear.center(), MouseButton::Left, 1);
+    observer.read_with(cx, |observer, cx| {
+        let model = observer.model.read(cx);
+        let pane = model.active_pane().expect("settings pane");
+        assert!(matches!(model.grids[&pane], PaneView::Settings { .. }));
+        assert_eq!(observer.zoom_requests, 0);
+        assert_eq!(observer.move_requests, 0);
+    });
 }
