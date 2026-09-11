@@ -504,17 +504,21 @@ fn custom_paths_and_settings_are_used_without_default_directory() -> TestResult 
 }
 
 #[test]
-fn default_beta_directory_does_not_touch_other_channels() -> TestResult {
+fn default_directory_does_not_touch_other_channels() -> TestResult {
     let mut fixture = Fixture::new()?;
     let support = fixture.directory.join("Library/Application Support");
-    for name in ["Muxy", "Muxy Alpha"] {
+    let (current, other) = if cfg!(debug_assertions) || env!("CARGO_PKG_VERSION") == "2.0.0-beta-0"
+    {
+        ("Muxy Dev", "Muxy Beta")
+    } else {
+        ("Muxy Beta", "Muxy Dev")
+    };
+    for name in ["Muxy", "Muxy Alpha", other] {
         let directory = support.join(name);
         fs::create_dir_all(&directory)?;
         fs::write(directory.join("server.toml"), "settings must not be read")?;
     }
-    let directory = fixture
-        .directory
-        .join("Library/Application Support/Muxy Beta");
+    let directory = support.join(current);
     let socket = fixture.socket();
     let mut command = fixture.command();
     command
@@ -527,7 +531,7 @@ fn default_beta_directory_does_not_touch_other_channels() -> TestResult {
     assert_eq!(client.request(RequestBody::Ping)?, ReplyBody::Pong);
     assert!(directory.join("server.toml").exists());
     assert!(directory.join("server.log").exists());
-    for name in ["Muxy", "Muxy Alpha"] {
+    for name in ["Muxy", "Muxy Alpha", other] {
         let directory = support.join(name);
         assert_eq!(
             fs::read_to_string(directory.join("server.toml"))?,
