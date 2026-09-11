@@ -144,6 +144,11 @@ pub enum ShortcutId {
     NextPrompt,
     SelectCommandOutput,
     OpenSettings,
+    CloseSettings,
+    SearchSettings,
+    FocusSettingsNavbar,
+    NextSettingsControl,
+    PreviousSettingsControl,
 }
 
 impl ShortcutId {
@@ -1046,5 +1051,35 @@ pub const ALL: &[Shortcut] = &[
         keys: &["cmd-,"],
         contexts: &[None],
         key_contexts: &[&[None]],
+    },
+    Shortcut {
+        id: "settings.close",
+        keys: &["cmd-w"],
+        contexts: &[Some("SettingsWindow")],
+        key_contexts: &[&[Some("SettingsWindow")]],
+    },
+    Shortcut {
+        id: "settings.search",
+        keys: &["cmd-f"],
+        contexts: &[Some("SettingsWindow")],
+        key_contexts: &[&[Some("SettingsWindow")]],
+    },
+    Shortcut {
+        id: "settings.focus_navbar",
+        keys: &["cmd-shift-e"],
+        contexts: &[Some("SettingsWindow")],
+        key_contexts: &[&[Some("SettingsWindow")]],
+    },
+    Shortcut {
+        id: "settings.next_control",
+        keys: &["tab"],
+        contexts: &[Some("SettingsWindow")],
+        key_contexts: &[&[Some("SettingsWindow")]],
+    },
+    Shortcut {
+        id: "settings.previous_control",
+        keys: &["shift-tab"],
+        contexts: &[Some("SettingsWindow")],
+        key_contexts: &[&[Some("SettingsWindow")]],
     },
 ];

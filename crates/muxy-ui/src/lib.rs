@@ -7,11 +7,13 @@ pub mod components;
 pub mod controls;
 #[cfg(target_os = "macos")]
 pub mod dialog;
+pub mod form;
 pub mod icon;
 pub mod motion;
 #[cfg(target_os = "macos")]
 #[allow(unsafe_code)]
 pub mod native_scroll;
+pub mod navigation;
 pub mod panel;
 pub mod popover;
 pub mod scrollbar;

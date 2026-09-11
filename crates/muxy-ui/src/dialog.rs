@@ -37,6 +37,7 @@ impl Drop for Confirmation {
 }
 
 pub fn confirm(
+    window: &gpui::Window,
     title: &str,
     message: &str,
     confirm_label: &str,
@@ -46,10 +47,17 @@ pub fn confirm(
     let main_thread = MainThreadMarker::new()
         .ok_or_else(|| io::Error::other("native dialogs require the main thread"))?;
     let app = NSApplication::sharedApplication(main_thread);
-    let parent = app
-        .keyWindow()
-        .or_else(|| app.mainWindow())
-        .ok_or_else(|| io::Error::other("native dialog has no application window"))?;
+    let windows = app.windows();
+    let window_title = window.window_title();
+    let mut matches = (0..windows.count())
+        .map(|index| windows.objectAtIndex(index))
+        .filter(|window| window.title().to_string() == window_title);
+    let parent = matches
+        .next()
+        .ok_or_else(|| io::Error::other("native dialog parent window is closed"))?;
+    if matches.next().is_some() {
+        return Err(io::Error::other("native dialog parent window is ambiguous"));
+    }
     if parent.attachedSheet().is_some() {
         return Err(io::Error::other("an application dialog is already open"));
     }

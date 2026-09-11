@@ -122,6 +122,7 @@ fn workspace_bindings(keymap: &impl muxy_core::shortcuts::ShortcutSettings) -> V
     menu::register_shortcuts(&mut registry);
     super::project_editor::register_shortcuts(&mut registry);
     super::terminal::pane::register_shortcuts(&mut registry);
+    super::settings::register_shortcuts(&mut registry);
     registry.register(ShortcutId::EndAllSessionsAndQuit, &EndAllSessionsAndQuit);
     registry.register(ShortcutId::ShowAll, &ShowAll);
     registry.register(ShortcutId::Zoom, &Zoom);
@@ -293,11 +294,7 @@ impl AppModel {
         if self.overlay.is_some() || self.close_prompt.is_some() {
             self.split_resize.end();
         }
-        for (id, pane) in self
-            .grids
-            .iter()
-            .filter_map(|(id, pane)| pane.terminal().map(|pane| (id, pane)))
-        {
+        for (id, pane) in &self.grids {
             pane.view.update(cx, |pane, cx| {
                 pane.set_focused(Some(*id) == active, cx);
                 let border = (pane.focused && split).then_some(self.theme.accent);
@@ -318,25 +315,11 @@ impl AppModel {
                 }
             });
         }
-        for (id, pane) in &self.grids {
-            if let crate::model::PaneView::Settings { view, .. } = pane {
-                view.update(cx, |pane, cx| {
-                    let outline = Some(*id) == active && split;
-                    if pane.focus_outline != outline {
-                        pane.focus_outline = outline;
-                        cx.notify();
-                    }
-                });
-            }
-        }
     }
 }
 
 impl Render for AppModel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if let Some(request) = self.settings_picker.take() {
-            self.open_settings_picker(request, window, cx);
-        }
         if self.overlay.is_none() && (self.focus_requested || self.active_pane().is_none()) {
             self.focus_active(window, cx);
             self.focus_requested = false;

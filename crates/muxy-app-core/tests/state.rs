@@ -440,60 +440,106 @@ fn duplicate_projects_and_cross_project_tab_or_pane_ids_are_rejected() -> TestRe
 }
 
 #[test]
-fn settings_dedupe_per_project_restore_in_splits_and_never_create_sessions() -> TestResult {
+fn legacy_settings_are_removed_without_losing_terminal_splits_or_sessions() -> TestResult {
     let mut state = AppState::bootstrap()?;
     let home = state.home().id;
-    let settings = state.open_settings_tab(home)?;
-    let pane = state.window().active_pane.ok_or("settings pane")?;
-    assert_eq!(state.open_settings_tab(home)?, settings);
-    assert_eq!(state.home().tabs.len(), 1);
-    assert_eq!(state.home().tabs[0].panes[0].content, PaneContent::Settings);
-    assert!(
-        state
-            .set_pane_session(pane, Some(SessionId::new(20).ok_or("session")?))
-            .is_err()
+    state.open_terminal_tab(home)?;
+    let legacy = state.window().active_pane.ok_or("pane")?;
+    let terminal = state.split_pane(legacy, muxy_app_core::Direction::Right)?;
+    let session = SessionId::new(20).ok_or("session")?;
+    state.set_pane_session(terminal, Some(session))?;
+    state.focus_pane(legacy)?;
+    state.toggle_zoom(legacy)?;
+    let mut stored = serde_json::to_value(&state)?;
+    stored["projects"][0]["tabs"][0]["panes"][0]["content"] =
+        serde_json::json!({"type": "settings"});
+    let restored: AppState = serde_json::from_value(stored)?;
+    assert_eq!(restored.home().tabs.len(), 1);
+    let tab = &restored.home().tabs[0];
+    assert_eq!(tab.panes.len(), 1);
+    assert_eq!(tab.panes[0].id, terminal);
+    assert_eq!(
+        tab.panes[0].content,
+        PaneContent::Terminal {
+            session: Some(session)
+        }
     );
-    let terminal = state.split_pane(pane, muxy_app_core::Direction::Right)?;
-    state.toggle_zoom(terminal)?;
-    assert_eq!(state.open_settings_tab(home)?, settings);
-    assert_eq!(state.home().tabs[0].zoomed, Some(pane));
-    assert_eq!(state.home().tabs[0].title(Some(pane)), "Settings");
-    let project = state.add_project(std::env::temp_dir())?;
-    assert_ne!(state.open_settings_tab(project)?, settings);
-    let restored: AppState = serde_json::from_slice(&serde_json::to_vec(&state)?)?;
-    assert_eq!(restored, state);
-    let plan = muxy_app_core::restore::plan(&restored, &[]);
-    assert_eq!(plan.create, vec![terminal]);
-    assert!(plan.attach.is_empty());
-    assert!(plan.retain.is_empty());
+    assert_eq!(tab.layout.leaves(), vec![terminal]);
+    assert_eq!(tab.zoomed, None);
+    assert_eq!(restored.window().active_pane, Some(terminal));
+    assert!(
+        !serde_json::to_value(restored.window())?["focus_history"]
+            .as_array()
+            .ok_or("focus history")?
+            .contains(&serde_json::to_value(legacy)?)
+    );
+    assert!(restored.pending_discards().is_empty());
+    assert_eq!(
+        serde_json::from_value::<AppState>(serde_json::to_value(&restored)?)?,
+        restored
+    );
     Ok(())
 }
 
 #[test]
-fn terminal_cleanup_preserves_settings_even_in_missing_projects() -> TestResult {
+fn legacy_settings_tab_migration_preserves_the_surviving_tabs_zoom_and_focus() -> TestResult {
+    for zoomed in [true, false] {
+        let mut state = AppState::bootstrap()?;
+        let home = state.home().id;
+        let terminal_tab = state.open_terminal_tab(home)?;
+        let first = state.window().active_pane.ok_or("pane")?;
+        let focused = state.split_pane(first, muxy_app_core::Direction::Right)?;
+        let session = SessionId::new(21).ok_or("session")?;
+        state.set_pane_session(focused, Some(session))?;
+        if zoomed {
+            state.toggle_zoom(focused)?;
+        }
+        let surviving = state.home().tabs[0].clone();
+        state.open_terminal_tab(home)?;
+        let legacy = state.window().active_pane.ok_or("settings pane")?;
+        let mut stored = serde_json::to_value(&state)?;
+        stored["projects"][0]["tabs"][1]["panes"][0]["content"] = json!({"type": "settings"});
+
+        let restored: AppState = serde_json::from_value(stored)?;
+        assert_eq!(restored.home().tabs, vec![surviving]);
+        assert_eq!(
+            restored.window().selected_tab.get(&home),
+            Some(&terminal_tab)
+        );
+        assert_eq!(restored.window().active_pane, Some(focused));
+        assert!(restored.pending_discards().is_empty());
+        assert!(
+            !serde_json::to_value(restored.window())?["focus_history"]
+                .as_array()
+                .ok_or("focus history")?
+                .contains(&serde_json::to_value(legacy)?)
+        );
+        assert_eq!(
+            serde_json::from_value::<AppState>(serde_json::to_value(&restored)?)?,
+            restored
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn legacy_settings_only_tabs_are_removed_even_in_missing_projects() -> TestResult {
     let directory = std::env::temp_dir().join(format!("muxy-settings-{}", ProjectId::new()));
     std::fs::create_dir(&directory)?;
     let mut state = AppState::bootstrap()?;
     let project = state.add_project(directory.clone())?;
-    state.open_settings_tab(project)?;
-    let settings = state.window().active_pane.ok_or("settings pane")?;
-    state.split_pane(settings, muxy_app_core::Direction::Right)?;
     state.open_terminal_tab(project)?;
+    let mut stored = serde_json::to_value(&state)?;
+    stored["projects"][1]["tabs"][0]["panes"][0]["content"] =
+        serde_json::json!({"type": "settings"});
     std::fs::remove_dir(&directory)?;
-    state.refresh_project_statuses();
+    let restored: AppState = serde_json::from_value(stored)?;
+    assert!(restored.project(project).ok_or("project")?.tabs.is_empty());
+    assert_eq!(restored.window().active_pane, None);
+    assert!(!restored.window().selected_tab.contains_key(&project));
     assert_eq!(
-        state.project(project).ok_or("project")?.status(),
-        muxy_app_core::ProjectStatus::Missing
-    );
-    state.clear_terminal_panes()?;
-    let tabs = &state.project(project).ok_or("project")?.tabs;
-    assert_eq!(tabs.len(), 1);
-    assert_eq!(tabs[0].panes.len(), 1);
-    assert_eq!(tabs[0].panes[0].id, settings);
-    assert_eq!(state.window().active_pane, Some(settings));
-    assert_eq!(
-        serde_json::from_value::<AppState>(serde_json::to_value(&state)?)?,
-        state
+        serde_json::to_value(restored.window())?["focus_history"],
+        serde_json::json!([])
     );
     Ok(())
 }

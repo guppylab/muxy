@@ -1,15 +1,18 @@
 use crate::command_popover::CommandPopover;
-use crate::components::SymbolGlyph;
+use crate::components::{ButtonInteraction, SymbolGlyph};
 use crate::text_input::TextInput;
 use crate::theme::{Metrics, Theme};
 use gpui::prelude::FluentBuilder;
 use gpui::{
     AnyElement, App, Bounds, ClickEvent, Corner, Entity, FontWeight, InteractiveElement,
-    IntoElement, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, SharedString,
-    StatefulInteractiveElement, Styled, Window, anchored, canvas, deferred, div, point, px,
+    IntoElement, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, SharedString, Styled,
+    Window, anchored, canvas, deferred, div, point, px,
 };
 use std::cell::Cell;
 use std::rc::Rc;
+
+#[cfg(test)]
+mod tests;
 
 pub const CONTROL_WIDTH: f32 = 210.0;
 pub const SLIDER_WIDTH: f32 = 220.0;
@@ -35,76 +38,6 @@ impl Choice {
             enabled: true,
         }
     }
-}
-
-pub fn section(
-    style: Style,
-    title: &str,
-    footer: Option<&str>,
-    shows_divider: bool,
-    children: Vec<AnyElement>,
-) -> AnyElement {
-    let Style { theme, metrics } = style;
-    let mut block = div()
-        .flex()
-        .flex_col()
-        .child(
-            div()
-                .px(metrics.spacing6())
-                .pt(metrics.spacing5())
-                .pb(metrics.spacing2())
-                .text_size(metrics.font_footnote())
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(theme.fg_muted)
-                .child(SharedString::from(title.to_owned())),
-        )
-        .children(children);
-
-    if let Some(footer) = footer {
-        block = block.child(
-            div()
-                .px(metrics.spacing6())
-                .pt(metrics.spacing3())
-                .pb(metrics.spacing5())
-                .text_size(metrics.font_footnote())
-                .text_color(theme.fg_muted)
-                .child(SharedString::from(footer.to_owned())),
-        );
-    }
-
-    if shows_divider {
-        block = block.child(
-            div()
-                .mx(metrics.spacing6())
-                .h(px(1.0))
-                .flex_none()
-                .bg(theme.border),
-        );
-    }
-
-    block.into_any_element()
-}
-
-pub fn row(style: Style, label: &str, control: AnyElement) -> AnyElement {
-    let Style { theme, metrics } = style;
-    div()
-        .flex()
-        .flex_row()
-        .items_start()
-        .px(metrics.spacing6())
-        .py(metrics.spacing3())
-        .child(
-            div()
-                .flex_shrink()
-                .min_w(px(0.0))
-                .py(metrics.spacing1())
-                .text_size(metrics.font_body())
-                .text_color(theme.fg)
-                .child(SharedString::from(label.to_owned())),
-        )
-        .child(div().flex_grow().min_w(metrics.spacing6()))
-        .child(div().flex_none().child(control))
-        .into_any_element()
 }
 
 pub fn toggle(
@@ -140,7 +73,8 @@ pub fn toggle(
         .border_color(if value { theme.accent } else { theme.border })
         .when(value, Styled::justify_end)
         .child(knob)
-        .on_click(on_click)
+        .focus(|focus| focus.border_color(theme.accent))
+        .button_interaction(on_click)
         .into_any_element()
 }
 
@@ -150,7 +84,7 @@ pub fn button(
     label: &str,
     enabled: bool,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-) -> AnyElement {
+) -> gpui::Stateful<gpui::Div> {
     let Style { theme, metrics } = style;
     div()
         .id(SharedString::from(format!("settings-button-{id}")))
@@ -172,10 +106,10 @@ pub fn button(
             element
                 .cursor_pointer()
                 .hover(|hover| hover.bg(theme.hover))
-                .on_click(on_click)
+                .focus(|focus| focus.border_color(theme.accent))
+                .button_interaction(on_click)
         })
         .child(SharedString::from(label.to_owned()))
-        .into_any_element()
 }
 
 pub fn picker(
@@ -279,7 +213,8 @@ pub fn picker_trigger(
             theme.fg_muted,
         ))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(on_toggle)
+        .focus(|focus| focus.border_color(theme.accent))
+        .button_interaction(on_toggle)
         .into_any_element()
 }
 
@@ -340,7 +275,9 @@ pub fn segmented(
                         .hover(|hover| hover.bg(theme.hover))
                 })
                 .when(choice.enabled, |element| {
-                    element.on_click(move |_, window, cx| handler(&value, window, cx))
+                    element
+                        .focus(|focus| focus.bg(theme.accent_soft))
+                        .button_interaction(move |_, window, cx| handler(&value, window, cx))
                 })
                 .child(SharedString::from(choice.label.clone())),
         );
@@ -496,4 +433,30 @@ pub fn text_field(
         .on_mouse_down_out(|_, window, _| window.blur())
         .child(crate::text_input::growing_input(input))
         .into_any_element()
+}
+
+pub fn search_field(
+    style: Style,
+    id: impl Into<gpui::ElementId>,
+    input: &Entity<TextInput>,
+) -> gpui::Stateful<gpui::Div> {
+    let Style { theme, metrics } = style;
+    div()
+        .id(id)
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(metrics.spacing4())
+        .h(metrics.spacing10())
+        .px(metrics.scaled(9.0))
+        .bg(theme.bg)
+        .border_1()
+        .border_color(theme.border_solid())
+        .rounded(metrics.scaled(5.0))
+        .child(SymbolGlyph::new(
+            "magnifyingglass",
+            metrics.icon_md(),
+            theme.fg_muted,
+        ))
+        .child(crate::text_input::growing_input(input))
 }

@@ -1,0 +1,142 @@
+use super::Category;
+
+pub(super) struct Setting {
+    pub(super) id: &'static str,
+    pub(super) label: &'static str,
+    pub(super) description: &'static str,
+    pub(super) category: Category,
+    pub(super) section: &'static str,
+}
+
+pub(super) const SETTINGS: &[Setting] = &[
+    Setting {
+        id: "confirm-process",
+        label: "Confirm before closing a running process",
+        description: "Ask before closing a terminal that is running a command other than its shell.",
+        category: Category::General,
+        section: "Closing terminals",
+    },
+    Setting {
+        id: "width",
+        label: "Default window width",
+        description: "Width in pixels for a new workspace window when no saved bounds exist.",
+        category: Category::General,
+        section: "Window size",
+    },
+    Setting {
+        id: "height",
+        label: "Default window height",
+        description: "Height in pixels for a new workspace window when no saved bounds exist.",
+        category: Category::General,
+        section: "Window size",
+    },
+    Setting {
+        id: "light-theme",
+        label: "Light theme",
+        description: "Colors for the interface and terminals when macOS uses light appearance.",
+        category: Category::Appearance,
+        section: "Themes",
+    },
+    Setting {
+        id: "dark-theme",
+        label: "Dark theme",
+        description: "Colors for the interface and terminals when macOS uses dark appearance.",
+        category: Category::Appearance,
+        section: "Themes",
+    },
+    Setting {
+        id: "sidebar",
+        label: "Expand sidebar",
+        description: "Show project names alongside their icons in the workspace sidebar.",
+        category: Category::Appearance,
+        section: "Interface",
+    },
+    Setting {
+        id: "status-bar",
+        label: "Show status bar",
+        description: "Show connection and terminal information at the bottom of the workspace.",
+        category: Category::Appearance,
+        section: "Interface",
+    },
+    Setting {
+        id: "font-family",
+        label: "Font family",
+        description: "The typeface used to render text in every terminal pane.",
+        category: Category::Terminal,
+        section: "Text",
+    },
+    Setting {
+        id: "font-size",
+        label: "Font size (points)",
+        description: "Default terminal text size. Individual panes can still be zoomed independently.",
+        category: Category::Terminal,
+        section: "Text",
+    },
+    Setting {
+        id: "adjust-cell-height",
+        label: "Cell height adjustment (pixels or %)",
+        description: "Add space between terminal lines using pixels or a percentage, such as 10%.",
+        category: Category::Terminal,
+        section: "Text",
+    },
+    Setting {
+        id: "copy-on-select",
+        label: "Copy on select",
+        description: "Copy selected terminal text to the clipboard as soon as you finish selecting.",
+        category: Category::Terminal,
+        section: "Behavior",
+    },
+    Setting {
+        id: "directory",
+        label: "New pane directory",
+        description: "Start new splits in the project folder or the current pane's working directory.",
+        category: Category::Terminal,
+        section: "Behavior",
+    },
+    Setting {
+        id: "server",
+        label: "Current device",
+        description: "Manage the local server that keeps your terminal sessions running.",
+        category: Category::Server,
+        section: "Connection",
+    },
+    Setting {
+        id: "default-shell",
+        label: "Default shell (executable path)",
+        description: "Shell for new sessions. Leave empty to use $SHELL, falling back to /bin/zsh.",
+        category: Category::Server,
+        section: "Sessions",
+    },
+    Setting {
+        id: "history-budget",
+        label: "History budget per session (MiB)",
+        description: "Retained terminal history, from 0 to 65536 MiB. Saved-history changes take effect at the next server start.",
+        category: Category::Server,
+        section: "Sessions",
+    },
+    Setting {
+        id: "shell-integration",
+        label: "Shell integration",
+        description: "Enable working-directory tracking and prompt navigation in new sessions.",
+        category: Category::Server,
+        section: "Sessions",
+    },
+    Setting {
+        id: "Stop Server",
+        label: "Stop Server",
+        description: "End all sessions on this device and stop the server. A confirmation is required.",
+        category: Category::Server,
+        section: "Server control",
+    },
+    Setting {
+        id: "Restart Server",
+        label: "Restart Server",
+        description: "End all sessions and start the server again. Saved terminal records are preserved.",
+        category: Category::Server,
+        section: "Server control",
+    },
+];
+
+pub(super) fn setting(id: &str) -> Option<&'static Setting> {
+    SETTINGS.iter().find(|setting| setting.id == id)
+}

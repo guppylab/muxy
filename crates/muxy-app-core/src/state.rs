@@ -86,6 +86,28 @@ impl TryFrom<StoredState> for AppState {
             .focus_history
             .retain(|pane| panes.contains(pane));
         state.validate()?;
+        let legacy_settings: Vec<_> = state
+            .projects
+            .iter()
+            .flat_map(|project| &project.tabs)
+            .flat_map(|tab| &tab.panes)
+            .filter(|pane| pane.content == PaneContent::Settings)
+            .map(|pane| pane.id)
+            .collect();
+        let restore_focus = state
+            .window
+            .active_pane
+            .is_some_and(|pane| legacy_settings.contains(&pane));
+        if restore_focus {
+            state.window.active_pane = None;
+        }
+        for pane in legacy_settings {
+            state.remove_pane(pane)?;
+        }
+        if restore_focus {
+            state.focus_selected_tab();
+        }
+        state.validate()?;
         Ok(state)
     }
 }
@@ -253,41 +275,6 @@ impl AppState {
             }
         }
         Ok(sessions)
-    }
-
-    pub fn open_settings_tab(&mut self, project: ProjectId) -> Result<TabId, AppError> {
-        let existing = self
-            .project(project)
-            .ok_or(AppError::UnknownProject(project))?
-            .tabs
-            .iter()
-            .find_map(|tab| {
-                tab.panes
-                    .iter()
-                    .find(|pane| pane.content == PaneContent::Settings)
-                    .map(|pane| (tab.id, pane.id))
-            });
-        let (id, pane) = if let Some(existing) = existing {
-            existing
-        } else {
-            let tab = Tab::settings();
-            let ids = (tab.id, tab.panes[0].id);
-            self.project_mut(project)?.tabs.push(tab);
-            ids
-        };
-        self.window.selected_tab.insert(project, id);
-        self.window.current_project = project;
-        self.window.activate(Some(pane));
-        let tab = self
-            .project_mut(project)?
-            .tabs
-            .iter_mut()
-            .find(|tab| tab.id == id)
-            .ok_or(AppError::UnknownTab { project, tab: id })?;
-        if tab.zoomed.is_some() {
-            tab.zoomed = Some(pane);
-        }
-        Ok(id)
     }
 
     pub fn open_terminal_tab(&mut self, project: ProjectId) -> Result<TabId, AppError> {

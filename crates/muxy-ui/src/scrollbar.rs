@@ -1,3 +1,7 @@
+mod list;
+
+pub use list::ListScrollbar;
+
 use std::time::Duration;
 
 pub const REVEAL_DURATION: Duration = Duration::from_millis(1_250);

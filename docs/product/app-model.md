@@ -83,7 +83,7 @@ flowchart TB
     TABS -->|"select tab"| TAB["Selected tab"]
     TAB --> LAYOUT["Pane layout"]
     LAYOUT --> PANE["One or more panes"]
-    PANE --> CONTENT["Pane content<br/>Terminal · Web view · Settings · Extension · …"]
+    PANE --> CONTENT["Pane content<br/>Terminal · Web view · Extension · …"]
     PANE -.->|"active pane provides"| TITLE["Displayed tab title"]
 ```
 
@@ -96,7 +96,8 @@ The current project, the selected tab, and the focused pane are view state
 that belongs to the window, not to a project or tab. There is one active pane
 for the entire window. Tabs may later be laid out side by side, each with its
 own panes; that does not introduce a separate active pane per tab. The first version opens a
-single window, but a later version may open several, including the same
+single workspace window and a separate Settings window. A later version may
+open several workspace windows, including the same
 project in two windows at once, without changing how projects store their
 tabs.
 
@@ -119,20 +120,24 @@ all sessions and quits.
 | Close the last pane in a tab | The tab is closed | Other tabs of the project |
 | Change directory in a terminal | That terminal process's current directory | Pane, tab, project, or server ownership |
 
-## Settings as pane content
+## Settings window
 
-Settings follows the same tab-and-pane composition as other content. It is an
-app-only pane, so it can be opened in any project, including the Home project,
-and does not depend on any server being available. A settings pane may expose:
+Settings opens in one reusable app-level window, separate from project tabs and
+panes. Opening or closing it does not change the workspace's selected project,
+tab, or pane. It remains available without a server connection. The window exposes:
 
 - settings owned by the main app; and
 - settings for a selected server, defaulting to the current-device server.
 
 App preferences live in `settings.toml`, terminal preferences in `ghostty.conf`,
-and custom themes in `themes/`. The settings pane edits these sources and applies
+and custom themes in `themes/`. The Settings window edits these sources and applies
 changes without relaunching. Keyboard shortcuts are settings: every action is
 registered in one shared system that the user may override. This includes app
 actions, text fields, menus, pickers, and buttons, with their contexts and aliases.
 Ordinary terminal keystrokes remain terminal input. Server settings belong to
 the server. Stopping or restarting it requires confirmation and ends its running
 sessions without discarding saved terminal output.
+
+Settings uses the active theme, with searchable categories and controls that
+apply changes immediately. Existing saved settings panes are removed on restore
+without removing neighboring terminal panes or their sessions.

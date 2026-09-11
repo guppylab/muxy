@@ -1,4 +1,7 @@
-use gpui::{AppContext, Context, Entity, EventEmitter, IntoElement, Render, Subscription};
+use gpui::{
+    App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, Render,
+    Subscription,
+};
 use muxy_ui::command_popover::{
     CommandPopover, CommandPopoverConfig, CommandPopoverDensity, CommandPopoverEvent,
     CommandPopoverItem, CommandPopoverPresentation, CommandPopoverRow, CommandPopoverStatus,
@@ -19,6 +22,12 @@ pub(crate) struct FontPicker {
 }
 
 impl EventEmitter<FontEvent> for FontPicker {}
+
+impl Focusable for FontPicker {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.picker.read(cx).input().focus_handle(cx)
+    }
+}
 
 impl FontPicker {
     pub(crate) fn new(

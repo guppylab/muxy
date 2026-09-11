@@ -13,7 +13,7 @@ pub struct Metrics {
 
 #[allow(dead_code)]
 impl Metrics {
-    pub fn new(multiplier: f32) -> Self {
+    pub const fn new(multiplier: f32) -> Self {
         Self { multiplier }
     }
 

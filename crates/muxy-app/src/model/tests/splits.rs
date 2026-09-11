@@ -165,11 +165,7 @@ fn zoom_controls_frame_the_pane_and_restore_the_split_layout(cx: &mut TestAppCon
                     .read(cx)
                     .focused
             );
-            for (id, pane) in model
-                .grids
-                .iter()
-                .filter_map(|(id, pane)| pane.terminal().map(|pane| (id, pane)))
-            {
+            for (id, pane) in &model.grids {
                 assert_eq!(
                     pane.view.read(cx).corner_radius,
                     if zoomed && *id == panes[2] {
@@ -335,11 +331,7 @@ fn shortcuts_split_focus_zoom_and_close_the_expected_pane(cx: &mut TestAppContex
         cx.simulate_keystrokes(shortcut);
         view.read_with(cx, |model, cx| {
             assert_eq!(model.active_pane(), Some(expected));
-            for (id, pane) in model
-                .grids
-                .iter()
-                .filter_map(|(id, pane)| pane.terminal().map(|pane| (id, pane)))
-            {
+            for (id, pane) in &model.grids {
                 assert_eq!(pane.view.read(cx).focused, *id == expected);
             }
         });
@@ -556,7 +548,6 @@ fn divider_drag_persists_ratios_and_click_focus_routes_input(cx: &mut TestAppCon
             model
                 .grids
                 .values()
-                .filter_map(PaneView::terminal)
                 .all(|pane| !pane.view.read(cx).native_visible)
         );
     });
@@ -576,7 +567,6 @@ fn wait_all_panes(cx: &mut VisualTestContext, view: &Entity<AppModel>, count: us
             && model
                 .grids
                 .values()
-                .filter_map(PaneView::terminal)
                 .all(|pane| pane.view.read(cx).channel().is_some())
     })
 }

@@ -1,8 +1,10 @@
-use super::{Category, Change, SettingsEvent, SettingsPane};
-use gpui::{AnyElement, Context, IntoElement, Keystroke, ParentElement, Styled, div, px};
+use super::{Category, Change, SettingsEvent, SettingsView};
+use gpui::{
+    AnyElement, Context, InteractiveElement, IntoElement, Keystroke, ParentElement, Styled, div, px,
+};
 use muxy_ui::controls;
 
-pub(super) fn matching(pane: &SettingsPane) -> Vec<usize> {
+pub(super) fn matching(pane: &SettingsView) -> Vec<usize> {
     pane.shortcut_names
         .iter()
         .enumerate()
@@ -10,7 +12,7 @@ pub(super) fn matching(pane: &SettingsPane) -> Vec<usize> {
         .collect()
 }
 
-pub(super) fn row(pane: &SettingsPane, index: usize, cx: &mut Context<SettingsPane>) -> AnyElement {
+pub(super) fn row(pane: &SettingsView, index: usize, cx: &mut Context<SettingsView>) -> AnyElement {
     let id = muxy_core::shortcuts::ALL[index].id;
     let recording = pane.recording.as_deref() == Some(id);
     let chord = pane.snapshot.settings.keymap.binding(id);
@@ -23,29 +25,35 @@ pub(super) fn row(pane: &SettingsPane, index: usize, cx: &mut Context<SettingsPa
         .flex()
         .flex_wrap()
         .gap(px(6.0))
-        .child(controls::button(
-            pane.style(),
-            id,
-            label,
-            true,
-            cx.listener(move |pane, _, window, cx| {
-                pane.begin_recording(id, window, cx);
-            }),
-        ))
-        .child(controls::button(
-            pane.style(),
-            &format!("reset-{id}"),
-            "Reset",
-            true,
-            cx.listener(move |pane, _, _, cx| {
-                pane.recording = None;
-                cx.emit(SettingsEvent::Change(Change::Binding(id.into(), None)));
-            }),
-        ));
+        .child(
+            controls::button(
+                pane.style(),
+                id,
+                label,
+                true,
+                cx.listener(move |pane, _, window, cx| {
+                    pane.begin_recording(id, window, cx);
+                }),
+            )
+            .track_focus(&pane.results.shortcut_focus[index][0]),
+        )
+        .child(
+            controls::button(
+                pane.style(),
+                &format!("reset-{id}"),
+                "Reset",
+                true,
+                cx.listener(move |pane, _, _, cx| {
+                    pane.recording = None;
+                    cx.emit(SettingsEvent::Change(Change::Binding(id.into(), None)));
+                }),
+            )
+            .track_focus(&pane.results.shortcut_focus[index][1]),
+        );
     pane.row(id, &pane.shortcut_names[index], control.into_any_element())
 }
 
-impl SettingsPane {
+impl SettingsView {
     pub(crate) fn begin_recording(
         &mut self,
         id: &str,

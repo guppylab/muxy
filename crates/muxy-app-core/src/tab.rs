@@ -92,10 +92,6 @@ impl Tab {
         Self::with_content(PaneContent::Terminal { session: None }, "Terminal")
     }
 
-    pub(crate) fn settings() -> Self {
-        Self::with_content(PaneContent::Settings, "Settings")
-    }
-
     fn with_content(content: PaneContent, title: &str) -> Self {
         let pane = Pane {
             id: PaneId::new(),

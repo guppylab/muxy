@@ -1,14 +1,13 @@
-use gpui::{AppContext, Context, Window};
-use muxy_app_core::PaneId;
+use gpui::{
+    AppContext, Bounds, Context, Entity, TitlebarOptions, Window, WindowBounds, WindowHandle,
+    WindowOptions, point, px, size,
+};
 use muxy_settings::CellHeight;
 
-use super::{AppModel, ConnectionState, PaneView, Quitting};
+use super::{AppModel, ConnectionState, Quitting};
 use crate::boot::Work;
-use crate::views::font_picker::{FontEvent, FontPicker};
-use crate::views::overlays::Overlay;
-use crate::views::settings::{
-    Change, PickerKind, PickerRequest, SettingsEvent, SettingsPane, Snapshot,
-};
+use crate::views::settings::window::SettingsWindow;
+use crate::views::settings::{Change, SettingsView, Snapshot};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -21,61 +20,78 @@ pub(super) struct ServerPreferences {
     pub(super) pending: std::collections::VecDeque<Change>,
 }
 
-impl AppModel {
-    pub(crate) fn open_settings_picker(
-        &mut self,
-        request: PickerRequest,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if !self.visible_panes().contains(&request.pane) || request.anchor.get().is_none() {
-            return;
-        }
-        self.flush_preferences(&[request.pane], cx);
-        match request.kind {
-            PickerKind::Theme(dark) => self.open_theme_picker_for(dark, Some(request), window, cx),
-            PickerKind::FontFamily => {
-                let active = self
-                    .terminal
-                    .font_families
-                    .first()
-                    .cloned()
-                    .unwrap_or_default();
-                let picker =
-                    cx.new(|cx| FontPicker::new(active, self.theme.clone(), self.metrics, cx));
-                self.overlay_subscription =
-                    Some(cx.subscribe(&picker, |model, _, event, cx| match event {
-                        FontEvent::Selected(name) => {
-                            model.change_preference(Change::Field("font-family", name.clone()), cx);
-                            model.dismiss_overlay(cx);
-                        }
-                        FontEvent::Dismiss => model.dismiss_overlay(cx),
-                    }));
-                self.overlay = Some(Overlay::Fonts {
-                    picker,
-                    source: request,
-                });
-                self.overlay_focus.focus(window);
-                cx.notify();
-            }
-        }
-    }
+pub(crate) struct SettingsWindowState {
+    pub(crate) window: WindowHandle<SettingsWindow>,
+    pub(crate) view: Entity<SettingsView>,
+}
 
-    pub(crate) fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+impl AppModel {
+    pub(crate) fn open_settings(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         if self.quitting != Quitting::Idle || self.close_prompt.is_some() {
             return;
         }
-        match self
-            .state
-            .open_settings_tab(self.state.current_project().id)
+        if let Some(settings) = &self.settings_window
+            && settings
+                .window
+                .update(cx, |root, window, cx| {
+                    window.activate_window();
+                    root.focus(window, cx);
+                })
+                .is_ok()
         {
-            Ok(_) => {
+            return;
+        }
+        self.settings_window = None;
+        let snapshot = self.preferences_snapshot();
+        let included_keys = muxy_settings::TerminalSettings::included_keys(
+            &self.path.with_file_name("ghostty.conf"),
+        )
+        .unwrap_or_default();
+        let view = cx.new(|cx| {
+            let mut view = SettingsView::new(
+                snapshot,
+                self.theme.clone(),
+                muxy_ui::theme::Metrics::new(1.15),
+                cx,
+            );
+            view.set_included_keys(&included_keys);
+            view
+        });
+        let weak = cx.weak_entity();
+        let content = view.clone();
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+                None,
+                size(px(1040.0), px(780.0)),
+                cx,
+            ))),
+            window_min_size: Some(size(px(740.0), px(480.0))),
+            is_movable: !cfg!(target_os = "macos"),
+            titlebar: Some(TitlebarOptions {
+                title: Some("Muxy Settings".into()),
+                appears_transparent: true,
+                traffic_light_position: Some(point(px(14.0), px(16.0))),
+            }),
+            ..WindowOptions::default()
+        };
+        match cx.open_window(options, move |window, cx| {
+            let model = weak.clone();
+            window.on_window_should_close(cx, move |_, cx| {
+                let _ = model.update(cx, |model, cx| {
+                    model.flush_preferences(cx);
+                    model.settings_window = None;
+                    cx.notify();
+                });
+                true
+            });
+            cx.new(|cx| SettingsWindow::new(weak, content, window, cx))
+        }) {
+            Ok(window) => {
+                self.settings_window = Some(SettingsWindowState { window, view });
                 self.dismiss_overlay(cx);
-                self.changed(cx);
-                self.focus_active(window, cx);
                 self.read_server_settings(cx);
             }
-            Err(error) => self.fail(error.to_string(), cx),
+            Err(error) => self.fail(format!("Could not open Settings: {error}"), cx),
         }
     }
 
@@ -105,59 +121,20 @@ impl AppModel {
             .collect()
     }
 
-    pub(super) fn create_settings_view(&mut self, id: PaneId, cx: &mut Context<Self>) {
-        let snapshot = self.preferences_snapshot();
-        let included_keys = muxy_settings::TerminalSettings::included_keys(
-            &self.path.with_file_name("ghostty.conf"),
-        )
-        .unwrap_or_default();
-        let view = cx.new(|cx| {
-            let mut pane = SettingsPane::new(snapshot, self.theme.clone(), self.metrics, cx);
-            pane.set_included_keys(&included_keys);
-            pane
-        });
-        let subscription = cx.subscribe(&view, move |model, _, event, cx| match event {
-            SettingsEvent::Change(change) => model.change_preference(change.clone(), cx),
-            SettingsEvent::Picker(kind, anchor) => {
-                model.focus_pane(id, cx);
-                model.settings_picker = Some(PickerRequest {
-                    pane: id,
-                    kind: *kind,
-                    anchor: anchor.clone(),
-                });
-                cx.notify();
-            }
-            SettingsEvent::ServerControl { restart } => model.confirm_server_control(*restart, cx),
-            SettingsEvent::ReadServer => model.read_server_settings(cx),
-            SettingsEvent::Connect => model.connect(cx),
-            SettingsEvent::Focused => {
-                model.focus_pane(id, cx);
-                model.focus_requested = false;
-            }
-        });
-        self.grids.insert(
-            id,
-            PaneView::Settings {
-                view,
-                _subscription: subscription,
-            },
-        );
-    }
-
-    pub(super) fn flush_preferences(&mut self, ids: &[PaneId], cx: &mut Context<Self>) {
-        let mut changes = Vec::new();
-        for id in ids {
-            if let Some(PaneView::Settings { view, .. }) = self.grids.get(id) {
-                changes.extend(view.update(cx, |pane, cx| pane.take_changes(cx)));
-            }
-        }
+    pub(crate) fn flush_preferences(&mut self, cx: &mut Context<Self>) {
+        let changes = self
+            .settings_window
+            .as_ref()
+            .map_or_else(Vec::new, |settings| {
+                settings.view.update(cx, |view, cx| view.take_changes(cx))
+            });
         for change in changes {
             self.change_preference(change, cx);
         }
     }
 
     pub(super) fn preferences_before_quit(&mut self, cx: &mut Context<Self>) -> bool {
-        self.flush_preferences(&self.grids.keys().copied().collect::<Vec<_>>(), cx);
+        self.flush_preferences(cx);
         if self.server_preferences.busy || self.server_preferences.control_busy {
             self.fail(
                 "Wait for the server settings operation to finish before quitting".into(),
@@ -169,27 +146,26 @@ impl AppModel {
     }
 
     pub(super) fn sync_preferences(&self, cx: &mut Context<Self>) {
-        let snapshot = self.preferences_snapshot();
-        for pane in self.grids.values() {
-            if let PaneView::Settings { view, .. } = pane {
-                view.update(cx, |pane, cx| {
-                    pane.sync(snapshot.clone(), self.theme.clone(), cx);
-                });
-            }
+        if let Some(settings) = &self.settings_window {
+            settings.view.update(cx, |view, cx| {
+                view.sync(self.preferences_snapshot(), self.theme.clone(), cx);
+            });
         }
     }
 
     pub(super) fn preference_result(&self, id: &str, error: Option<&str>, cx: &mut Context<Self>) {
-        for pane in self.grids.values() {
-            if let PaneView::Settings { view, .. } = pane {
-                view.update(cx, |pane, cx| {
-                    pane.set_error(id, error, cx);
-                });
-            }
+        if let Some(settings) = &self.settings_window {
+            settings
+                .view
+                .update(cx, |view, cx| view.set_error(id, error, cx));
         }
     }
 
-    pub(super) fn change_preference(&mut self, change: Change, cx: &mut Context<Self>) {
+    pub(crate) fn configuration_path(&self, filename: &str) -> std::path::PathBuf {
+        self.path.with_file_name(filename)
+    }
+
+    pub(crate) fn change_preference(&mut self, change: Change, cx: &mut Context<Self>) {
         let id = change_id(&change).to_owned();
         if matches!(
             &change,
@@ -219,7 +195,16 @@ impl AppModel {
         let path = self.path.with_file_name("settings.toml");
         let mut settings = self.settings.clone();
         settings.appearance = self.appearance.clone();
+        let theme_changed = matches!(change, Change::Theme(..));
         match change {
+            Change::Theme(dark, name) => {
+                if dark {
+                    settings.appearance.dark_theme = name;
+                } else {
+                    settings.appearance.light_theme = name;
+                }
+                settings.appearance.save(&path)?;
+            }
             Change::Sidebar(value) => {
                 settings.appearance.sidebar_expanded = value;
                 settings.appearance.save(&path)?;
@@ -259,7 +244,10 @@ impl AppModel {
         }
         self.appearance = settings.appearance.clone();
         self.settings = settings;
-        for pane in self.grids.values().filter_map(PaneView::terminal) {
+        if theme_changed {
+            self.refresh_theme(cx);
+        }
+        for pane in self.grids.values() {
             pane.view.update(cx, |pane, cx| {
                 pane.copy_on_select = self.settings.clipboard.copy_on_select;
                 cx.notify();
@@ -287,7 +275,7 @@ impl AppModel {
         if changed_size {
             self.font_sizes.clear();
         }
-        for pane in self.grids.values().filter_map(PaneView::terminal) {
+        for pane in self.grids.values() {
             pane.view.update(cx, |pane, cx| {
                 let zoom = pane.terminal.font_size;
                 pane.terminal = self.terminal.clone();
@@ -300,18 +288,16 @@ impl AppModel {
         let included_keys = muxy_settings::TerminalSettings::included_keys(
             &self.path.with_file_name("ghostty.conf"),
         )?;
-        for pane in self.grids.values() {
-            if let PaneView::Settings { view, .. } = pane {
-                view.update(cx, |pane, cx| {
-                    pane.set_included_keys(&included_keys);
-                    cx.notify();
-                });
-            }
+        if let Some(settings) = &self.settings_window {
+            settings.view.update(cx, |view, cx| {
+                view.set_included_keys(&included_keys);
+                cx.notify();
+            });
         }
         Ok(())
     }
 
-    pub(super) fn read_server_settings(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn read_server_settings(&mut self, cx: &mut Context<Self>) {
         if self.connection == ConnectionState::Ready
             && !self.server_preferences.busy
             && !self.server_preferences.control_busy
@@ -404,7 +390,12 @@ impl AppModel {
         self.sync_preferences(cx);
     }
 
-    fn confirm_server_control(&mut self, restart: bool, cx: &mut Context<Self>) {
+    pub(crate) fn confirm_server_control(
+        &mut self,
+        restart: bool,
+        window: gpui::AnyWindowHandle,
+        cx: &mut Context<Self>,
+    ) {
         if self.close_prompt.is_some()
             || self.server_preferences.control_busy
             || self.server_preferences.busy
@@ -413,7 +404,6 @@ impl AppModel {
             return;
         }
         self.dismiss_overlay(cx);
-        let window = self.window;
         let generation = self.generation;
         self.close_prompt = Some(cx.spawn(async move |model, cx| {
             let response = crate::views::confirm::prompt_server(window, restart, cx).await;
@@ -444,6 +434,8 @@ impl AppModel {
 
 fn change_id(change: &Change) -> &str {
     match change {
+        Change::Theme(false, _) => "light-theme",
+        Change::Theme(true, _) => "dark-theme",
         Change::Sidebar(_) => "sidebar",
         Change::StatusBar(_) => "status-bar",
         Change::ConfirmProcess(_) => "confirm-process",

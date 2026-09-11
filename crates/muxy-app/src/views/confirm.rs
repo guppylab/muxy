@@ -41,8 +41,9 @@ async fn prompt(
 ) -> Result<ConfirmationResponse, String> {
     let (sender, receiver) = async_channel::bounded(1);
     let _dialog = window
-        .update(cx, |_, _, _| {
+        .update(cx, |_, window, _| {
             muxy_ui::dialog::confirm(
+                window,
                 title,
                 message,
                 "Close",
@@ -114,8 +115,8 @@ async fn server_prompt(
 ) -> Result<bool, String> {
     let (sender, receiver) = async_channel::bounded(1);
     let _dialog = window
-        .update(cx, |_, _, _| {
-            muxy_ui::dialog::confirm(title, message, label, None, move |response| {
+        .update(cx, |_, window, _| {
+            muxy_ui::dialog::confirm(window, title, message, label, None, move |response| {
                 let _ = sender.try_send(matches!(response, ConfirmationResponse::Confirmed { .. }));
             })
         })

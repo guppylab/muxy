@@ -634,8 +634,9 @@ async fn create_prompt(
 ) -> Result<bool, String> {
     let (sender, receiver) = async_channel::bounded(1);
     let _dialog = window
-        .update(cx, |_, _, _| {
+        .update(cx, |_, window, _| {
             muxy_ui::dialog::confirm(
+                window,
                 "Create Project Folder?",
                 &message,
                 "Create & Add",

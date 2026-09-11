@@ -38,7 +38,7 @@ The technical design that implements this model is in
 | Project type | An optional classification for specialized projects. Ordinary projects have no type. |
 | Worktree project | A child project with `type = worktree`, its own directory, and a `parent_id` pointing to its top-level project. |
 | Tab | An untitled container owned directly by a project, holding one or more panes in a saved layout. It shows the window-focused pane's title, or its first pane's title when inactive. |
-| Pane | One typed unit of content within a tab, with its own title and content and details. Pane types are either app-only, such as settings, or server-bound, such as a terminal. |
+| Pane | One typed unit of content within a tab, with its own title and content and details. Pane types are either app-only, such as a web view, or server-bound, such as a terminal. |
 | Session | A running terminal process owned by a server and identified by a server-generated ID. It outlives the app and ends only when its process exits, a client ends it, or the server stops. |
 | Attach | The act of a client connecting to a session to receive its output and send input. Any number of clients may be attached at once; detaching never affects the session. |
 | History | The output a server retains for a session up to a retention limit. A recent window is sent on attach and older pages are available on request. |

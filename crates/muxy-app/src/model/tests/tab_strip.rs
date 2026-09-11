@@ -603,10 +603,12 @@ fn settings_button_stays_at_the_right_and_reuses_the_settings_pane(cx: &mut Test
             let gear = cx.debug_bounds("settings-button").expect("settings button");
             click(cx, gear.center(), MouseButton::Left, 1);
             let settings = model.read_with(cx, |model, _| {
-                let pane = model.active_pane().expect("settings pane");
-                assert!(matches!(model.grids[&pane], PaneView::Settings { .. }));
-                assert_eq!(model.state.home().tabs.len(), count + 1);
-                pane
+                assert_eq!(model.state.home().tabs.len(), count);
+                model
+                    .settings_window
+                    .as_ref()
+                    .expect("settings window")
+                    .window
             });
             if let Some(first) = ids.first() {
                 model.update(cx, |model, cx| model.select_tab(*first, cx));
@@ -614,8 +616,15 @@ fn settings_button_stays_at_the_right_and_reuses_the_settings_pane(cx: &mut Test
             }
             click(cx, gear.center(), MouseButton::Left, 2);
             model.read_with(cx, |model, _| {
-                assert_eq!(model.active_pane(), Some(settings));
-                assert_eq!(model.state.home().tabs.len(), count + 1);
+                assert_eq!(
+                    model
+                        .settings_window
+                        .as_ref()
+                        .expect("settings window")
+                        .window,
+                    settings
+                );
+                assert_eq!(model.state.home().tabs.len(), count);
                 assert!(!model.tab_drag.is_active());
             });
             observer.read_with(cx, |observer, _| {
@@ -643,8 +652,8 @@ fn settings_button_remains_available_when_the_project_directory_is_missing(
     click(cx, gear.center(), MouseButton::Left, 1);
     observer.read_with(cx, |observer, cx| {
         let model = observer.model.read(cx);
-        let pane = model.active_pane().expect("settings pane");
-        assert!(matches!(model.grids[&pane], PaneView::Settings { .. }));
+        assert!(model.settings_window.is_some());
+        assert!(model.active_pane().is_none());
         assert_eq!(observer.zoom_requests, 0);
         assert_eq!(observer.move_requests, 0);
     });

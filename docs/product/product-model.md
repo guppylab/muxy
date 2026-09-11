@@ -90,7 +90,7 @@ One top-level project, Home, always exists. It is located on the current-device
 server and points at the operating system's home directory. It cannot be
 deleted and cannot have worktree children. In every other respect it is an
 ordinary project: it owns tabs, its server-bound panes depend on its server,
-and app-only panes such as settings can be opened in it at any time. There is
+and app-only panes such as web views can be opened in it at any time. There is
 therefore never a state with zero projects.
 
 ## Workspaces and project discovery
@@ -184,7 +184,7 @@ tabs; the app never creates one on its own.
 
 Panes are typed. A pane type is either **app-only** or **server-bound**:
 
-- app-only panes, such as settings or a web view, do not depend on a server;
+- app-only panes, such as a web view, do not depend on a server;
 - server-bound panes, such as a terminal or an extension view that executes on
   a server, inherit the owning project's server and directory context and
   reference a session on that server.
@@ -193,11 +193,10 @@ Pane content may include:
 
 - terminal (server-bound);
 - web view (app-only);
-- settings (app-only);
 - extension-provided view (either, depending on the extension);
 - future pane types.
 
-The first release supports terminal and settings panes.
+The first release supports terminal panes and a separate app-level Settings window.
 
 A terminal pane offers what a standalone terminal such as Ghostty offers,
 including selection and clipboard, search, links, mouse reporting, input

@@ -18,40 +18,19 @@ use crate::views::terminal::colors::Palette;
 use crate::views::terminal::pane::{PaneEvent, PaneState, TerminalPane};
 use muxy_ui::theme::{Metrics, Theme};
 
-pub(crate) struct PaneSession {
+pub(crate) struct PaneView {
     pub(crate) view: Entity<TerminalPane>,
     _subscription: Subscription,
 }
 
-pub(crate) enum PaneView {
-    Terminal(PaneSession),
-    Settings {
-        view: Entity<crate::views::settings::SettingsPane>,
-        _subscription: Subscription,
-    },
-}
-
 impl PaneView {
-    pub(crate) fn terminal(&self) -> Option<&PaneSession> {
-        match self {
-            Self::Terminal(pane) => Some(pane),
-            Self::Settings { .. } => None,
-        }
-    }
-
     pub(crate) fn element(&self) -> gpui::AnyElement {
         use gpui::IntoElement;
-        match self {
-            Self::Terminal(pane) => pane.view.clone().into_any_element(),
-            Self::Settings { view, .. } => view.clone().into_any_element(),
-        }
+        self.view.clone().into_any_element()
     }
 
     pub(crate) fn focus(&self, window: &mut Window, cx: &gpui::App) {
-        match self {
-            Self::Terminal(pane) => pane.view.read(cx).focus.focus(window),
-            Self::Settings { view, .. } => view.read(cx).focus.focus(window),
-        }
+        self.view.read(cx).focus.focus(window);
     }
 }
 
@@ -86,7 +65,7 @@ pub(crate) struct AppModel {
     pub(crate) settings: muxy_settings::Settings,
     terminal: muxy_settings::TerminalSettings,
     server_preferences: preferences::ServerPreferences,
-    pub(crate) settings_picker: Option<crate::views::settings::PickerRequest>,
+    pub(crate) settings_window: Option<preferences::SettingsWindowState>,
     font_sizes: HashMap<PaneId, f32>,
     initial_directories: HashMap<PaneId, PathBuf>,
     pub(crate) theme: Theme,
@@ -128,15 +107,15 @@ pub(crate) struct AppModel {
 }
 
 impl AppModel {
-    pub(crate) fn terminal(&self, id: &PaneId) -> Option<&PaneSession> {
-        self.grids.get(id).and_then(PaneView::terminal)
+    pub(crate) fn terminal(&self, id: &PaneId) -> Option<&PaneView> {
+        self.grids.get(id)
     }
     pub(crate) fn refresh_theme(&mut self, cx: &mut Context<Self>) {
         (self.theme, self.palette) = self.themes.resolve(&self.appearance, self.dark);
         if self.connection == ConnectionState::Ready {
             self.send(Work::Colors(self.palette.terminal_colors()), cx);
         }
-        for pane in self.grids.values().filter_map(PaneView::terminal) {
+        for pane in self.grids.values() {
             pane.view.update(cx, |pane, cx| {
                 pane.palette = self.palette;
                 pane.update_find_theme(&self.theme, cx);
@@ -144,11 +123,6 @@ impl AppModel {
             });
         }
         self.sync_preferences(cx);
-        if let Some(Overlay::Fonts { picker, .. }) = &self.overlay {
-            picker.update(cx, |picker, cx| {
-                picker.set_appearance(self.theme.clone(), self.metrics, cx);
-            });
-        }
         if let Some(Overlay::Themes { picker, dark, .. }) = &self.overlay {
             let name = self.themes.active_name(&self.appearance, *dark);
             picker.update(cx, |picker, cx| {
@@ -266,7 +240,7 @@ impl AppModel {
             settings: boot.settings,
             terminal: boot.terminal,
             server_preferences: preferences::ServerPreferences::default(),
-            settings_picker: None,
+            settings_window: None,
             font_sizes: HashMap::new(),
             initial_directories: HashMap::new(),
             theme,
@@ -321,15 +295,7 @@ impl AppModel {
     pub(crate) fn active_tab(&self) -> Option<TabId> {
         let project = self.state.current_project();
         let selected = self.state.window().selected_tab.get(&project.id).copied()?;
-        if project.status() == ProjectStatus::Missing
-            && !project.tabs.iter().any(|tab| {
-                tab.id == selected
-                    && tab
-                        .panes
-                        .iter()
-                        .any(|pane| pane.content == PaneContent::Settings)
-            })
-        {
+        if project.status() == ProjectStatus::Missing {
             return None;
         }
         Some(selected)
@@ -789,7 +755,7 @@ impl AppModel {
             self.close_request = None;
         }
         self.discarding.clear();
-        for pane in self.grids.values().filter_map(PaneView::terminal) {
+        for pane in self.grids.values() {
             pane.view
                 .update(cx, |pane, cx| pane.set_state(PaneState::Connecting, cx));
         }
@@ -933,28 +899,14 @@ impl AppModel {
 
     fn sync_visible(&mut self, cx: &mut Context<Self>) {
         let visible = self.visible_panes();
-        if self
-            .overlay
-            .as_ref()
-            .and_then(Overlay::settings_source)
-            .is_some_and(|source| !visible.contains(&source.pane))
-        {
-            self.dismiss_overlay(cx);
-        }
         let hidden: Vec<_> = self
             .grids
             .keys()
             .copied()
             .filter(|id| !visible.contains(id))
             .collect();
-        self.flush_preferences(&hidden, cx);
         for id in hidden {
-            if matches!(self.grids.get(&id), Some(PaneView::Settings { .. }))
-                && self.pane_tab(id).is_some()
-            {
-                continue;
-            }
-            if let Some(PaneView::Terminal(pane)) = self.grids.remove(&id) {
+            if let Some(pane) = self.grids.remove(&id) {
                 self.font_sizes
                     .insert(id, pane.view.read(cx).terminal.font_size);
                 pane.view.update(cx, |pane, cx| {
@@ -994,8 +946,6 @@ impl AppModel {
                 continue;
             }
             if !self.is_terminal(id) {
-                self.create_settings_view(id, cx);
-                self.focus_requested = true;
                 continue;
             }
             self.create_terminal_view(id, cx);
@@ -1044,10 +994,10 @@ impl AppModel {
         });
         self.grids.insert(
             id,
-            PaneView::Terminal(PaneSession {
+            PaneView {
                 view,
                 _subscription: subscription,
-            }),
+            },
         );
         self.focus_requested = true;
     }
@@ -1080,11 +1030,7 @@ impl AppModel {
         self.retained = plan.retain.iter().map(|(pane, _)| *pane).collect();
         self.loaded.clear();
         self.pending.clear();
-        for (id, pane) in self
-            .grids
-            .iter()
-            .filter_map(|(id, pane)| pane.terminal().map(|pane| (id, pane)))
-        {
+        for (id, pane) in &self.grids {
             let state = self.pane_state(*id);
             pane.view.update(cx, |pane, cx| pane.set_state(state, cx));
         }
@@ -1238,11 +1184,7 @@ impl AppModel {
         }
         self.discard_pending(cx);
         self.apply_restore(sessions, cx);
-        if self
-            .grids
-            .values()
-            .any(|pane| matches!(pane, PaneView::Settings { .. }))
-        {
+        if self.settings_window.is_some() {
             self.read_server_settings(cx);
         }
         cx.notify();
@@ -1456,7 +1398,6 @@ impl AppModel {
                 let pane = self
                     .grids
                     .values()
-                    .filter_map(PaneView::terminal)
                     .find(|pane| pane.view.read(cx).channel() == Some(channel))
                     .map(|pane| pane.view.clone());
                 if let Some(pane) = pane {
@@ -1479,7 +1420,6 @@ impl AppModel {
                 if let Some(pane) = self
                     .grids
                     .values()
-                    .filter_map(PaneView::terminal)
                     .find(|pane| pane.view.read(cx).channel() == Some(channel))
                     .map(|pane| pane.view.clone())
                 {
@@ -1566,7 +1506,7 @@ impl AppModel {
         }
         self.discarding.clear();
         self.loaded.clear();
-        for pane in self.grids.values().filter_map(PaneView::terminal) {
+        for pane in self.grids.values() {
             pane.view
                 .update(cx, |pane, cx| pane.set_state(PaneState::Disconnected, cx));
         }

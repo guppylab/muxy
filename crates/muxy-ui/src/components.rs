@@ -16,6 +16,31 @@ use gpui::{
 type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 type KeyHandler = Box<dyn Fn(&mut Window, &mut App) + 'static>;
 
+pub trait ButtonInteraction: Sized {
+    #[must_use]
+    fn button_interaction(
+        self,
+        on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self;
+}
+
+impl ButtonInteraction for gpui::Stateful<gpui::Div> {
+    fn button_interaction(
+        self,
+        on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        let on_click = std::rc::Rc::new(on_click);
+        let on_key = on_click.clone();
+        self.key_context("Button")
+            .tab_index(0)
+            .on_action(move |_: &ActivateButton, window, cx| {
+                on_key(&ClickEvent::default(), window, cx);
+                cx.stop_propagation();
+            })
+            .on_click(move |event, window, cx| on_click(event, window, cx))
+    }
+}
+
 #[derive(IntoElement, Debug)]
 #[must_use]
 pub struct IconGlyph {

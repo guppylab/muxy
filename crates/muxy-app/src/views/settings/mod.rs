@@ -1,27 +1,32 @@
 mod appearance;
+mod catalog;
 mod keyboard;
+mod layout;
 mod pickers;
 mod results;
 mod server;
 mod terminal;
+pub(crate) mod window;
 
-pub(crate) use pickers::{PickerAnchor, PickerKind, PickerRequest, dropdown};
+pub(crate) use pickers::{PickerAnchor, PickerKind, PickerRequest};
 
 use std::collections::{HashMap, HashSet};
 
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    AnyElement, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
-    InteractiveElement, IntoElement, ParentElement, Render, SharedString,
-    StatefulInteractiveElement, Styled, Subscription, Window, canvas, div, list, px,
+    AnyElement, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, ParentElement, Render, Styled, Subscription, Window, canvas,
+    div, px,
 };
 use muxy_settings::{Settings, TerminalSettings};
 use muxy_ui::controls::{self, Style};
+use muxy_ui::form;
 use muxy_ui::text_input::{InputEvent, InputStyle, TextInput};
 use muxy_ui::theme::{Metrics, Theme};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum Category {
+    General,
     Appearance,
     Terminal,
     Keyboard,
@@ -29,15 +34,17 @@ pub(crate) enum Category {
 }
 
 impl Category {
-    const ALL: [Self; 4] = [
+    const ALL: [Self; 5] = [
+        Self::General,
         Self::Appearance,
-        Self::Terminal,
         Self::Keyboard,
+        Self::Terminal,
         Self::Server,
     ];
 
     fn label(self) -> &'static str {
         match self {
+            Self::General => "General",
             Self::Appearance => "Appearance",
             Self::Terminal => "Terminal",
             Self::Keyboard => "Keyboard",
@@ -48,6 +55,7 @@ impl Category {
 
 #[derive(Clone, Debug)]
 pub(crate) enum Change {
+    Theme(bool, String),
     Sidebar(bool),
     StatusBar(bool),
     ConfirmProcess(bool),
@@ -64,7 +72,7 @@ pub(crate) enum SettingsEvent {
     ServerControl { restart: bool },
     ReadServer,
     Connect,
-    Focused,
+    OpenConfiguration(&'static str),
 }
 
 #[derive(Clone)]
@@ -77,7 +85,7 @@ pub(crate) struct Snapshot {
     pub(crate) pending_server_fields: HashSet<String>,
 }
 
-pub(crate) struct SettingsPane {
+pub(crate) struct SettingsView {
     pub(crate) focus: FocusHandle,
     snapshot: Snapshot,
     theme: Theme,
@@ -85,8 +93,12 @@ pub(crate) struct SettingsPane {
     search: Entity<TextInput>,
     query: String,
     results: results::Results,
+    scrollbar: muxy_ui::scrollbar::ListScrollbar,
     shortcut_names: Vec<String>,
     category: Category,
+    section: Option<&'static str>,
+    expanded: HashSet<Category>,
+    navbar_focus: FocusHandle,
     fields: HashMap<&'static str, Entity<TextInput>>,
     dirty: HashSet<&'static str>,
     pub(crate) errors: HashMap<String, String>,
@@ -95,7 +107,6 @@ pub(crate) struct SettingsPane {
     focus_initialized: bool,
     compact: bool,
     picker_anchors: HashMap<PickerKind, PickerAnchor>,
-    pub(crate) focus_outline: bool,
     subscriptions: Vec<Subscription>,
     #[cfg(test)]
     pub(crate) render_count: usize,
@@ -103,9 +114,9 @@ pub(crate) struct SettingsPane {
     pub(crate) shortcut_row_count: usize,
 }
 
-impl EventEmitter<SettingsEvent> for SettingsPane {}
+impl EventEmitter<SettingsEvent> for SettingsView {}
 
-impl SettingsPane {
+impl SettingsView {
     pub(crate) fn new(
         snapshot: Snapshot,
         theme: Theme,
@@ -114,7 +125,7 @@ impl SettingsPane {
     ) -> Self {
         let search = cx.new(|cx| {
             TextInput::new(InputStyle::field(&theme, &metrics), cx)
-                .with_placeholder("Search settings")
+                .with_placeholder("Search settings…")
         });
         let search_subscription = cx.subscribe(&search, |pane: &mut Self, _, event, cx| {
             if matches!(event, InputEvent::Changed) {
@@ -140,11 +151,15 @@ impl SettingsPane {
             search,
             query: String::new(),
             results: results::Results::new(cx),
+            scrollbar: muxy_ui::scrollbar::ListScrollbar::default(),
             shortcut_names: muxy_core::shortcuts::ALL
                 .iter()
                 .map(|shortcut| shortcut.id.replace(['_', '.'], " "))
                 .collect(),
-            category: Category::Appearance,
+            category: Category::General,
+            section: None,
+            expanded: HashSet::new(),
+            navbar_focus: cx.focus_handle().tab_stop(true),
             fields: HashMap::new(),
             dirty: HashSet::new(),
             errors: HashMap::new(),
@@ -160,7 +175,6 @@ impl SettingsPane {
             .into_iter()
             .map(|kind| (kind, PickerAnchor::default()))
             .collect(),
-            focus_outline: false,
             subscriptions: vec![search_subscription, recorder],
             #[cfg(test)]
             render_count: 0,
@@ -214,6 +228,34 @@ impl SettingsPane {
     }
 
     #[cfg(test)]
+    pub(crate) fn focused_shortcut(&self, window: &Window) -> Option<(&'static str, bool)> {
+        self.results
+            .shortcut_focus
+            .iter()
+            .enumerate()
+            .find_map(|(index, handles)| {
+                handles
+                    .iter()
+                    .position(|handle| handle.is_focused(window))
+                    .map(|control| (muxy_core::shortcuts::ALL[index].id, control == 1))
+            })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn theme(&self) -> &Theme {
+        &self.theme
+    }
+
+    #[cfg(test)]
+    pub(crate) fn matching_setting_ids(&self) -> Vec<&'static str> {
+        catalog::SETTINGS
+            .iter()
+            .filter(|setting| self.matches(setting.category, setting.label))
+            .map(|setting| setting.id)
+            .collect()
+    }
+
+    #[cfg(test)]
     pub(crate) fn field_value(&self, id: &str, cx: &gpui::App) -> String {
         self.fields[id].read(cx).text().to_owned()
     }
@@ -256,10 +298,6 @@ impl SettingsPane {
             return;
         }
         self.focus_initialized = true;
-        self.subscriptions
-            .push(cx.on_focus_in(&self.focus, window, |_, _, cx| {
-                cx.emit(SettingsEvent::Focused);
-            }));
         self.subscriptions
             .push(cx.on_focus_out(&self.focus, window, |pane, _, _, cx| {
                 pane.recording = None;
@@ -327,13 +365,41 @@ impl SettingsPane {
     }
 
     fn matches(&self, category: Category, label: &str) -> bool {
-        let query = &self.query;
-        if query.is_empty() {
+        let setting = catalog::SETTINGS
+            .iter()
+            .find(|setting| setting.category == category && setting.label == label);
+        if self.query.is_empty() {
             category == self.category
+                && self
+                    .section
+                    .is_none_or(|section| setting.is_none_or(|setting| setting.section == section))
         } else {
-            format!("{} {label}", category.label())
-                .to_lowercase()
-                .contains(query)
+            let text = setting
+                .map_or_else(
+                    || format!("{} {label}", category.label()),
+                    |setting| {
+                        format!(
+                            "{} {} {} {} {}",
+                            category.label(),
+                            setting.section,
+                            setting.id,
+                            label,
+                            setting.description
+                        )
+                    },
+                )
+                .to_lowercase();
+            self.query
+                .split_whitespace()
+                .all(|word| text.contains(word))
+        }
+    }
+
+    fn configuration_file(&self) -> &'static str {
+        match self.category {
+            Category::Terminal => "ghostty.conf",
+            Category::Server => "server.toml",
+            _ => "settings.toml",
         }
     }
 
@@ -344,45 +410,77 @@ impl SettingsPane {
         }
     }
 
+    fn layout_style(&self) -> Style<'_> {
+        const METRICS: Metrics = Metrics::new(1.0);
+        Style {
+            theme: &self.theme,
+            metrics: &METRICS,
+        }
+    }
+
     fn row(&self, id: &str, label: &str, control: AnyElement) -> AnyElement {
-        let content = if self.compact {
-            div()
-                .flex()
-                .flex_col()
-                .min_w(px(0.0))
-                .px(self.metrics.spacing6())
-                .py(self.metrics.spacing3())
-                .gap(self.metrics.spacing2())
-                .child(label.to_owned())
-                .child(control)
-                .into_any_element()
-        } else {
-            controls::row(self.style(), label, control)
-        };
+        let setting = catalog::setting(id);
+        let description = setting.map(|setting| setting.description);
+        let section = setting
+            .filter(|setting| {
+                !catalog::SETTINGS
+                    .iter()
+                    .take_while(|previous| previous.id != id)
+                    .any(|previous| {
+                        previous.category == setting.category
+                            && previous.section == setting.section
+                            && self.matches(previous.category, previous.label)
+                    })
+            })
+            .map(|setting| setting.section);
+        let focus = self.results.row_focus[id].clone();
+        let reveal = self.results.reveal_focus.clone();
         div()
+            .relative()
+            .track_focus(&focus)
+            .debug_selector({
+                let id = id.to_owned();
+                move || format!("settings-row-{id}")
+            })
             .min_w(px(0.0))
-            .child(content)
+            .border_b_1()
+            .border_color(self.theme.border)
+            .when_some(section, |row, section| {
+                row.child(self.subsection_heading(section))
+            })
+            .child(form::row(
+                self.layout_style(),
+                label,
+                description,
+                control,
+                self.compact,
+            ))
             .when_some(self.errors.get(id), |row, error| {
-                row.child(self.note(error, true))
+                row.child(self.note(error, true).pt_0())
             })
             .when_some(self.notes.get(id), |row, note| {
-                row.child(self.note(note, false))
+                row.child(self.note(note, false).pt_0())
             })
+            .child(
+                canvas(
+                    move |bounds, window, cx| {
+                        if reveal.get() && focus.contains_focused(window, cx) {
+                            reveal.set(false);
+                            window.request_autoscroll(bounds);
+                        }
+                    },
+                    |_, (), _, _| {},
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full(),
+            )
             .into_any_element()
     }
 
-    fn note(&self, text: &str, error: bool) -> AnyElement {
-        div()
-            .px(self.metrics.spacing6())
-            .pb(self.metrics.spacing3())
-            .text_size(self.metrics.font_footnote())
-            .text_color(if error {
-                self.theme.danger
-            } else {
-                self.theme.fg_muted
-            })
-            .child(text.to_owned())
-            .into_any_element()
+    fn note(&self, text: &str, error: bool) -> gpui::Div {
+        form::note(self.style(), text, error)
     }
 
     fn field(&self, id: &'static str) -> AnyElement {
@@ -418,154 +516,7 @@ impl SettingsPane {
     }
 }
 
-impl SettingsPane {
-    fn categories(&self, cx: &mut Context<Self>) -> AnyElement {
-        let mut categories = div().flex().gap(px(4.0)).map(|nav| {
-            if self.compact {
-                nav.flex_wrap()
-            } else {
-                nav.flex_col()
-            }
-        });
-        for category in Category::ALL {
-            categories = categories.child(
-                div()
-                    .id(SharedString::from(format!(
-                        "settings-category-{}",
-                        category.label()
-                    )))
-                    .debug_selector(move || format!("settings-category-{}", category.label()))
-                    .px(px(10.0))
-                    .py(px(8.0))
-                    .rounded(px(5.0))
-                    .cursor_pointer()
-                    .when(self.category == category, |row| {
-                        row.bg(self.theme.accent_soft)
-                    })
-                    .hover(|row| row.bg(self.theme.hover))
-                    .child(category.label())
-                    .on_click(cx.listener(move |pane, _, window, cx| {
-                        pane.recording = None;
-                        pane.category = category;
-                        pane.query.clear();
-                        pane.results.reset();
-                        pane.search.update(cx, |search, cx| search.set_text("", cx));
-                        pane.focus.focus(window);
-                        if category == Category::Server {
-                            cx.emit(SettingsEvent::ReadServer);
-                        }
-                        cx.notify();
-                    })),
-            );
-        }
-        categories.into_any_element()
-    }
-}
-
-impl SettingsPane {
-    fn navigation(&self, cx: &mut Context<Self>) -> AnyElement {
-        div()
-            .flex_none()
-            .map(|nav| {
-                if self.compact {
-                    nav.w_full().border_b_1()
-                } else {
-                    nav.w(px(180.0)).h_full().border_r_1()
-                }
-            })
-            .flex()
-            .flex_col()
-            .p(self.metrics.spacing6())
-            .gap(px(14.0))
-            .border_color(self.theme.border)
-            .child(
-                div()
-                    .text_size(px(17.0))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child("Settings"),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .min_w(px(0.0))
-                    .h(self.metrics.control_medium())
-                    .debug_selector(|| "settings-search".into())
-                    .child(controls::text_field(
-                        self.style(),
-                        "search",
-                        &self.search,
-                        None,
-                    )),
-            )
-            .child(self.categories(cx))
-            .into_any_element()
-    }
-
-    fn content(&self, cx: &Context<Self>) -> AnyElement {
-        let view = cx.entity();
-        div()
-            .id("settings-sections")
-            .debug_selector(|| "settings-sections".into())
-            .flex_1()
-            .min_w(px(0.0))
-            .min_h(px(0.0))
-            .map(|body| {
-                if self.compact {
-                    body.w_full()
-                } else {
-                    body.h_full()
-                }
-            })
-            .overflow_hidden()
-            .child(
-                list(self.results.state.clone(), move |index, window, cx| {
-                    view.update(cx, |pane, cx| pane.result(index, window, cx))
-                })
-                .size_full(),
-            )
-            .into_any_element()
-    }
-
-    fn layout_content(
-        &mut self,
-        size: gpui::Size<gpui::Pixels>,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        for anchor in self.picker_anchors.values() {
-            anchor.set(None);
-        }
-        self.compact = size.width < px(660.0);
-        self.refresh_results(size.height, window, cx);
-        let inset = if self.compact {
-            self.metrics.spacing7()
-        } else {
-            self.metrics.spacing9()
-        };
-        div()
-            .size_full()
-            .flex()
-            .justify_center()
-            .p(inset)
-            .child(
-                div()
-                    .debug_selector(|| "settings-container".into())
-                    .w_full()
-                    .max_w(self.metrics.scaled(1080.0))
-                    .h_full()
-                    .min_w(px(0.0))
-                    .min_h(px(0.0))
-                    .flex()
-                    .when(self.compact, Styled::flex_col)
-                    .child(self.navigation(cx))
-                    .child(self.content(cx)),
-            )
-            .into_any_element()
-    }
-}
-
-impl Render for SettingsPane {
+impl Render for SettingsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         #[cfg(test)]
         {
@@ -573,20 +524,32 @@ impl Render for SettingsPane {
         }
         self.initialize_focus(window, cx);
         let view = cx.entity();
+        let reveal = self.results.reveal_focus.clone();
         div()
-            .id("settings-pane")
-            .debug_selector(|| "settings-pane".into())
+            .id("settings-view")
+            .debug_selector(|| "settings-view".into())
             .track_focus(&self.focus)
+            .tab_group()
+            .font_family(".SystemUIFont")
+            .line_height(gpui::relative(1.3))
+            .on_action(cx.listener(|view, _: &SearchSettings, window, cx| {
+                view.search.focus_handle(cx).focus(window);
+            }))
+            .on_action(cx.listener(|view, _: &FocusSettingsNavbar, window, _| {
+                view.navbar_focus.focus(window);
+            }))
+            .on_action(cx.listener(|view, _: &NextSettingsControl, window, cx| {
+                view.advance_focus(false, window, cx);
+            }))
+            .on_action(
+                cx.listener(|view, _: &PreviousSettingsControl, window, cx| {
+                    view.advance_focus(true, window, cx);
+                }),
+            )
             .size_full()
             .relative()
             .flex()
             .overflow_hidden()
-            .border_1()
-            .border_color(if self.focus_outline {
-                self.theme.accent
-            } else {
-                self.theme.bg
-            })
             .bg(self.theme.bg)
             .text_color(self.theme.fg)
             .text_size(self.metrics.font_body())
@@ -597,6 +560,7 @@ impl Render for SettingsPane {
                             .update(cx, |pane, cx| pane.layout_content(bounds.size, window, cx));
                         content.layout_as_root(bounds.size.into(), window, cx);
                         content.prepaint_at(bounds.origin, window, cx);
+                        reveal.set(false);
                         content
                     },
                     |_, mut content, window, cx| content.paint(window, cx),
@@ -604,4 +568,27 @@ impl Render for SettingsPane {
                 .size_full(),
             )
     }
+}
+
+gpui::actions!(
+    settings,
+    [
+        CloseSettings,
+        SearchSettings,
+        FocusSettingsNavbar,
+        NextSettingsControl,
+        PreviousSettingsControl
+    ]
+);
+
+pub(crate) fn register_shortcuts(registry: &mut muxy_ui::shortcuts::Registry<'_>) {
+    use muxy_core::shortcuts::ShortcutId;
+    registry.register(ShortcutId::CloseSettings, &CloseSettings);
+    registry.register(ShortcutId::SearchSettings, &SearchSettings);
+    registry.register(ShortcutId::FocusSettingsNavbar, &FocusSettingsNavbar);
+    registry.register(ShortcutId::NextSettingsControl, &NextSettingsControl);
+    registry.register(
+        ShortcutId::PreviousSettingsControl,
+        &PreviousSettingsControl,
+    );
 }

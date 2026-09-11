@@ -1,15 +1,14 @@
 use super::*;
-use crate::views::overlays::Overlay;
+use crate::views::settings::window::SettingsOverlay as Overlay;
 
 #[gpui::test]
 fn font_dropdown_filters_saves_and_cancels_without_expanding_the_settings_rows(
     cx: &mut TestAppContext,
 ) {
-    let mut state = AppState::bootstrap().expect("state");
-    state.open_settings_tab(state.home().id).expect("settings");
+    let state = AppState::bootstrap().expect("state");
     let (boot, _requests) = stub_boot(state);
     cx.update(|cx| crate::views::workspace::bind_keys(&boot.settings.keymap, cx));
-    let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
+    let (view, cx) = settings_window(boot, cx);
     cx.simulate_resize(size(px(1200.0), px(800.0)));
     click_preference(cx, "settings-category-Terminal");
     let section = cx
@@ -22,8 +21,11 @@ fn font_dropdown_filters_saves_and_cancels_without_expanding_the_settings_rows(
         assert_eq!(pane.field_value("font-size", cx), "21");
     });
     click_preference(cx, "settings-picker-font-family");
-    view.read_with(cx, |model, _| {
-        assert!(matches!(model.overlay, Some(Overlay::Fonts { .. })));
+    view.read_with(cx, |model, cx| {
+        assert!(matches!(
+            settings_root(model, cx).overlay,
+            Some(Overlay::Fonts { .. })
+        ));
         assert_eq!(model.terminal.font_size, 21.0);
     });
     assert_eq!(cx.debug_bounds("settings-section-Terminal"), Some(section));
@@ -46,8 +48,8 @@ fn font_dropdown_filters_saves_and_cancels_without_expanding_the_settings_rows(
     assert_eq!(cx.debug_bounds("settings-section-Terminal"), Some(section));
     cx.simulate_keystrokes("enter");
     cx.run_until_parked();
-    view.read_with(cx, |model, _| {
-        assert!(model.overlay.is_none());
+    view.read_with(cx, |model, cx| {
+        assert!(settings_root(model, cx).overlay.is_none());
         assert_eq!(
             model.terminal.font_families.first().map(String::as_str),
             Some(font.as_str())
@@ -62,11 +64,13 @@ fn font_dropdown_filters_saves_and_cancels_without_expanding_the_settings_rows(
     cx.update(|window, cx| assert!(settings.read(cx).focus.is_focused(window)));
     click_preference(cx, "settings-picker-font-family");
     cx.simulate_keystrokes("z z z z z z enter");
-    view.read_with(cx, |model, _| assert!(model.overlay.is_some()));
+    view.read_with(cx, |model, cx| {
+        assert!(settings_root(model, cx).overlay.is_some());
+    });
     cx.simulate_keystrokes("escape");
     cx.run_until_parked();
-    view.read_with(cx, |model, _| {
-        assert!(model.overlay.is_none());
+    view.read_with(cx, |model, cx| {
+        assert!(settings_root(model, cx).overlay.is_none());
         assert_eq!(
             model.terminal.font_families.first().map(String::as_str),
             Some(font.as_str())
@@ -79,8 +83,8 @@ fn font_dropdown_filters_saves_and_cancels_without_expanding_the_settings_rows(
     click_preference(cx, "settings-picker-font-family");
     cx.simulate_keystrokes("down down up enter");
     cx.run_until_parked();
-    view.read_with(cx, |model, _| {
-        assert!(model.overlay.is_none());
+    view.read_with(cx, |model, cx| {
+        assert!(settings_root(model, cx).overlay.is_none());
         assert_eq!(model.terminal.font_families, [names[1].clone()]);
     });
 }
@@ -89,8 +93,7 @@ fn font_dropdown_filters_saves_and_cancels_without_expanding_the_settings_rows(
 fn settings_theme_dropdowns_use_their_own_anchor_and_update_only_the_selected_mode(
     cx: &mut TestAppContext,
 ) {
-    let mut state = AppState::bootstrap().expect("state");
-    state.open_settings_tab(state.home().id).expect("settings");
+    let state = AppState::bootstrap().expect("state");
     let (boot, _requests) = stub_boot(state);
     let themes = boot.state_path.with_file_name("themes");
     std::fs::create_dir_all(&themes).expect("themes directory");
@@ -100,8 +103,9 @@ fn settings_theme_dropdowns_use_their_own_anchor_and_update_only_the_selected_mo
     )
     .expect("test theme");
     cx.update(|cx| crate::views::workspace::bind_keys(&boot.settings.keymap, cx));
-    let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
+    let (view, cx) = settings_window(boot, cx);
     cx.simulate_resize(size(px(1200.0), px(800.0)));
+    click_preference(cx, "settings-category-Appearance");
     for (dark, selector) in [
         (true, "settings-picker-dark-theme"),
         (false, "settings-picker-light-theme"),
@@ -113,23 +117,18 @@ fn settings_theme_dropdowns_use_their_own_anchor_and_update_only_the_selected_mo
             .expect("theme dropdown");
         assert_eq!(dropdown.top(), trigger.bottom() + px(4.0));
         assert_eq!(dropdown.right(), trigger.right());
-        view.read_with(cx, |model, _| {
-            let Some(Overlay::Themes {
-                dark: target,
-                source: Some(source),
-                ..
-            }) = &model.overlay
-            else {
+        view.read_with(cx, |model, cx| {
+            let Some(Overlay::Themes { source, .. }) = &settings_root(model, cx).overlay else {
                 panic!("settings theme picker")
             };
-            assert_eq!(*target, dark);
+            assert_eq!(source.kind, crate::views::settings::PickerKind::Theme(dark));
             assert_eq!(source.anchor.get(), Some(trigger));
             assert_ne!(source.anchor.get(), model.theme_anchor);
         });
         cx.simulate_keystrokes("p i c k e r space f i x t u r e enter");
         cx.run_until_parked();
-        view.read_with(cx, |model, _| {
-            assert!(model.overlay.is_none());
+        view.read_with(cx, |model, cx| {
+            assert!(settings_root(model, cx).overlay.is_none());
             assert_eq!(
                 if dark {
                     &model.appearance.dark_theme
@@ -143,45 +142,13 @@ fn settings_theme_dropdowns_use_their_own_anchor_and_update_only_the_selected_mo
             }
         });
     }
-    cx.update(|window, cx| view.update(cx, |model, cx| model.open_theme_picker(window, cx)));
-    cx.run_until_parked();
-    view.read_with(cx, |model, _| {
-        let Some(Overlay::Themes {
-            source: None,
-            anchor,
-            ..
-        }) = &model.overlay
-        else {
-            panic!("sidebar theme picker")
-        };
-        assert_eq!(*anchor, model.theme_anchor);
-    });
-    cx.simulate_keystrokes("m u x y enter");
-    cx.run_until_parked();
-    view.read_with(cx, |model, _| {
-        assert!(matches!(
-            model.overlay,
-            Some(Overlay::Themes { source: None, .. })
-        ));
-        assert_eq!(
-            if model.dark {
-                &model.appearance.dark_theme
-            } else {
-                &model.appearance.light_theme
-            },
-            "Muxy"
-        );
-    });
-    cx.simulate_keystrokes("escape");
-    view.read_with(cx, |model, _| assert!(model.overlay.is_none()));
 }
 
 #[gpui::test]
 fn settings_dropdowns_follow_their_trigger_on_resize_and_fit_the_window(cx: &mut TestAppContext) {
-    let mut state = AppState::bootstrap().expect("state");
-    state.open_settings_tab(state.home().id).expect("settings");
+    let state = AppState::bootstrap().expect("state");
     let (boot, _requests) = stub_boot(state);
-    let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
+    let (view, cx) = settings_window(boot, cx);
     cx.simulate_resize(size(px(1200.0), px(800.0)));
     click_preference(cx, "settings-category-Terminal");
     click_preference(cx, "settings-picker-font-family");
@@ -200,11 +167,11 @@ fn settings_dropdowns_follow_their_trigger_on_resize_and_fit_the_window(cx: &mut
             .debug_bounds("settings-picker-font-family")
             .expect("font trigger");
         let dropdown = cx.debug_bounds("settings-dropdown").expect("font dropdown");
-        view.read_with(cx, |model, _| {
-            let source = model
+        view.read_with(cx, |model, cx| {
+            let source = settings_root(model, cx)
                 .overlay
                 .as_ref()
-                .and_then(Overlay::settings_source)
+                .map(Overlay::source)
                 .expect("open dropdown");
             assert_eq!(source.anchor.get(), Some(trigger));
         });
@@ -216,33 +183,25 @@ fn settings_dropdowns_follow_their_trigger_on_resize_and_fit_the_window(cx: &mut
         }
     }
     view.update(cx, AppModel::new_tab);
-    view.read_with(cx, |model, _| assert!(model.overlay.is_none()));
+    view.read_with(cx, |model, cx| {
+        assert!(settings_root(model, cx).overlay.is_some());
+    });
 }
 
 #[gpui::test]
-fn dropdown_from_an_inactive_settings_split_focuses_the_source_pane(cx: &mut TestAppContext) {
+fn settings_pickers_leave_the_workspace_focus_and_overlays_untouched(cx: &mut TestAppContext) {
     let mut state = AppState::bootstrap().expect("state");
-    state.open_settings_tab(state.home().id).expect("settings");
-    let settings = state.window().active_pane.expect("settings pane");
-    state
-        .split_pane(settings, Direction::Right)
-        .expect("terminal split");
-    let (boot, _requests) = stub_boot(state);
+    state.open_terminal_tab(state.home().id).expect("terminal");
+    let (boot, _) = stub_boot(state);
     cx.update(|cx| crate::views::workspace::bind_keys(&boot.settings.keymap, cx));
-    let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
-    cx.simulate_resize(size(px(1600.0), px(850.0)));
+    let (view, cx) = settings_window(boot, cx);
+    let before = view.read_with(cx, |model, _| model.state.clone());
+    click_preference(cx, "settings-category-Appearance");
     click_preference(cx, "settings-picker-dark-theme");
-    view.read_with(cx, |model, _| {
-        assert_eq!(model.active_pane(), Some(settings));
-        assert_eq!(
-            model
-                .overlay
-                .as_ref()
-                .and_then(Overlay::settings_source)
-                .expect("source")
-                .pane,
-            settings
-        );
+    view.read_with(cx, |model, cx| {
+        assert!(model.overlay.is_none());
+        assert!(settings_root(model, cx).overlay.is_some());
+        assert_eq!(model.state, before);
     });
     cx.simulate_keystrokes("escape");
     cx.run_until_parked();
@@ -254,13 +213,12 @@ fn dropdown_from_an_inactive_settings_split_focuses_the_source_pane(cx: &mut Tes
 fn font_dropdown_mouse_selection_reports_save_failure_and_outside_click_does_not_reopen(
     cx: &mut TestAppContext,
 ) {
-    let mut state = AppState::bootstrap().expect("state");
-    state.open_settings_tab(state.home().id).expect("settings");
+    let state = AppState::bootstrap().expect("state");
     let (boot, _requests) = stub_boot(state);
     let config = boot.state_path.with_file_name("ghostty.conf");
     std::fs::create_dir_all(&config).expect("blocked config path");
     cx.update(|cx| crate::views::workspace::bind_keys(&boot.settings.keymap, cx));
-    let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
+    let (view, cx) = settings_window(boot, cx);
     cx.simulate_resize(size(px(1200.0), px(800.0)));
     click_preference(cx, "settings-category-Terminal");
     let settings = view.read_with(cx, |model, _| settings_view(model));
@@ -281,8 +239,8 @@ fn font_dropdown_mouse_selection_reports_save_failure_and_outside_click_does_not
         Modifiers::default(),
     );
     cx.run_until_parked();
-    view.read_with(cx, |model, _| {
-        assert!(model.overlay.is_none());
+    view.read_with(cx, |model, cx| {
+        assert!(settings_root(model, cx).overlay.is_none());
         assert_eq!(model.terminal.font_families, previous);
     });
     settings.read_with(cx, |pane, _| {
@@ -293,8 +251,8 @@ fn font_dropdown_mouse_selection_reports_save_failure_and_outside_click_does_not
     cx.simulate_input(&font);
     cx.simulate_keystrokes("enter");
     cx.run_until_parked();
-    view.read_with(cx, |model, _| {
-        assert!(model.overlay.is_none());
+    view.read_with(cx, |model, cx| {
+        assert!(settings_root(model, cx).overlay.is_none());
         assert_eq!(model.terminal.font_families, std::slice::from_ref(&font));
     });
     settings.read_with(cx, |pane, _| {
@@ -302,7 +260,9 @@ fn font_dropdown_mouse_selection_reports_save_failure_and_outside_click_does_not
     });
     click_preference(cx, "settings-picker-font-family");
     click_preference(cx, "settings-picker-font-family");
-    view.read_with(cx, |model, _| assert!(model.overlay.is_none()));
+    view.read_with(cx, |model, cx| {
+        assert!(settings_root(model, cx).overlay.is_none());
+    });
     cx.update(|window, cx| assert!(settings.read(cx).focus.is_focused(window)));
 }
 
@@ -310,23 +270,30 @@ fn font_dropdown_mouse_selection_reports_save_failure_and_outside_click_does_not
 fn search_result_dropdown_uses_the_visible_field_and_closes_when_scrolled_out(
     cx: &mut TestAppContext,
 ) {
-    let mut state = AppState::bootstrap().expect("state");
-    state.open_settings_tab(state.home().id).expect("settings");
+    let state = AppState::bootstrap().expect("state");
     let (boot, _requests) = stub_boot(state);
     cx.update(|cx| crate::views::workspace::bind_keys(&boot.settings.keymap, cx));
-    let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
+    let (view, cx) = settings_window(boot, cx);
     cx.simulate_resize(size(px(1200.0), px(1200.0)));
     click_preference(cx, "settings-search");
-    cx.simulate_keystrokes("t");
+    cx.simulate_input("t");
+    let settings = view.read_with(cx, |model, _| settings_view(model));
+    settings.update(cx, |pane, cx| {
+        pane.results_state().scroll_to(gpui::ListOffset {
+            item_ix: 2,
+            offset_in_item: px(0.0),
+        });
+        cx.notify();
+    });
     click_preference(cx, "settings-picker-font-family");
     let trigger = cx
         .debug_bounds("settings-picker-font-family")
         .expect("font trigger");
-    view.read_with(cx, |model, _| {
-        let source = model
+    view.read_with(cx, |model, cx| {
+        let source = settings_root(model, cx)
             .overlay
             .as_ref()
-            .and_then(Overlay::settings_source)
+            .map(Overlay::source)
             .expect("source");
         assert_eq!(source.anchor.get(), Some(trigger));
     });
@@ -340,7 +307,9 @@ fn search_result_dropdown_uses_the_visible_field_and_closes_when_scrolled_out(
         cx.notify();
     });
     cx.run_until_parked();
-    view.read_with(cx, |model, _| assert!(model.overlay.is_none()));
+    view.read_with(cx, |model, cx| {
+        assert!(settings_root(model, cx).overlay.is_none());
+    });
     cx.update(|window, cx| assert!(settings.read(cx).focus.is_focused(window)));
     click_preference(cx, "settings-search");
     cx.simulate_keystrokes("cmd-a f o n t");
@@ -350,6 +319,10 @@ fn search_result_dropdown_uses_the_visible_field_and_closes_when_scrolled_out(
         .debug_bounds("settings-picker-font-family")
         .expect("font trigger");
     let dropdown = cx.debug_bounds("settings-dropdown").expect("font dropdown");
-    assert_eq!(dropdown.top(), trigger.bottom() + px(4.0));
+    if trigger.bottom() + px(4.0) + dropdown.size.height <= px(642.0) {
+        assert_eq!(dropdown.top(), trigger.bottom() + px(4.0));
+    } else {
+        assert_eq!(dropdown.bottom(), trigger.top() - px(4.0));
+    }
     assert_eq!(dropdown.left(), trigger.left());
 }

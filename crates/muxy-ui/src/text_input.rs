@@ -545,7 +545,7 @@ impl EventEmitter<InputEvent> for TextInput {}
 impl TextInput {
     pub fn new(style: InputStyle, cx: &mut Context<Self>) -> Self {
         Self {
-            focus_handle: cx.focus_handle(),
+            focus_handle: cx.focus_handle().tab_stop(true),
             content: SharedString::default(),
             placeholder: SharedString::default(),
             ghost: SharedString::default(),

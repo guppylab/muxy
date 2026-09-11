@@ -5,10 +5,9 @@ use super::*;
 fn settings_resize_profile(cx: &mut TestAppContext) {
     use std::os::unix::fs::MetadataExt;
 
-    let mut state = AppState::bootstrap().expect("state");
-    state.open_settings_tab(state.home().id).expect("settings");
+    let state = AppState::bootstrap().expect("state");
     let (boot, _requests) = stub_boot(state);
-    let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
+    let (view, cx) = settings_window(boot, cx);
     let settings = view.read_with(cx, |model, _| settings_view(model));
     let path = view.read_with(cx, |model, _| model.path.clone());
     for category in ["settings-category-Appearance", "settings-category-Keyboard"] {
@@ -43,10 +42,9 @@ fn settings_resize_profile(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn responsive_resize_uses_one_render_and_only_visible_shortcut_rows(cx: &mut TestAppContext) {
-    let mut state = AppState::bootstrap().expect("state");
-    state.open_settings_tab(state.home().id).expect("settings");
+    let state = AppState::bootstrap().expect("state");
     let (boot, _requests) = stub_boot(state);
-    let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
+    let (view, cx) = settings_window(boot, cx);
     click_preference(cx, "settings-category-Keyboard");
     let settings = view.read_with(cx, |model, _| settings_view(model));
     for width in [1200.0, 650.0, 750.0, 680.0, 710.0, 460.0, 1800.0] {
@@ -63,10 +61,10 @@ fn responsive_resize_uses_one_render_and_only_visible_shortcut_rows(cx: &mut Tes
             );
             assert_eq!(
                 pane.results_state().item_count(),
-                muxy_core::shortcuts::ALL.len() + 3
+                muxy_core::shortcuts::ALL.len() + 2
             );
         });
-        let pane = cx.debug_bounds("settings-pane").expect("pane");
+        let pane = cx.debug_bounds("settings-view").expect("pane");
         let category = cx
             .debug_bounds("settings-category-Keyboard")
             .expect("category");
@@ -97,10 +95,9 @@ fn scroll_results(cx: &mut VisualTestContext, distance: f32) {
 fn virtual_shortcuts_scroll_resize_and_remeasure_errors_without_losing_position(
     cx: &mut TestAppContext,
 ) {
-    let mut state = AppState::bootstrap().expect("state");
-    state.open_settings_tab(state.home().id).expect("settings");
+    let state = AppState::bootstrap().expect("state");
     let (boot, _requests) = stub_boot(state);
-    let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
+    let (view, cx) = settings_window(boot, cx);
     cx.simulate_resize(size(px(1200.0), px(650.0)));
     click_preference(cx, "settings-category-Keyboard");
     let settings = view.read_with(cx, |model, _| settings_view(model));
@@ -151,14 +148,21 @@ fn virtual_shortcuts_scroll_resize_and_remeasure_errors_without_losing_position(
 
 #[gpui::test]
 fn search_fields_keep_keyboard_focus_when_virtualized_offscreen(cx: &mut TestAppContext) {
-    let mut state = AppState::bootstrap().expect("state");
-    state.open_settings_tab(state.home().id).expect("settings");
+    let state = AppState::bootstrap().expect("state");
     let (boot, _requests) = stub_boot(state);
     cx.update(|cx| crate::views::workspace::bind_keys(&boot.settings.keymap, cx));
-    let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
+    let (view, cx) = settings_window(boot, cx);
     cx.simulate_resize(size(px(1200.0), px(1200.0)));
     click_preference(cx, "settings-search");
-    cx.simulate_keystrokes("t");
+    cx.simulate_input("t");
+    let settings = view.read_with(cx, |model, _| settings_view(model));
+    settings.update(cx, |pane, cx| {
+        pane.results_state().scroll_to(gpui::ListOffset {
+            item_ix: 2,
+            offset_in_item: px(0.0),
+        });
+        cx.notify();
+    });
     click_preference(cx, "settings-field-font-size");
     cx.simulate_keystrokes("cmd-a 2 1");
     let focus = cx.update(|window, cx| window.focused(cx).expect("field focus"));
@@ -180,11 +184,10 @@ fn search_fields_keep_keyboard_focus_when_virtualized_offscreen(cx: &mut TestApp
 
 #[gpui::test]
 fn validation_resizes_the_virtual_section(cx: &mut TestAppContext) {
-    let mut state = AppState::bootstrap().expect("state");
-    state.open_settings_tab(state.home().id).expect("settings");
+    let state = AppState::bootstrap().expect("state");
     let (boot, _requests) = stub_boot(state);
     cx.update(|cx| crate::views::workspace::bind_keys(&boot.settings.keymap, cx));
-    let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
+    let (view, cx) = settings_window(boot, cx);
     cx.simulate_resize(size(px(1200.0), px(800.0)));
     click_preference(cx, "settings-category-Terminal");
     let settings = view.read_with(cx, |model, _| settings_view(model));
@@ -221,10 +224,9 @@ fn validation_resizes_the_virtual_section(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn viewport_sized_wheel_scrolls_keep_the_full_distance_after_resize(cx: &mut TestAppContext) {
-    let mut state = AppState::bootstrap().expect("state");
-    state.open_settings_tab(state.home().id).expect("settings");
+    let state = AppState::bootstrap().expect("state");
     let (boot, _requests) = stub_boot(state);
-    let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
+    let (view, cx) = settings_window(boot, cx);
     let settings = view.read_with(cx, |model, _| settings_view(model));
     for (width, height) in [(1200.0, 800.0), (650.0, 650.0), (1200.0, 950.0)] {
         click_preference(cx, "settings-category-Keyboard");
@@ -262,4 +264,149 @@ fn viewport_sized_wheel_scrolls_keep_the_full_distance_after_resize(cx: &mut Tes
             assert_eq!(offset.offset_in_item, px(0.0));
         });
     }
+}
+
+#[gpui::test]
+fn settings_scrollbar_reaches_the_final_shortcut_after_open_resize_and_reset(
+    cx: &mut TestAppContext,
+) {
+    let (boot, _requests) = stub_boot(AppState::bootstrap().expect("state"));
+    let (view, cx) = settings_window(boot, cx);
+    let settings = view.read_with(cx, |model, _| settings_view(model));
+    for (width, height) in [(900.0, 480.0), (740.0, 600.0), (1040.0, 480.0)] {
+        cx.simulate_resize(size(px(width), px(height)));
+        click_preference(cx, "settings-category-General");
+        click_preference(cx, "settings-category-Keyboard");
+        let rows = settings.read_with(cx, |pane, _| pane.shortcut_row_count);
+        let track = cx.debug_bounds("settings-scrollbar").expect("scrollbar");
+        cx.simulate_click(
+            gpui::point(track.center().x, track.bottom() - px(1.0)),
+            Modifiers::default(),
+        );
+        cx.run_until_parked();
+        settings.read_with(cx, |pane, _| {
+            let list = pane.results_state();
+            let shortcut = list
+                .bounds_for_item(muxy_core::shortcuts::ALL.len())
+                .expect("final shortcut must be rendered after one scrollbar click");
+            let viewport = list.viewport_bounds();
+            assert!(shortcut.top() >= viewport.top());
+            assert!(shortcut.bottom() <= viewport.bottom());
+            assert!(pane.shortcut_row_count - rows < muxy_core::shortcuts::ALL.len() / 2);
+        });
+        cx.simulate_click(
+            gpui::point(track.center().x, track.top() + px(1.0)),
+            Modifiers::default(),
+        );
+        cx.run_until_parked();
+        settings.read_with(cx, |pane, _| {
+            let top = pane.results_state().logical_scroll_top();
+            assert_eq!(top.item_ix, 0);
+            assert_eq!(top.offset_in_item, px(0.0));
+        });
+    }
+}
+
+#[gpui::test]
+fn settings_scrollbar_drag_tracks_the_full_catalog_without_drifting(cx: &mut TestAppContext) {
+    let (boot, _requests) = stub_boot(AppState::bootstrap().expect("state"));
+    let (view, cx) = settings_window(boot, cx);
+    cx.simulate_resize(size(px(900.0), px(480.0)));
+    click_preference(cx, "settings-category-Keyboard");
+    let settings = view.read_with(cx, |model, _| settings_view(model));
+    let track = cx.debug_bounds("settings-scrollbar").expect("scrollbar");
+    cx.simulate_event(gpui::MouseMoveEvent {
+        position: track.center(),
+        ..Default::default()
+    });
+    cx.simulate_event(gpui::MouseDownEvent {
+        position: track.center(),
+        button: gpui::MouseButton::Left,
+        click_count: 1,
+        ..Default::default()
+    });
+    cx.run_until_parked();
+    let middle = settings.read_with(cx, |pane, _| {
+        let top = pane.results_state().logical_scroll_top();
+        let count = muxy_core::shortcuts::ALL.len();
+        assert!(top.item_ix > count / 3 && top.item_ix < count * 2 / 3);
+        top
+    });
+    for _ in 0..3 {
+        cx.simulate_event(gpui::MouseMoveEvent {
+            position: track.center(),
+            pressed_button: Some(gpui::MouseButton::Left),
+            ..Default::default()
+        });
+        cx.run_until_parked();
+        settings.read_with(cx, |pane, _| {
+            let top = pane.results_state().logical_scroll_top();
+            assert_eq!(top.item_ix, middle.item_ix);
+            assert_eq!(top.offset_in_item, middle.offset_in_item);
+        });
+    }
+    let bottom = gpui::point(track.center().x, track.bottom());
+    cx.simulate_event(gpui::MouseMoveEvent {
+        position: bottom,
+        pressed_button: Some(gpui::MouseButton::Left),
+        ..Default::default()
+    });
+    cx.run_until_parked();
+    settings.read_with(cx, |pane, _| {
+        let list = pane.results_state();
+        let shortcut = list
+            .bounds_for_item(muxy_core::shortcuts::ALL.len())
+            .expect("final shortcut");
+        assert!(shortcut.top() >= list.viewport_bounds().top());
+        assert!(shortcut.bottom() <= list.viewport_bounds().bottom());
+    });
+    cx.simulate_event(gpui::MouseUpEvent {
+        position: bottom,
+        button: gpui::MouseButton::Left,
+        ..Default::default()
+    });
+    cx.run_until_parked();
+    let end = settings.read_with(cx, |pane, _| pane.results_state().logical_scroll_top());
+    cx.simulate_event(gpui::MouseMoveEvent {
+        position: track.center(),
+        ..Default::default()
+    });
+    cx.run_until_parked();
+    settings.read_with(cx, |pane, _| {
+        let top = pane.results_state().logical_scroll_top();
+        assert_eq!(top.item_ix, end.item_ix);
+        assert_eq!(top.offset_in_item, end.offset_in_item);
+    });
+}
+
+#[gpui::test]
+fn settings_scrollbar_scrolls_and_settings_resize_never_changes_workspace_bounds(
+    cx: &mut TestAppContext,
+) {
+    let (boot, _) = stub_boot(AppState::bootstrap().expect("state"));
+    let (view, cx) = settings_window(boot, cx);
+    let before = view.read_with(cx, |model, _| model.state.window().bounds);
+    cx.simulate_resize(size(px(900.0), px(600.0)));
+    click_preference(cx, "settings-category-Keyboard");
+    let track = cx.debug_bounds("settings-scrollbar").expect("scrollbar");
+    cx.simulate_click(
+        gpui::point(track.center().x, track.top() + track.size.height * 0.8),
+        Modifiers::default(),
+    );
+    cx.run_until_parked();
+    view.read_with(cx, |model, cx| {
+        assert!(
+            settings_view(model)
+                .read(cx)
+                .results_state()
+                .logical_scroll_top()
+                .item_ix
+                > 0
+        );
+        assert_eq!(model.state.window().bounds, before);
+        assert_eq!(
+            store::load(&model.path).expect("state").window().bounds,
+            before
+        );
+    });
 }

@@ -1,5 +1,81 @@
 use crate::theme::{Metrics, Theme};
-use gpui::{AnyElement, InteractiveElement, IntoElement, ParentElement, RenderOnce, Styled, div};
+use gpui::{
+    AnyElement, App, AvailableSpace, Bounds, InteractiveElement, IntoElement, ParentElement,
+    Pixels, Point, RenderOnce, Size, Styled, Window, canvas, div, point, px, size,
+};
+use std::{cell::Cell, rc::Rc};
+
+pub type PopoverAnchor = Rc<Cell<Option<Bounds<Pixels>>>>;
+
+pub fn anchored_popover(
+    anchor: PopoverAnchor,
+    mut content: AnyElement,
+    on_anchor_lost: impl FnOnce(&mut Window, &mut App) + 'static,
+) -> AnyElement {
+    canvas(
+        move |_, window, cx| {
+            let Some(anchor) = anchor.get() else {
+                window.defer(cx, on_anchor_lost);
+                return None;
+            };
+            let size = content.layout_as_root(
+                size(AvailableSpace::MinContent, AvailableSpace::MinContent),
+                window,
+                cx,
+            );
+            let origin = dropdown_origin(anchor, size, window.viewport_size());
+            content.prepaint_at(origin, window, cx);
+            Some(content)
+        },
+        |_, content, window, cx| {
+            if let Some(mut content) = content {
+                content.paint(window, cx);
+            }
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+    .into_any_element()
+}
+
+fn dropdown_origin(
+    anchor: Bounds<Pixels>,
+    panel: Size<Pixels>,
+    viewport: Size<Pixels>,
+) -> Point<Pixels> {
+    let left = if anchor.left() + panel.width > viewport.width - px(8.0) {
+        anchor.right() - panel.width
+    } else {
+        anchor.left()
+    };
+    let below = anchor.bottom() + px(4.0);
+    let above = anchor.top() - panel.height - px(4.0);
+    let top = if below + panel.height > viewport.height - px(8.0) && above >= px(8.0) {
+        above
+    } else {
+        below
+    };
+    clamp_to_viewport(point(left, top), panel, viewport)
+}
+
+pub fn clamp_to_viewport(
+    origin: Point<Pixels>,
+    panel: Size<Pixels>,
+    viewport: Size<Pixels>,
+) -> Point<Pixels> {
+    point(
+        origin
+            .x
+            .max(px(8.0))
+            .min((viewport.width - panel.width - px(8.0)).max(px(8.0))),
+        origin
+            .y
+            .max(px(8.0))
+            .min((viewport.height - panel.height - px(8.0)).max(px(8.0))),
+    )
+}
 
 #[derive(IntoElement)]
 pub struct PopoverSurface {
@@ -29,7 +105,7 @@ impl PopoverSurface {
 }
 
 impl RenderOnce for PopoverSurface {
-    fn render(self, _window: &mut gpui::Window, _cx: &mut gpui::App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         div()
             .occlude()
             .flex()
@@ -52,5 +128,38 @@ impl std::fmt::Debug for PopoverSurface {
             .field("width", &self.width)
             .field("height", &self.height)
             .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dropdown_flips_above_and_aligns_right_when_near_window_edges() {
+        let viewport = size(px(800.0), px(600.0));
+        let panel = size(px(300.0), px(200.0));
+        let anchor = Bounds::new(point(px(650.0), px(500.0)), size(px(100.0), px(30.0)));
+        assert_eq!(
+            dropdown_origin(anchor, panel, viewport),
+            point(px(450.0), px(296.0))
+        );
+        let anchor = Bounds::new(point(px(50.0), px(50.0)), size(px(100.0), px(30.0)));
+        assert_eq!(
+            dropdown_origin(anchor, panel, viewport),
+            point(px(50.0), px(84.0))
+        );
+    }
+
+    #[test]
+    fn oversized_popovers_keep_their_origin_inside_the_window() {
+        assert_eq!(
+            clamp_to_viewport(
+                point(px(-20.0), px(700.0)),
+                size(px(900.0), px(700.0)),
+                size(px(800.0), px(600.0)),
+            ),
+            point(px(8.0), px(8.0)),
+        );
     }
 }

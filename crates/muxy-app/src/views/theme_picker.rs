@@ -28,7 +28,7 @@ impl EventEmitter<ThemeEvent> for ThemePicker {}
 
 impl Focusable for ThemePicker {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.picker.focus_handle(cx)
+        self.picker.read(cx).input().focus_handle(cx)
     }
 }
 

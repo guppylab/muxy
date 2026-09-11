@@ -1,12 +1,12 @@
-use super::{Category, Change, PickerKind, SettingsEvent, SettingsPane};
+use super::{Category, Change, PickerKind, SettingsEvent, SettingsView};
 use gpui::{AnyElement, Context, Window};
 use muxy_settings::NewPaneDirectory;
 use muxy_ui::controls::{self, Choice};
 
 pub(super) fn rows(
-    pane: &SettingsPane,
+    pane: &SettingsView,
     _: &Window,
-    cx: &mut Context<SettingsPane>,
+    cx: &mut Context<SettingsView>,
 ) -> Vec<AnyElement> {
     let mut rows = Vec::new();
     if pane.matches(Category::Terminal, "Font family") {

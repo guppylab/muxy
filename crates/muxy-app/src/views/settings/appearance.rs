@@ -1,16 +1,20 @@
-use super::{Category, Change, PickerKind, SettingsPane};
+use super::{Category, Change, PickerKind, SettingsView};
 use gpui::{AnyElement, Context};
 
-pub(super) fn rows(pane: &SettingsPane, cx: &mut Context<SettingsPane>) -> Vec<AnyElement> {
+pub(super) fn rows(
+    pane: &SettingsView,
+    category: Category,
+    cx: &mut Context<SettingsView>,
+) -> Vec<AnyElement> {
     let mut rows = Vec::new();
     let appearance = &pane.snapshot.settings.appearance;
     for (dark, label, value) in [
         (false, "Light theme", &appearance.light_theme),
         (true, "Dark theme", &appearance.dark_theme),
     ] {
-        if pane.matches(Category::Appearance, label) {
+        if category == Category::Appearance && pane.matches(category, label) {
             rows.push(pane.row(
-                label,
+                if dark { "dark-theme" } else { "light-theme" },
                 label,
                 pane.picker(PickerKind::Theme(dark), value, cx),
             ));
@@ -36,7 +40,12 @@ pub(super) fn rows(pane: &SettingsPane, cx: &mut Context<SettingsPane>) -> Vec<A
             Change::ConfirmProcess(!pane.snapshot.settings.window.confirm_running_process),
         ),
     ] {
-        if pane.matches(Category::Appearance, label) {
+        let target = if id == "confirm-process" {
+            Category::General
+        } else {
+            Category::Appearance
+        };
+        if category == target && pane.matches(category, label) {
             rows.push(pane.row(id, label, pane.toggle(id, value, change, cx)));
         }
     }
@@ -44,15 +53,9 @@ pub(super) fn rows(pane: &SettingsPane, cx: &mut Context<SettingsPane>) -> Vec<A
         ("width", "Default window width"),
         ("height", "Default window height"),
     ] {
-        if pane.matches(Category::Appearance, label) {
+        if category == Category::General && pane.matches(category, label) {
             rows.push(pane.row(id, label, pane.field(id)));
         }
-    }
-    if !rows.is_empty() {
-        rows.push(pane.note(
-            "Default dimensions are used when no saved window bounds exist.",
-            false,
-        ));
     }
     rows
 }
