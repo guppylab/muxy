@@ -10,6 +10,41 @@ pub(super) struct Setting {
 
 pub(super) const SETTINGS: &[Setting] = &[
     Setting {
+        id: "quick-enabled",
+        label: "Enable Quick Terminal",
+        description: "Show a persistent home-directory shell with a shortcut.",
+        category: Category::QuickTerminal,
+        section: "General",
+    },
+    Setting {
+        id: "quick-shortcut",
+        label: "Open Quick Terminal",
+        description: "Choose Double Shift or record a custom system-wide shortcut.",
+        category: Category::QuickTerminal,
+        section: "Shortcut",
+    },
+    Setting {
+        id: "quick-size",
+        label: "Terminal size",
+        description: "Width 480–1200; height 280–800 pixels.",
+        category: Category::QuickTerminal,
+        section: "Size",
+    },
+    Setting {
+        id: "quick-transparency",
+        label: "Terminal transparency",
+        description: "Transparency of the terminal background.",
+        category: Category::QuickTerminal,
+        section: "Appearance",
+    },
+    Setting {
+        id: "quick-blur",
+        label: "Background vibrancy",
+        description: "Vibrancy of the glass background.",
+        category: Category::QuickTerminal,
+        section: "Appearance",
+    },
+    Setting {
         id: "confirm-process",
         label: "Confirm before closing a running process",
         description: "Ask before closing a terminal that is running a command other than its shell.",

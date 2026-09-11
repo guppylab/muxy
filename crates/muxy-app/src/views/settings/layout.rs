@@ -12,6 +12,7 @@ use crate::views::titlebar;
 impl Category {
     fn sections(self) -> &'static [&'static str] {
         match self {
+            Self::QuickTerminal => &["General", "Shortcut", "Size", "Appearance"],
             Self::General => &["Closing terminals", "Window size"],
             Self::Appearance => &["Themes", "Interface"],
             Self::Keyboard => &["Shortcuts"],
@@ -30,6 +31,7 @@ impl SettingsView {
         cx: &mut Context<Self>,
     ) {
         self.recording = None;
+        self.quick_recording = None;
         if section.is_none()
             && self.category == category
             && self.query.is_empty()

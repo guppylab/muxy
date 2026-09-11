@@ -8,6 +8,7 @@ mod chord;
 mod error;
 mod ghostty;
 mod keymap;
+mod quick_terminal;
 mod settings;
 
 pub use appearance::Appearance;
@@ -15,6 +16,7 @@ pub use chord::KeyChord;
 pub use error::{Error, Result};
 pub use ghostty::{CellHeight, TerminalSettings};
 pub use keymap::{Action, Keymap};
+pub use quick_terminal::QuickTerminalSettings;
 pub use settings::{
     ClipboardSettings, NewPaneDirectory, OpenerSettings, PaneSettings, ProjectSettings, Settings,
     WindowSettings,

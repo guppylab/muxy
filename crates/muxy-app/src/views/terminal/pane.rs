@@ -88,6 +88,7 @@ pub(crate) struct TerminalPane {
     channel: Option<ChannelId>,
     viewport: Option<Size>,
     pub(crate) palette: Palette,
+    pub(crate) background_opacity: f32,
     pub(crate) terminal: muxy_settings::TerminalSettings,
     pub(crate) state: PaneState,
     pub(crate) process: Option<ForegroundProcess>,
@@ -136,6 +137,7 @@ impl TerminalPane {
             channel: None,
             viewport: None,
             palette,
+            background_opacity: 1.0,
             terminal,
             state: PaneState::Connecting,
             process: None,
@@ -1121,7 +1123,10 @@ impl Render for TerminalPane {
             .min_h(px(0.0))
             .overflow_hidden()
             .rounded(self.corner_radius)
-            .bg(gpui::rgb(palette.background))
+            .bg(gpui::Rgba {
+                a: self.background_opacity,
+                ..gpui::rgb(palette.background)
+            })
             .flex()
             .flex_col()
             .map(|mut pane| {

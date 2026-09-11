@@ -14,6 +14,7 @@ impl AppState {
             bounds: None,
         };
         Ok(Self {
+            quick_terminal: None,
             version: 1,
             projects: vec![home],
             window,

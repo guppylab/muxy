@@ -9,6 +9,7 @@ use crate::{Appearance, Error, Keymap, Result};
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Settings {
+    pub quick_terminal: crate::QuickTerminalSettings,
     pub appearance: Appearance,
     pub window: WindowSettings,
     pub keymap: Keymap,
@@ -96,6 +97,7 @@ impl Settings {
     }
 
     pub fn validate(&self) -> Result<()> {
+        self.quick_terminal.validate()?;
         for (name, value, minimum) in [
             ("width", self.window.default_size[0], 640.0),
             ("height", self.window.default_size[1], 400.0),

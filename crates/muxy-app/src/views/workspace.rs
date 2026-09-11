@@ -299,6 +299,9 @@ impl AppModel {
             self.split_resize.end();
         }
         for (id, pane) in &self.grids {
+            if self.is_quick_terminal(*id) {
+                continue;
+            }
             pane.view.update(cx, |pane, cx| {
                 pane.set_focused(Some(*id) == active, cx);
                 let border = (pane.focused && split).then_some(self.theme.accent);

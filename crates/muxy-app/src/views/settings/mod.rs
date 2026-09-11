@@ -3,6 +3,7 @@ mod catalog;
 mod keyboard;
 mod layout;
 mod pickers;
+mod quick_terminal;
 mod results;
 mod server;
 mod terminal;
@@ -27,6 +28,7 @@ use muxy_ui::theme::{Metrics, Theme};
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum Category {
     General,
+    QuickTerminal,
     Appearance,
     Terminal,
     Keyboard,
@@ -34,8 +36,9 @@ pub(crate) enum Category {
 }
 
 impl Category {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 6] = [
         Self::General,
+        Self::QuickTerminal,
         Self::Appearance,
         Self::Keyboard,
         Self::Terminal,
@@ -45,6 +48,7 @@ impl Category {
     fn label(self) -> &'static str {
         match self {
             Self::General => "General",
+            Self::QuickTerminal => "Quick Terminal",
             Self::Appearance => "Appearance",
             Self::Terminal => "Terminal",
             Self::Keyboard => "Keyboard",
@@ -55,6 +59,7 @@ impl Category {
 
 #[derive(Clone, Debug)]
 pub(crate) enum Change {
+    QuickTerminal(muxy_settings::QuickTerminalSettings),
     Theme(bool, String),
     Sidebar(bool),
     StatusBar(bool),
@@ -71,6 +76,7 @@ pub(crate) enum SettingsEvent {
     Picker(PickerKind, PickerAnchor),
     ServerControl { restart: bool },
     ReadServer,
+    QuickMonitoring,
     Connect,
     OpenConfiguration(&'static str),
 }
@@ -78,6 +84,7 @@ pub(crate) enum SettingsEvent {
 #[derive(Clone)]
 pub(crate) struct Snapshot {
     pub(crate) settings: Settings,
+    pub(crate) quick_monitoring: String,
     pub(crate) terminal: TerminalSettings,
     pub(crate) server: Option<muxy_protocol::ServerSettingsDoc>,
     pub(crate) connected: bool,
@@ -87,6 +94,8 @@ pub(crate) struct Snapshot {
 }
 
 pub(crate) struct SettingsView {
+    quick_recording: Option<(muxy_ui::quick_terminal::ShortcutRecording, gpui::Task<()>)>,
+    quick_slider: Option<(&'static str, gpui::Bounds<gpui::Pixels>)>,
     pub(crate) focus: FocusHandle,
     snapshot: Snapshot,
     theme: Theme,
@@ -145,6 +154,8 @@ impl SettingsView {
             });
         });
         let mut pane = Self {
+            quick_recording: None,
+            quick_slider: None,
             focus,
             snapshot,
             theme,
@@ -183,6 +194,8 @@ impl SettingsView {
             shortcut_row_count: 0,
         };
         for id in [
+            "quick-width",
+            "quick-height",
             "width",
             "height",
             "font-size",
@@ -274,6 +287,8 @@ impl SettingsView {
             (server.history_budget_bytes / (1024 * 1024)).to_string()
         });
         for (id, value) in [
+            ("quick-width", settings.quick_terminal.width.to_string()),
+            ("quick-height", settings.quick_terminal.height.to_string()),
             ("width", settings.window.default_size[0].to_string()),
             ("height", settings.window.default_size[1].to_string()),
             ("font-size", terminal.font_size.to_string()),
@@ -302,6 +317,7 @@ impl SettingsView {
         self.subscriptions
             .push(cx.on_focus_out(&self.focus, window, |pane, _, _, cx| {
                 pane.recording = None;
+                pane.quick_recording = None;
                 pane.results.dirty = true;
                 cx.notify();
             }));
@@ -464,6 +480,19 @@ impl SettingsView {
             .when_some(self.errors.get(id), |row, error| {
                 row.child(self.note(error, true).pt_0())
             })
+            .when(id == "quick-size", |row| {
+                row.children(
+                    ["quick-width", "quick-height"]
+                        .into_iter()
+                        .filter_map(|id| {
+                            self.errors.get(id).map(|error| {
+                                self.note(error, true)
+                                    .pt_0()
+                                    .debug_selector(move || format!("settings-error-{id}"))
+                            })
+                        }),
+                )
+            })
             .when_some(self.notes.get(id), |row, note| {
                 row.child(self.note(note, false).pt_0())
             })
@@ -499,7 +528,11 @@ impl SettingsView {
                 self.style(),
                 id,
                 &self.fields[id],
-                (!self.compact).then_some(210.0),
+                if matches!(id, "quick-width" | "quick-height") {
+                    Some(64.0)
+                } else {
+                    (!self.compact).then_some(210.0)
+                },
             ))
             .into_any_element()
     }
@@ -533,6 +566,23 @@ impl Render for SettingsView {
         let reveal = self.results.reveal_focus.clone();
         div()
             .id("settings-view")
+            .on_mouse_move(cx.listener(|view, event: &gpui::MouseMoveEvent, _, cx| {
+                if let Some((id, bounds)) = view.quick_slider {
+                    view.move_quick_slider(id, bounds, event.position, cx);
+                }
+            }))
+            .on_mouse_up(
+                gpui::MouseButton::Left,
+                cx.listener(|view, _, _, _| {
+                    view.quick_slider = None;
+                }),
+            )
+            .on_mouse_up_out(
+                gpui::MouseButton::Left,
+                cx.listener(|view, _, _, _| {
+                    view.quick_slider = None;
+                }),
+            )
             .debug_selector(|| "settings-view".into())
             .track_focus(&self.focus)
             .tab_group()

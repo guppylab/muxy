@@ -12,6 +12,8 @@ use crate::{
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "StoredState")]
 pub struct AppState {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) quick_terminal: Option<Pane>,
     pub(crate) version: u32,
     pub(crate) projects: Vec<Project>,
     pub(crate) window: WindowState,
@@ -21,6 +23,8 @@ pub struct AppState {
 
 #[derive(Deserialize)]
 struct StoredState {
+    #[serde(default)]
+    quick_terminal: Option<Pane>,
     version: u32,
     projects: Vec<Project>,
     window: WindowState,
@@ -36,6 +40,7 @@ impl TryFrom<StoredState> for AppState {
             return Err(AppError::UnsupportedVersion(stored.version));
         }
         let mut state = Self {
+            quick_terminal: stored.quick_terminal,
             version: stored.version,
             projects: stored.projects,
             window: stored.window,
@@ -113,6 +118,31 @@ impl TryFrom<StoredState> for AppState {
 }
 
 impl AppState {
+    pub fn quick_terminal(&self) -> Option<&Pane> {
+        self.quick_terminal.as_ref()
+    }
+
+    pub fn ensure_quick_terminal(&mut self) -> PaneId {
+        self.quick_terminal
+            .get_or_insert_with(|| Pane {
+                id: PaneId::new(),
+                title: "Quick Terminal".into(),
+                content: PaneContent::Terminal { session: None },
+            })
+            .id
+    }
+
+    pub fn close_quick_terminal(&mut self) {
+        if let Some(Pane {
+            content: PaneContent::Terminal {
+                session: Some(session),
+            },
+            ..
+        }) = self.quick_terminal.take()
+        {
+            self.queue_discard(session);
+        }
+    }
     pub fn pending_discards(&self) -> &[SessionId] {
         &self.pending_discards
     }
@@ -330,6 +360,7 @@ impl AppState {
     }
 
     pub fn clear_terminal_panes(&mut self) -> Result<(), AppError> {
+        self.close_quick_terminal();
         let terminals: Vec<_> = self
             .projects
             .iter()
@@ -574,6 +605,7 @@ impl AppState {
             .iter_mut()
             .flat_map(|project| &mut project.tabs)
             .flat_map(|tab| &mut tab.panes)
+            .chain(self.quick_terminal.iter_mut())
             .find(|pane| pane.id == id)
             .ok_or(AppError::UnknownPane(id))
     }
@@ -629,6 +661,11 @@ impl AppState {
             }
         }
 
+        if let Some(pane) = &self.quick_terminal
+            && (!panes.insert(pane.id) || !matches!(pane.content, PaneContent::Terminal { .. }))
+        {
+            return Err(AppError::InvalidState("invalid Quick Terminal pane".into()));
+        }
         if let Some(active) = self.window.active_pane {
             let selected = self.window.selected_tab.get(&self.window.current_project);
             if !self

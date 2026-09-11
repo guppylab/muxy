@@ -7,3 +7,5 @@
 pub mod dirs;
 pub mod shortcuts;
 pub mod worker;
+
+pub mod quick_terminal;

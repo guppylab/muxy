@@ -129,6 +129,7 @@ impl SettingsView {
         } else {
             [
                 Category::General,
+                Category::QuickTerminal,
                 Category::Appearance,
                 Category::Terminal,
                 Category::Keyboard,
@@ -190,6 +191,7 @@ impl SettingsView {
             Category::Terminal => terminal::rows(self, window, cx),
             Category::Server => server::rows(self, cx),
             Category::Keyboard => Vec::new(),
+            Category::QuickTerminal => super::quick_terminal::rows(self, cx),
         }
     }
 

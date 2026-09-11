@@ -1,5 +1,6 @@
 mod links;
 mod preferences;
+mod quick_terminal;
 mod updates;
 
 use std::collections::{HashMap, HashSet};
@@ -58,6 +59,7 @@ struct CloseRequest {
 }
 
 pub(crate) struct AppModel {
+    pub(crate) quick: quick_terminal::QuickTerminalRuntime,
     pub(crate) window: gpui::AnyWindowHandle,
     pub(crate) state: AppState,
     pub(crate) grids: HashMap<PaneId, PaneView>,
@@ -125,6 +127,7 @@ impl AppModel {
                 cx.notify();
             });
         }
+        self.refresh_quick_terminal(cx);
         self.sync_preferences(cx);
         if let Some(Overlay::Themes { picker, dark, .. }) = &self.overlay {
             let name = self.themes.active_name(&self.appearance, *dark);
@@ -195,6 +198,20 @@ impl AppModel {
             .is_some()
     }
 
+    fn activation_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if window.is_window_active() {
+            self.refresh_project_statuses(cx);
+            self.refresh_quick_monitoring(cx);
+        } else {
+            self.cancel_titlebar_drag(cx);
+        }
+        if let Some(pane) = self.active_pane().and_then(|id| self.terminal(&id)) {
+            pane.view.update(cx, |pane, cx| {
+                pane.focus_changed(window.is_window_active(), cx);
+            });
+        }
+    }
+
     pub(crate) fn new(boot: Boot, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let events = cx.spawn(async move |this, cx| {
             while let Ok(update) = boot.updates.recv().await {
@@ -214,18 +231,7 @@ impl AppModel {
         let bounds = cx.observe_window_bounds(window, |model: &mut Self, window, cx| {
             model.save_bounds(window, cx);
         });
-        let activation = cx.observe_window_activation(window, |model: &mut Self, window, cx| {
-            if window.is_window_active() {
-                model.refresh_project_statuses(cx);
-            } else {
-                model.cancel_titlebar_drag(cx);
-            }
-            if let Some(pane) = model.active_pane().and_then(|id| model.terminal(&id)) {
-                pane.view.update(cx, |pane, cx| {
-                    pane.focus_changed(window.is_window_active(), cx);
-                });
-            }
-        });
+        let activation = cx.observe_window_activation(window, Self::activation_changed);
         let quit = cx.on_app_quit(|model: &mut Self, cx| {
             model.save(cx);
             async {}
@@ -234,6 +240,7 @@ impl AppModel {
         let (theme, palette) = themes.resolve(&boot.settings.appearance, dark);
         let theme_error = (!themes.errors.is_empty()).then(|| themes.errors.join("; "));
         let mut model = Self {
+            quick: quick_terminal::QuickTerminalRuntime::new(&boot.settings.quick_terminal, cx),
             window: window.window_handle(),
             state: boot.state,
             grids: HashMap::new(),
@@ -813,6 +820,11 @@ impl AppModel {
             .flat_map(|tab| &tab.panes)
             .filter_map(|pane| self.pane_session(pane.id))
             .collect();
+        sessions.extend(
+            self.state
+                .quick_terminal()
+                .and_then(|pane| self.pane_session(pane.id)),
+        );
         sessions.extend(self.state.pending_discards());
         self.quitting = Quitting::EndAll;
         if !self.send(Work::EndAll(sessions), cx) {
@@ -826,6 +838,7 @@ impl AppModel {
             .iter()
             .flat_map(|project| &project.tabs)
             .flat_map(|tab| &tab.panes)
+            .chain(self.state.quick_terminal())
             .any(|pane| pane.id == id && matches!(pane.content, PaneContent::Terminal { .. }))
     }
 
@@ -835,6 +848,7 @@ impl AppModel {
             .iter()
             .flat_map(|project| &project.tabs)
             .flat_map(|tab| &tab.panes)
+            .chain(self.state.quick_terminal())
             .find(|pane| pane.id == id)
             .and_then(|pane| match pane.content {
                 PaneContent::Terminal { session } => session,
@@ -917,7 +931,7 @@ impl AppModel {
     }
 
     fn sync_visible(&mut self, cx: &mut Context<Self>) {
-        let visible = self.visible_panes();
+        let visible = self.attached_panes();
         let hidden: Vec<_> = self
             .grids
             .keys()
@@ -953,6 +967,7 @@ impl AppModel {
             .iter()
             .flat_map(|project| &project.tabs)
             .flat_map(|tab| &tab.panes)
+            .chain(self.state.quick_terminal())
             .map(|pane| pane.id)
             .collect();
         self.font_sizes.retain(|id, _| panes.contains(id));
@@ -994,9 +1009,19 @@ impl AppModel {
                 cx.notify();
             }
             PaneEvent::OpenLink(target) => model.open_terminal_link(id, target.clone(), cx),
-            PaneEvent::ContextMenu(position) => model.terminal_menu(id, *position, cx),
+            PaneEvent::ContextMenu(position) => {
+                if model.is_quick_terminal(id) {
+                    model.quick_terminal_menu(*position, cx);
+                } else {
+                    model.terminal_menu(id, *position, cx);
+                }
+            }
             PaneEvent::Bell => cx.notify(),
-            PaneEvent::Focused => model.focus_pane(id, cx),
+            PaneEvent::Focused => {
+                if !model.is_quick_terminal(id) {
+                    model.focus_pane(id, cx);
+                }
+            }
             PaneEvent::History(request) => model.fetch_history(id, *request, cx),
             PaneEvent::Search(request) => model.search(id, request.clone(), cx),
             PaneEvent::Viewport(size) => model.viewport(id, *size, cx),
@@ -1018,7 +1043,9 @@ impl AppModel {
                 _subscription: subscription,
             },
         );
-        self.focus_requested = true;
+        if !self.is_quick_terminal(id) {
+            self.focus_requested = true;
+        }
     }
 
     fn pane_state(&self, id: PaneId) -> PaneState {
@@ -1045,6 +1072,7 @@ impl AppModel {
     }
 
     fn apply_restore(&mut self, sessions: &[SessionInfo], cx: &mut Context<Self>) {
+        self.restore_quick_terminal(sessions, cx);
         let plan = restore::plan(&self.state, sessions);
         self.retained = plan.retain.iter().map(|(pane, _)| *pane).collect();
         self.loaded.clear();
@@ -1061,13 +1089,14 @@ impl AppModel {
             self.start_attach(pane, size, cx);
         }
         self.sync_visible(cx);
+        self.refresh_quick_terminal(cx);
     }
 
     fn ensure_visible(&mut self, cx: &mut Context<Self>) {
         if self.connection != ConnectionState::Ready || self.quitting != Quitting::Idle {
             return;
         }
-        for id in self.visible_panes() {
+        for id in self.attached_panes() {
             if self.pending.contains(&id) {
                 continue;
             }
@@ -1096,10 +1125,11 @@ impl AppModel {
             return;
         }
         let Some(project) = self.state.projects().iter().find(|project| {
-            project
-                .tabs
-                .iter()
-                .any(|tab| tab.panes.iter().any(|candidate| candidate.id == pane))
+            (self.is_quick_terminal(pane) && project.id == self.state.home().id)
+                || project
+                    .tabs
+                    .iter()
+                    .any(|tab| tab.panes.iter().any(|candidate| candidate.id == pane))
         }) else {
             return;
         };
@@ -1285,7 +1315,17 @@ impl AppModel {
                 tab,
                 session,
                 result,
-            } => self.receive_close_checked(tab, session, result, cx),
+            } => {
+                if self
+                    .quick
+                    .closing
+                    .is_some_and(|(closing, _)| closing == tab)
+                {
+                    self.check_quick_close(result, cx);
+                } else {
+                    self.receive_close_checked(tab, session, result, cx);
+                }
+            }
             Update::EndedAll(result) => self.finish_end_all(result, cx),
             Update::Flushed if self.quitting == Quitting::Preserve => {
                 if !self.pending.is_empty() || !self.discarding.is_empty() {
@@ -1343,6 +1383,10 @@ impl AppModel {
         cx: &mut Context<Self>,
     ) {
         self.pending.remove(&pane);
+        if self.is_quick_terminal(pane) && missing_session(error) {
+            self.close_quick_terminal(cx);
+            return;
+        }
         if let Some(session) = session {
             self.initial_directories.remove(&pane);
             if self.state.set_pane_session(pane, Some(session)).is_err() {
@@ -1351,7 +1395,7 @@ impl AppModel {
             }
             self.save(cx);
         }
-        if self.pane_tab(pane).is_none() {
+        if self.pane_tab(pane).is_none() && !self.is_quick_terminal(pane) {
             return;
         }
         if missing_session(error) {
@@ -1452,6 +1496,13 @@ impl AppModel {
             }
             ClientEvent::SessionEnded { session, reason } => {
                 self.updates.sessions = self.updates.sessions.saturating_sub(1);
+                if self
+                    .state
+                    .quick_terminal()
+                    .is_some_and(|pane| self.pane_session(pane.id) == Some(session))
+                {
+                    self.close_quick_terminal(cx);
+                }
                 let panes: Vec<_> = self.state.projects().iter().flat_map(|project| &project.tabs).flat_map(|tab| &tab.panes)
                     .filter(|pane| matches!(pane.content, PaneContent::Terminal { session: Some(id) } if id == session))
                     .map(|pane| pane.id).collect();
@@ -1536,6 +1587,8 @@ impl AppModel {
 
     fn disconnect(&mut self, cx: &mut Context<Self>) {
         self.connection = ConnectionState::Disconnected;
+        self.quick.closing = None;
+        self.refresh_quick_terminal(cx);
         if self.server_preferences.busy || !self.server_preferences.pending.is_empty() {
             let message = "Disconnected before settings were confirmed. Reconnect and reload before retrying.";
             self.preference_result("server", Some(message), cx);
@@ -1595,6 +1648,7 @@ mod tests {
     mod mouse;
     mod preferences;
     mod projects;
+    mod quick_terminal;
     mod scrollback;
     mod sidebar;
     mod splits;

@@ -15,6 +15,7 @@ mod views {
     pub(crate) mod project_editor;
     pub(crate) mod project_menu;
     pub(crate) mod project_picker;
+    pub(crate) mod quick_terminal;
     pub(crate) mod settings;
     pub(crate) mod sidebar;
     pub(crate) mod splits;

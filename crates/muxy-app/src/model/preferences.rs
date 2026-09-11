@@ -103,6 +103,7 @@ impl AppModel {
         let mut settings = self.settings.clone();
         settings.appearance = self.appearance.clone();
         Snapshot {
+            quick_monitoring: self.quick_monitoring_label(),
             settings,
             terminal: self.terminal.clone(),
             server: self.server_preferences.document.clone(),
@@ -207,6 +208,20 @@ impl AppModel {
         settings.appearance = self.appearance.clone();
         let theme_changed = matches!(change, Change::Theme(..));
         match change {
+            Change::QuickTerminal(quick) => {
+                self.apply_quick_settings(quick, cx)?;
+                return Ok(());
+            }
+            Change::Field(id @ ("quick-width" | "quick-height"), value) => {
+                let mut quick = settings.quick_terminal;
+                if id == "quick-width" {
+                    quick.width = value.parse()?;
+                } else {
+                    quick.height = value.parse()?;
+                }
+                self.apply_quick_settings(quick, cx)?;
+                return Ok(());
+            }
             Change::Theme(dark, name) => {
                 if dark {
                     settings.appearance.dark_theme = name;
@@ -236,6 +251,9 @@ impl AppModel {
                 settings.save_panes(&path)?;
             }
             Change::Binding(id, chord) => {
+                if let Some(chord) = &chord {
+                    self.validate_quick_conflict(chord)?;
+                }
                 settings.keymap = settings.keymap.with_binding(&id, chord)?;
                 settings.keymap.save(&path)?;
                 cx.clear_key_bindings();
@@ -447,6 +465,7 @@ impl AppModel {
 
 fn change_id(change: &Change) -> &str {
     match change {
+        Change::QuickTerminal(_) => "quick-shortcut",
         Change::Theme(false, _) => "light-theme",
         Change::Theme(true, _) => "dark-theme",
         Change::Sidebar(_) => "sidebar",

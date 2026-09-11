@@ -167,8 +167,8 @@ pub const ALL: &[Shortcut] = &[
     Shortcut {
         id: "close_tab",
         keys: &["cmd-shift-w"],
-        contexts: &[Some("WorkspaceTabs")],
-        key_contexts: &[&[Some("WorkspaceTabs")]],
+        contexts: &[Some("WorkspaceTabs"), Some("QuickTerminal")],
+        key_contexts: &[&[Some("WorkspaceTabs"), Some("QuickTerminal")]],
     },
     Shortcut {
         id: "split_right",
@@ -215,8 +215,8 @@ pub const ALL: &[Shortcut] = &[
     Shortcut {
         id: "close_pane",
         keys: &["cmd-w"],
-        contexts: &[Some("WorkspaceTabs")],
-        key_contexts: &[&[Some("WorkspaceTabs")]],
+        contexts: &[Some("WorkspaceTabs"), Some("QuickTerminal")],
+        key_contexts: &[&[Some("WorkspaceTabs"), Some("QuickTerminal")]],
     },
     Shortcut {
         id: "next_tab",
@@ -305,54 +305,66 @@ pub const ALL: &[Shortcut] = &[
     Shortcut {
         id: "copy",
         keys: &["cmd-c"],
-        contexts: &[Some(WORKSPACE_CLIPBOARD_CONTEXT)],
-        key_contexts: &[&[Some(WORKSPACE_CLIPBOARD_CONTEXT)]],
+        contexts: &[
+            Some(WORKSPACE_CLIPBOARD_CONTEXT),
+            Some("QuickTerminal && !TextInput && !TerminalSearchInput"),
+        ],
+        key_contexts: &[&[
+            Some(WORKSPACE_CLIPBOARD_CONTEXT),
+            Some("QuickTerminal && !TextInput && !TerminalSearchInput"),
+        ]],
     },
     Shortcut {
         id: "paste",
         keys: &["cmd-v"],
-        contexts: &[Some(WORKSPACE_CLIPBOARD_CONTEXT)],
-        key_contexts: &[&[Some(WORKSPACE_CLIPBOARD_CONTEXT)]],
+        contexts: &[
+            Some(WORKSPACE_CLIPBOARD_CONTEXT),
+            Some("QuickTerminal && !TextInput && !TerminalSearchInput"),
+        ],
+        key_contexts: &[&[
+            Some(WORKSPACE_CLIPBOARD_CONTEXT),
+            Some("QuickTerminal && !TextInput && !TerminalSearchInput"),
+        ]],
     },
     Shortcut {
         id: "find",
         keys: &["cmd-f"],
-        contexts: &[Some("WorkspaceTabs")],
-        key_contexts: &[&[Some("WorkspaceTabs")]],
+        contexts: &[Some("WorkspaceTabs"), Some("QuickTerminal")],
+        key_contexts: &[&[Some("WorkspaceTabs"), Some("QuickTerminal")]],
     },
     Shortcut {
         id: "find_next",
         keys: &["cmd-g"],
-        contexts: &[Some("WorkspaceTabs")],
-        key_contexts: &[&[Some("WorkspaceTabs")]],
+        contexts: &[Some("WorkspaceTabs"), Some("QuickTerminal")],
+        key_contexts: &[&[Some("WorkspaceTabs"), Some("QuickTerminal")]],
     },
     Shortcut {
         id: "find_previous",
         keys: &["cmd-shift-g"],
-        contexts: &[Some("WorkspaceTabs")],
-        key_contexts: &[&[Some("WorkspaceTabs")]],
+        contexts: &[Some("WorkspaceTabs"), Some("QuickTerminal")],
+        key_contexts: &[&[Some("WorkspaceTabs"), Some("QuickTerminal")]],
     },
     Shortcut {
         id: "scroll_to_bottom",
         keys: &["cmd-end"],
-        contexts: &[Some("WorkspaceTabs")],
-        key_contexts: &[&[Some("WorkspaceTabs")]],
+        contexts: &[Some("WorkspaceTabs"), Some("QuickTerminal")],
+        key_contexts: &[&[Some("WorkspaceTabs"), Some("QuickTerminal")]],
     },
     Shortcut {
         id: "increase_font_size",
         keys: &["cmd-+", "cmd-=", "cmd-shift-="],
-        contexts: &[Some("WorkspaceTabs")],
+        contexts: &[Some("WorkspaceTabs"), Some("QuickTerminal")],
         key_contexts: &[
-            &[Some("WorkspaceTabs")],
-            &[Some("WorkspaceTabs")],
-            &[Some("WorkspaceTabs")],
+            &[Some("WorkspaceTabs"), Some("QuickTerminal")],
+            &[Some("WorkspaceTabs"), Some("QuickTerminal")],
+            &[Some("WorkspaceTabs"), Some("QuickTerminal")],
         ],
     },
     Shortcut {
         id: "decrease_font_size",
         keys: &["cmd--"],
-        contexts: &[Some("WorkspaceTabs")],
-        key_contexts: &[&[Some("WorkspaceTabs")]],
+        contexts: &[Some("WorkspaceTabs"), Some("QuickTerminal")],
+        key_contexts: &[&[Some("WorkspaceTabs"), Some("QuickTerminal")]],
     },
     Shortcut {
         id: "new_home_tab",
@@ -899,8 +911,8 @@ pub const ALL: &[Shortcut] = &[
     Shortcut {
         id: "popover.confirm",
         keys: &["enter"],
-        contexts: &[Some("CommandPopover")],
-        key_contexts: &[&[Some("CommandPopover")]],
+        contexts: &[Some("CommandPopover"), Some("QuickTerminalConfirmation")],
+        key_contexts: &[&[Some("CommandPopover"), Some("QuickTerminalConfirmation")]],
     },
     Shortcut {
         id: "popover.secondary_confirm",
@@ -923,8 +935,8 @@ pub const ALL: &[Shortcut] = &[
     Shortcut {
         id: "popover.dismiss",
         keys: &["escape"],
-        contexts: &[Some("CommandPopover")],
-        key_contexts: &[&[Some("CommandPopover")]],
+        contexts: &[Some("CommandPopover"), Some("QuickTerminalConfirmation")],
+        key_contexts: &[&[Some("CommandPopover"), Some("QuickTerminalConfirmation")]],
     },
     Shortcut {
         id: "popover.next_tab",
@@ -1025,25 +1037,46 @@ pub const ALL: &[Shortcut] = &[
     Shortcut {
         id: "previous_prompt",
         keys: &["cmd-up", "cmd-shift-up"],
-        contexts: &[Some(WORKSPACE_CLIPBOARD_CONTEXT)],
+        contexts: &[
+            Some(WORKSPACE_CLIPBOARD_CONTEXT),
+            Some("QuickTerminal && !TextInput && !TerminalSearchInput"),
+        ],
         key_contexts: &[
-            &[Some(WORKSPACE_CLIPBOARD_CONTEXT)],
-            &[Some(WORKSPACE_CLIPBOARD_CONTEXT)],
+            &[
+                Some(WORKSPACE_CLIPBOARD_CONTEXT),
+                Some("QuickTerminal && !TextInput && !TerminalSearchInput"),
+            ],
+            &[
+                Some(WORKSPACE_CLIPBOARD_CONTEXT),
+                Some("QuickTerminal && !TextInput && !TerminalSearchInput"),
+            ],
         ],
     },
     Shortcut {
         id: "next_prompt",
         keys: &["cmd-down", "cmd-shift-down"],
-        contexts: &[Some(WORKSPACE_CLIPBOARD_CONTEXT)],
+        contexts: &[
+            Some(WORKSPACE_CLIPBOARD_CONTEXT),
+            Some("QuickTerminal && !TextInput && !TerminalSearchInput"),
+        ],
         key_contexts: &[
-            &[Some(WORKSPACE_CLIPBOARD_CONTEXT)],
-            &[Some(WORKSPACE_CLIPBOARD_CONTEXT)],
+            &[
+                Some(WORKSPACE_CLIPBOARD_CONTEXT),
+                Some("QuickTerminal && !TextInput && !TerminalSearchInput"),
+            ],
+            &[
+                Some(WORKSPACE_CLIPBOARD_CONTEXT),
+                Some("QuickTerminal && !TextInput && !TerminalSearchInput"),
+            ],
         ],
     },
     Shortcut {
         id: "select_command_output",
         keys: &[],
-        contexts: &[Some(WORKSPACE_CLIPBOARD_CONTEXT)],
+        contexts: &[
+            Some(WORKSPACE_CLIPBOARD_CONTEXT),
+            Some("QuickTerminal && !TextInput && !TerminalSearchInput"),
+        ],
         key_contexts: &[],
     },
     Shortcut {

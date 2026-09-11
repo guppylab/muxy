@@ -652,8 +652,8 @@ fn settings_controls_are_reachable_and_activated_with_the_keyboard(cx: &mut Test
     let (boot, _) = stub_boot(AppState::bootstrap().expect("state"));
     cx.update(|cx| crate::views::workspace::bind_keys(&boot.settings.keymap, cx));
     let (view, cx) = settings_window(boot, cx);
-    // Navbar: General, Appearance, Keyboard, Terminal, Server; then the config button and toggle.
-    cx.simulate_keystrokes("cmd-shift-e tab tab tab tab tab tab space");
+    // Navbar: General, Quick Terminal, Appearance, Keyboard, Terminal, Server; then config and toggle.
+    cx.simulate_keystrokes("cmd-shift-e tab tab tab tab tab tab tab space");
     view.read_with(cx, |model, _| {
         assert!(!model.settings.window.confirm_running_process);
     });
@@ -706,7 +706,7 @@ fn keyboard_navigation_reveals_every_shortcut_in_both_directions(cx: &mut TestAp
     let (view, cx) = settings_window(boot, cx);
     click_preference(cx, "settings-category-Keyboard");
     cx.simulate_resize(size(px(900.0), px(500.0)));
-    cx.simulate_keystrokes("cmd-shift-e tab tab tab tab tab tab");
+    cx.simulate_keystrokes("cmd-shift-e tab tab tab tab tab tab tab");
     let settings = view.read_with(cx, |model, _| settings_view(model));
     for (index, shortcut) in muxy_core::shortcuts::ALL.iter().enumerate() {
         cx.update(|window, cx| {
@@ -746,7 +746,7 @@ fn tabbing_reveals_fields_below_a_short_settings_viewport(cx: &mut TestAppContex
     cx.update(|cx| crate::views::workspace::bind_keys(&boot.settings.keymap, cx));
     let (_, cx) = settings_window(boot, cx);
     cx.simulate_resize(size(px(740.0), px(480.0)));
-    cx.simulate_keystrokes("cmd-shift-e tab tab tab tab tab tab tab tab");
+    cx.simulate_keystrokes("cmd-shift-e tab tab tab tab tab tab tab tab tab");
     let row = cx
         .debug_bounds("settings-field-height")
         .expect("height field");
@@ -781,4 +781,58 @@ fn category_disclosures_and_content_use_the_real_setting_sections(cx: &mut TestA
         );
     });
     assert!(cx.debug_bounds("settings-heading-Themes").is_some());
+}
+
+#[gpui::test]
+fn quick_terminal_settings_show_invalid_dimensions(cx: &mut TestAppContext) {
+    let (boot, _) = stub_boot(AppState::bootstrap().expect("state"));
+    let (view, cx) = settings_window(boot, cx);
+    click_preference(cx, "settings-disclosure-Quick Terminal");
+    click_preference(cx, "settings-subcategory-Size");
+    for (id, invalid, selector) in [
+        ("quick-width", "1300", "settings-error-quick-width"),
+        ("quick-height", "invalid", "settings-error-quick-height"),
+    ] {
+        view.update(cx, |model, cx| {
+            model.change_preference(Change::Field(id, invalid.into()), cx);
+            assert_eq!(model.settings.quick_terminal.width, 720);
+            assert_eq!(model.settings.quick_terminal.height, 430);
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds(selector).is_some(), "{id} error is visible");
+    }
+    cx.simulate_resize(size(px(740.0), px(480.0)));
+    for selector in ["settings-field-quick-width", "settings-field-quick-height"] {
+        let field = cx.debug_bounds(selector).expect("dimension field");
+        let viewport = cx.debug_bounds("settings-sections").expect("viewport");
+        assert!(field.left() >= viewport.left() && field.right() <= viewport.right());
+    }
+}
+
+#[gpui::test]
+fn quick_terminal_shortcut_choices_are_clickable_and_save_while_disabled(cx: &mut TestAppContext) {
+    let (mut boot, _) = stub_boot(AppState::bootstrap().expect("state"));
+    boot.settings.quick_terminal.enabled = false;
+    let (view, cx) = settings_window(boot, cx);
+    click_preference(cx, "settings-disclosure-Quick Terminal");
+    click_preference(cx, "settings-subcategory-Shortcut");
+    for (selector, expected) in [
+        (
+            "settings-quick-double-shift",
+            muxy_core::quick_terminal::QuickTerminalShortcut::DoubleShift,
+        ),
+        (
+            "settings-quick-unassigned",
+            muxy_core::quick_terminal::QuickTerminalShortcut::Unassigned,
+        ),
+    ] {
+        click_preference(cx, selector);
+        view.read_with(cx, |model, _| {
+            assert_eq!(model.settings.quick_terminal.shortcut, expected);
+            let saved = muxy_settings::Settings::load(&model.configuration_path("settings.toml"))
+                .expect("saved shortcut");
+            assert_eq!(saved.quick_terminal.shortcut, expected);
+            assert!(!saved.quick_terminal.enabled);
+        });
+    }
 }

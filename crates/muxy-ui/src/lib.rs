@@ -24,3 +24,6 @@ pub mod theme;
 #[cfg(target_os = "macos")]
 #[allow(unsafe_code)]
 pub mod window_drag;
+
+#[allow(unsafe_code)]
+pub mod quick_terminal;
