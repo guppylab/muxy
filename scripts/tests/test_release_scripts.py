@@ -9,7 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SHA = "a" * 40
-VERSION = "2.0.0-alpha-1234"
+VERSION = "2.0.0-beta-1234"
 
 FAKE_TOOL = r'''
 import json, os, sys
@@ -36,7 +36,10 @@ if name == "git":
     elif args[0] == "rev-parse":
         print(os.environ["TAG_SHA"])
     elif args[0] == "describe":
-        sys.exit(1)
+        previous = os.environ.get("PREVIOUS_TAG")
+        if not previous:
+            sys.exit(1)
+        print(previous)
     else:
         sys.exit("unexpected git arguments: " + repr(args))
 elif name == "gh":
@@ -48,6 +51,9 @@ elif name == "gh":
                           "targetCommitish": os.environ["GITHUB_SHA"]}))
     elif args[:2] == ["release", "upload"]:
         sys.exit(int(os.environ.get("UPLOAD_EXIT", "0")))
+    elif args[0] == "api":
+        previous = next(arg.split("=", 1)[1] for arg in args if arg.startswith("previous_tag_name="))
+        print("Generated changes since " + previous)
     elif args[:2] not in (["release", "create"], ["release", "edit"]):
         sys.exit("unexpected gh arguments: " + repr(args))
 elif name == "xcrun":
@@ -104,7 +110,7 @@ class ReleaseScriptTests(unittest.TestCase):
                 if (entry := json.loads(line))[0] == tool]
 
     def publish(self):
-        return self.run_script("publish-alpha.sh", VERSION, self.directory)
+        return self.run_script("publish-beta.sh", VERSION, self.directory)
 
     def test_publishes_both_architectures_at_exact_sha_without_latest(self):
         result = self.publish()
@@ -112,6 +118,7 @@ class ReleaseScriptTests(unittest.TestCase):
         calls = self.calls("gh")
         self.assertEqual([call[2] for call in calls], ["view", "create", "upload", "edit"])
         for call in (calls[1], calls[3]):
+            self.assertEqual(call[3], f"v{VERSION}")
             self.assertEqual(call[call.index("--target") + 1], SHA)
             self.assertIn("--prerelease", call)
             self.assertIn("--latest=false", call)
@@ -122,6 +129,33 @@ class ReleaseScriptTests(unittest.TestCase):
                           (self.directory / "SHA256SUMS").read_text())
         self.assertIn("--draft", calls[1])
         self.assertIn("--draft=false", calls[3])
+        notes = (self.directory / "release-notes.md").read_text()
+        self.assertIn("Rust/GPUI beta", notes)
+        self.assertIn("Muxy Beta.app", notes)
+        self.assertIn("Library/Application Support/Muxy Beta", notes)
+        self.assertNotIn("alpha", notes.lower())
+
+    def test_alpha_versions_are_rejected_before_publishing(self):
+        result = self.run_script("publish-beta.sh", "2.0.0-alpha-1234", self.directory)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("release version must be 2.0.0-beta-", result.stderr)
+        self.assertEqual(self.calls("gh"), [])
+
+    def test_generated_notes_continue_from_previous_beta_or_alpha(self):
+        for previous in ("v2.0.0-beta-1233", "v2.0.0-alpha-1233"):
+            with self.subTest(previous=previous):
+                self.log.unlink(missing_ok=True)
+                self.env["PREVIOUS_TAG"] = previous
+                result = self.publish()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                describe = next(call for call in self.calls("git") if "describe" in call)
+                self.assertIn("v2.0.0-beta-*", describe)
+                self.assertIn("v2.0.0-alpha-*", describe)
+                api = next(call for call in self.calls("gh") if call[1] == "api")
+                self.assertIn("repos/example/muxy/releases/generate-notes", api)
+                self.assertIn(f"tag_name=v{VERSION}", api)
+                self.assertIn(f"previous_tag_name={previous}", api)
+                self.assertIn("Generated changes since", (self.directory / "release-notes.md").read_text())
 
     def test_published_rerun_does_not_replace_assets(self):
         self.env.update(RELEASE_STATE="published", TAG_SHA=SHA)

@@ -6,13 +6,13 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-VERSION_PATTERN = re.compile(r"2\.0\.0-alpha-([1-9][0-9]*)")
+VERSION_PATTERN = re.compile(r"2\.0\.0-beta-([1-9][0-9]*)")
 
 
 def build_number(version):
     match = VERSION_PATTERN.fullmatch(version)
     if not match:
-        raise ValueError("release version must be 2.0.0-alpha-<positive commit count>")
+        raise ValueError("release version must be 2.0.0-beta-<positive commit count>")
     return match[1]
 
 
@@ -22,8 +22,8 @@ def git(root, *args):
 
 def checkout_version(root):
     if git(root, "rev-parse", "--is-shallow-repository") != "false":
-        raise ValueError("alpha numbering requires a full checkout (fetch-depth: 0)")
-    version = "2.0.0-alpha-" + git(root, "rev-list", "--count", "HEAD")
+        raise ValueError("beta numbering requires a full checkout (fetch-depth: 0)")
+    version = "2.0.0-beta-" + git(root, "rev-list", "--count", "HEAD")
     build_number(version)
     return version
 
@@ -70,16 +70,16 @@ def stamp_version(root, version):
 def bundle_info(version):
     return {
         "CFBundleDevelopmentRegion": "en",
-        "CFBundleDisplayName": "Muxy Alpha",
-        "CFBundleName": "Muxy Alpha",
+        "CFBundleDisplayName": "Muxy Beta",
+        "CFBundleName": "Muxy Beta",
         "CFBundleExecutable": "muxy-app",
-        "CFBundleIdentifier": "com.muxy-alpha.app",
+        "CFBundleIdentifier": "com.muxy-beta.app",
         "CFBundleIconFile": "AppIcon",
         "CFBundleInfoDictionaryVersion": "6.0",
         "CFBundlePackageType": "APPL",
         "CFBundleShortVersionString": "2.0.0",
         "CFBundleVersion": build_number(version),
-        "CFBundleGetInfoString": f"Muxy Alpha {version}",
+        "CFBundleGetInfoString": f"Muxy Beta {version}",
         "MuxyVersion": version,
         "LSMinimumSystemVersion": "14.0",
         "LSApplicationCategoryType": "public.app-category.developer-tools",

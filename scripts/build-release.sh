@@ -21,7 +21,7 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         *)
-            echo "Usage: $0 --arch <arm64|x86_64> --version <2.0.0-alpha-N> [--sign-identity <identity>]" >&2
+            echo "Usage: $0 --arch <arm64|x86_64> --version <2.0.0-beta-N> [--sign-identity <identity>]" >&2
             exit 1
             ;;
     esac
@@ -32,7 +32,7 @@ case "$ARCH" in
     x86_64) TARGET="x86_64-apple-darwin" ;;
     *) echo "Error: arch must be arm64 or x86_64" >&2; exit 1 ;;
 esac
-python3 "$ROOT/scripts/alpha_release.py" check-version "$VERSION"
+python3 "$ROOT/scripts/beta_release.py" check-version "$VERSION"
 if [[ "$(uname -s)" != Darwin ]]; then
     echo "Error: packaging requires macOS and Xcode" >&2
     exit 1
@@ -42,7 +42,7 @@ export MACOSX_DEPLOYMENT_TARGET=14.0
 export LIBGHOSTTY_VT_SYS_OPTIMIZE=ReleaseFast
 export CARGO_TARGET_DIR="$ROOT/target"
 export CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=packed
-OUTPUT_DIR="$CARGO_TARGET_DIR/alpha/$VERSION/$ARCH"
+OUTPUT_DIR="$CARGO_TARGET_DIR/beta/$VERSION/$ARCH"
 if [[ -e "$OUTPUT_DIR" ]]; then
     echo "Error: output already exists: $OUTPUT_DIR" >&2
     exit 1
@@ -56,7 +56,7 @@ BIN_DIR="$CARGO_TARGET_DIR/$TARGET/release"
 mkdir -p "$(dirname "$OUTPUT_DIR")"
 STAGING="$(mktemp -d "$(dirname "$OUTPUT_DIR")/.${ARCH}.XXXXXX")"
 trap 'rm -rf "$STAGING"' EXIT
-APP="$STAGING/dmg/Muxy Alpha.app"
+APP="$STAGING/dmg/Muxy Beta.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$STAGING/symbols" "$STAGING/artifacts"
 
 for BINARY in muxy-app muxy-server; do
@@ -78,12 +78,12 @@ for BINARY in muxy-app muxy-server; do
     strip -Sx "$EXECUTABLE"
 done
 
-python3 "$ROOT/scripts/alpha_release.py" plist "$VERSION" "$APP/Contents/Info.plist"
+python3 "$ROOT/scripts/beta_release.py" plist "$VERSION" "$APP/Contents/Info.plist"
 plutil -lint "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 cp "$ROOT/LICENSE" "$APP/Contents/Resources/LICENSE"
 
-ICON_SOURCE="$ROOT/packaging/macos/AppIconAlpha.png"
+ICON_SOURCE="$ROOT/packaging/macos/AppIconBeta.png"
 ICONSET="$STAGING/AppIcon.iconset"
 mkdir -p "$ICONSET"
 for SIZE in 16 32 128 256 512; do
@@ -110,7 +110,7 @@ codesign --verify --deep --strict --verbose=2 "$APP"
 
 ln -s /Applications "$STAGING/dmg/Applications"
 DMG="$STAGING/artifacts/Muxy-${VERSION}-${ARCH}.dmg"
-hdiutil create -volname "Muxy Alpha" -srcfolder "$STAGING/dmg" -format UDZO -fs HFS+ "$DMG"
+hdiutil create -volname "Muxy Beta" -srcfolder "$STAGING/dmg" -format UDZO -fs HFS+ "$DMG"
 codesign "${SIGN_ARGS[@]}" "$DMG"
 codesign --verify --strict --verbose=2 "$DMG"
 ditto -c -k --sequesterRsrc --keepParent "$STAGING/symbols" \

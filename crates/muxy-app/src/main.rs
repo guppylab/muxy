@@ -98,7 +98,7 @@ fn main() -> ExitCode {
                 // Empty titlebar space explicitly starts native movement, not tab presses.
                 is_movable: !cfg!(target_os = "macos"),
                 titlebar: Some(TitlebarOptions {
-                    title: Some("Muxy Alpha".into()),
+                    title: Some("Muxy Beta".into()),
                     appears_transparent: true,
                     traffic_light_position: Some(point(px(9.0), px(9.0))),
                 }),
@@ -170,18 +170,18 @@ fn menus() -> Vec<Menu> {
     );
     vec![
         Menu {
-            name: "Muxy Alpha".into(),
+            name: "Muxy Beta".into(),
             items: vec![
                 MenuItem::action("Settings…", OpenSettings),
                 MenuItem::action("Open Configuration…", OpenConfiguration),
                 MenuItem::separator(),
                 MenuItem::os_submenu("Services", SystemMenuType::Services),
                 MenuItem::separator(),
-                MenuItem::action("Hide Muxy Alpha", HideApp),
+                MenuItem::action("Hide Muxy Beta", HideApp),
                 MenuItem::action("Hide Others", HideOthers),
                 MenuItem::action("Show All", ShowAll),
                 MenuItem::separator(),
-                MenuItem::action("Quit Muxy Alpha", Quit),
+                MenuItem::action("Quit Muxy Beta", Quit),
                 MenuItem::action("End All Sessions and Quit", EndAllSessionsAndQuit),
             ],
         },

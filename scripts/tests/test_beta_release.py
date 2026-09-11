@@ -8,39 +8,39 @@ from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location("alpha_release", ROOT / "scripts/alpha_release.py")
-alpha = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(alpha)
+SPEC = importlib.util.spec_from_file_location("beta_release", ROOT / "scripts/beta_release.py")
+beta = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(beta)
 
 
-class AlphaVersionTests(unittest.TestCase):
+class BetaVersionTests(unittest.TestCase):
     def test_version_uses_full_history_count(self):
-        with patch.object(alpha, "git", side_effect=["false", "1234"]) as git:
-            self.assertEqual(alpha.checkout_version(ROOT), "2.0.0-alpha-1234")
+        with patch.object(beta, "git", side_effect=["false", "1234"]) as git:
+            self.assertEqual(beta.checkout_version(ROOT), "2.0.0-beta-1234")
         self.assertEqual(git.call_args_list[-1].args, (ROOT, "rev-list", "--count", "HEAD"))
 
     def test_shallow_history_is_rejected(self):
-        with patch.object(alpha, "git", return_value="true"):
+        with patch.object(beta, "git", return_value="true"):
             with self.assertRaisesRegex(ValueError, "full checkout"):
-                alpha.checkout_version(ROOT)
+                beta.checkout_version(ROOT)
 
     def test_release_versions_reject_other_channels_and_unsafe_paths(self):
         for version in (
-            "2.0.0", "2.0.0-alpha-0", "2.0.0-alpha-001", "2.0.0-alpha.1",
-            "2.0.0-beta-1", "2.1.0-alpha-1", "2.0.0-alpha-1/../x", "2.0.0-alpha-1\n",
+            "2.0.0", "2.0.0-beta-0", "2.0.0-beta-001", "2.0.0-beta.1",
+            "2.0.0-alpha-1", "2.1.0-beta-1", "2.0.0-beta-1/../x", "2.0.0-beta-1\n",
         ):
             with self.subTest(version=version), self.assertRaises(ValueError):
-                alpha.build_number(version)
-        self.assertEqual(alpha.build_number("2.0.0-alpha-1000"), "1000")
+                beta.build_number(version)
+        self.assertEqual(beta.build_number("2.0.0-beta-1000"), "1000")
 
     def test_bundle_identity_and_numeric_apple_versions(self):
-        info = plistlib.loads(plistlib.dumps(alpha.bundle_info("2.0.0-alpha-1234")))
-        self.assertEqual(info["CFBundleIdentifier"], "com.muxy-alpha.app")
-        self.assertEqual(info["CFBundleDisplayName"], "Muxy Alpha")
+        info = plistlib.loads(plistlib.dumps(beta.bundle_info("2.0.0-beta-1234")))
+        self.assertEqual(info["CFBundleIdentifier"], "com.muxy-beta.app")
+        self.assertEqual(info["CFBundleDisplayName"], "Muxy Beta")
         self.assertEqual(info["CFBundleExecutable"], "muxy-app")
         self.assertEqual(info["CFBundleShortVersionString"], "2.0.0")
         self.assertEqual(info["CFBundleVersion"], "1234")
-        self.assertEqual(info["MuxyVersion"], "2.0.0-alpha-1234")
+        self.assertEqual(info["MuxyVersion"], "2.0.0-beta-1234")
         self.assertEqual(info["LSMinimumSystemVersion"], "14.0")
         self.assertNotIn("SUFeedURL", info)
 
@@ -57,12 +57,12 @@ class StampTests(unittest.TestCase):
 
     def test_stamp_changes_only_workspace_versions_and_is_repeatable(self):
         before = {name: (self.root / name).read_text() for name in ("Cargo.toml", "Cargo.lock")}
-        alpha.stamp_version(self.root, "2.0.0-alpha-1234")
-        alpha.stamp_version(self.root, "2.0.0-alpha-1234")
+        beta.stamp_version(self.root, "2.0.0-beta-1234")
+        beta.stamp_version(self.root, "2.0.0-beta-1234")
         for name, original in before.items():
             self.assertEqual(
                 (self.root / name).read_text(),
-                original.replace('version = "2.0.0-alpha-0"', 'version = "2.0.0-alpha-1234"'),
+                original.replace('version = "2.0.0-beta-0"', 'version = "2.0.0-beta-1234"'),
             )
 
     def test_lockfile_mismatch_does_not_partially_stamp_files(self):
@@ -70,7 +70,7 @@ class StampTests(unittest.TestCase):
         lock.write_text(lock.read_text().replace('name = "muxy-server"', 'name = "missing-server"'))
         before = {name: (self.root / name).read_bytes() for name in ("Cargo.toml", "Cargo.lock")}
         with self.assertRaisesRegex(ValueError, "muxy-server"):
-            alpha.stamp_version(self.root, "2.0.0-alpha-1234")
+            beta.stamp_version(self.root, "2.0.0-beta-1234")
         for name, original in before.items():
             self.assertEqual((self.root / name).read_bytes(), original)
 
@@ -80,7 +80,7 @@ class BuildArgumentTests(unittest.TestCase):
         for args in (
             [], ["--arch"], ["--arch", "linux"], ["--unknown"],
             ["--arch", "arm64", "--version", "2.0.0"],
-            ["--arch", "arm64", "--version", "2.0.0-alpha-1", "--sign-identity"],
+            ["--arch", "arm64", "--version", "2.0.0-beta-1", "--sign-identity"],
         ):
             result = subprocess.run(
                 ["bash", str(ROOT / "scripts/build-release.sh"), *args],

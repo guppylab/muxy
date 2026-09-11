@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-VERSION = "2.0.0-alpha-1234"
+VERSION = "2.0.0-beta-1234"
 TARGETS = {"arm64": "aarch64-apple-darwin", "x86_64": "x86_64-apple-darwin"}
 
 FAKE_TOOL = r'''
@@ -48,8 +48,8 @@ class BuildReleaseTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         for relative in (
-            "scripts/build-release.sh", "scripts/alpha_release.py", "LICENSE",
-            "packaging/macos/AppIcon.png", "packaging/macos/AppIconAlpha.png",
+            "scripts/build-release.sh", "scripts/beta_release.py", "LICENSE",
+            "packaging/macos/AppIcon.png", "packaging/macos/AppIconBeta.png",
         ):
             destination = self.root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -89,8 +89,8 @@ class BuildReleaseTests(unittest.TestCase):
         return [entry for line in self.log.read_text().splitlines()
                 if (entry := json.loads(line))[0] == tool]
 
-    def test_alpha_build_uses_dedicated_icon_for_every_size_and_architecture(self):
-        source = str(self.root / "packaging/macos/AppIconAlpha.png")
+    def test_beta_build_uses_dedicated_icon_for_every_size_and_architecture(self):
+        source = str(self.root / "packaging/macos/AppIconBeta.png")
         expected = {
             (str(size * factor), f"icon_{size}x{size}{suffix}.png")
             for size in (16, 32, 128, 256, 512)
@@ -106,7 +106,7 @@ class BuildReleaseTests(unittest.TestCase):
                 for call in calls:
                     self.assertEqual(call[1:6], ["-z", call[2], call[2], source, "--out"])
                 self.assertEqual({(call[2], Path(call[6]).name) for call in calls}, expected)
-                app = self.root / "target/alpha" / VERSION / arch / "Muxy Alpha.app"
+                app = self.root / "target/beta" / VERSION / arch / "Muxy Beta.app"
                 info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
                 icon = info["CFBundleIconFile"] + ".icns"
                 self.assertTrue((app / "Contents/Resources" / icon).is_file())
@@ -115,18 +115,18 @@ class BuildReleaseTests(unittest.TestCase):
                 self.assertEqual(conversion[0][1:4], ["--convert", "icns", "--output"])
                 self.assertTrue(conversion[0][4].endswith(f"/Contents/Resources/{icon}"))
 
-    def test_non_alpha_releases_are_rejected_before_packaging(self):
-        for version in ("2.0.0", "2.0.0-beta-1", "2.0.0-alpha-0"):
+    def test_non_beta_releases_are_rejected_before_packaging(self):
+        for version in ("2.0.0", "2.0.0-alpha-1", "2.0.0-beta-0"):
             with self.subTest(version=version):
                 result = self.build(version=version)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("release version must be", result.stderr)
                 self.assertFalse(self.log.exists())
 
-    def test_alpha_asset_is_a_distinct_1024px_rgba_png(self):
+    def test_beta_asset_is_a_distinct_1024px_rgba_png(self):
         icons = [
             (ROOT / "packaging/macos" / name).read_bytes()
-            for name in ("AppIcon.png", "AppIconAlpha.png")
+            for name in ("AppIcon.png", "AppIconBeta.png")
         ]
         for data in icons:
             self.assertEqual(data[:8], b"\x89PNG\r\n\x1a\n")

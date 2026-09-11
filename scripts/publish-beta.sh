@@ -3,17 +3,17 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 if [[ $# -ne 2 ]]; then
-    echo "Usage: $0 <2.0.0-alpha-N> <artifact-directory>" >&2
+    echo "Usage: $0 <2.0.0-beta-N> <artifact-directory>" >&2
     exit 1
 fi
 VERSION="$1"
-python3 "$ROOT/scripts/alpha_release.py" check-version "$VERSION"
+python3 "$ROOT/scripts/beta_release.py" check-version "$VERSION"
 ARTIFACTS="$(cd "$2" && pwd)"
 TAG="v$VERSION"
 : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
 : "${GITHUB_SHA:?GITHUB_SHA is required}"
 if [[ "${GITHUB_REF:-}" != refs/heads/2.x ]]; then
-    echo "Error: alpha releases are restricted to 2.x" >&2
+    echo "Error: beta releases are restricted to 2.x" >&2
     exit 1
 fi
 cd "$ROOT"
@@ -21,7 +21,7 @@ if [[ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]]; then
     echo "Error: checkout does not match the triggering commit" >&2
     exit 1
 fi
-if [[ "$(python3 scripts/alpha_release.py version | sed -n 's/^version=//p')" != "$VERSION" ]]; then
+if [[ "$(python3 scripts/beta_release.py version | sed -n 's/^version=//p')" != "$VERSION" ]]; then
     echo "Error: version does not match the triggering commit count" >&2
     exit 1
 fi
@@ -57,16 +57,16 @@ if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
     fi
 else
     cat > release-notes.md <<EOF
-Experimental Rust/GPUI alpha from the \`2.x\` branch. Not intended for production use.
+Experimental Rust/GPUI beta from the \`2.x\` branch. Not intended for production use.
 
 - macOS 14 or newer. Choose \`arm64\` for Apple Silicon or \`x86_64\` for Intel.
-- Drag \`Muxy Alpha.app\` to Applications. The app includes its matching \`muxy-server\`.
-- Installs alongside Muxy, with separate settings and sessions in \`~/Library/Application Support/Muxy Alpha\`.
-- Updates are manual. Before replacing an earlier alpha, use **End All Sessions and Quit** to stop its persistent server. This ends running terminal sessions.
+- Drag \`Muxy Beta.app\` to Applications. The app includes its matching \`muxy-server\`.
+- Installs alongside Muxy, with separate settings and sessions in \`~/Library/Application Support/Muxy Beta\`.
+- Updates are manual. Before replacing an earlier beta, use **End All Sessions and Quit** to stop its persistent server. This ends running terminal sessions.
 
 Source: https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA
 EOF
-    PREVIOUS="$(git -C "$ROOT" describe --tags --match 'v2.0.0-alpha-*' --abbrev=0 "$GITHUB_SHA^" 2>/dev/null || true)"
+    PREVIOUS="$(git -C "$ROOT" describe --tags --match 'v2.0.0-beta-*' --match 'v2.0.0-alpha-*' --abbrev=0 "$GITHUB_SHA^" 2>/dev/null || true)"
     if [[ -n "$PREVIOUS" ]]; then
         gh api --method POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
             -f "tag_name=$TAG" -f "target_commitish=$GITHUB_SHA" \

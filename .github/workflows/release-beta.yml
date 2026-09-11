@@ -1,4 +1,4 @@
-name: Release (Alpha)
+name: Release (Beta)
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
 
 # Different commits can finish independently; reruns of one commit cannot race.
 concurrency:
-  group: release-alpha-${{ github.sha }}
+  group: release-beta-${{ github.sha }}
   cancel-in-progress: false
 
 env:
@@ -32,9 +32,9 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
-      - name: Compute alpha version
+      - name: Compute beta version
         id: version
-        run: python3 scripts/alpha_release.py version >> "$GITHUB_OUTPUT"
+        run: python3 scripts/beta_release.py version >> "$GITHUB_OUTPUT"
       - name: Reject a reused version from different history
         env:
           TAG: ${{ steps.version.outputs.tag }}
@@ -76,21 +76,21 @@ jobs:
           version: 0.15.2
       - uses: Swatinem/rust-cache@v2
         with:
-          key: alpha-${{ matrix.target }}
+          key: beta-${{ matrix.target }}
       - name: Stamp the build version without committing a bump
-        run: python3 scripts/alpha_release.py stamp "$VERSION"
+        run: python3 scripts/beta_release.py stamp "$VERSION"
       - name: Import signing certificate
         env:
           CERTIFICATE_P12: ${{ secrets.DEVELOPER_ID_APPLICATION_CERTIFICATE }}
           CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_APPLICATION_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
-          KEYCHAIN_PATH="$RUNNER_TEMP/muxy-alpha-signing.keychain-db"
+          KEYCHAIN_PATH="$RUNNER_TEMP/muxy-beta-signing.keychain-db"
           : "${CERTIFICATE_P12:?Developer ID certificate is required}"
           : "${CERTIFICATE_PASSWORD:?Certificate password is required}"
           : "${KEYCHAIN_PASSWORD:?Keychain password is required}"
           umask 077
-          CERTIFICATE="$RUNNER_TEMP/muxy-alpha-certificate.p12"
+          CERTIFICATE="$RUNNER_TEMP/muxy-beta-certificate.p12"
           trap 'rm -f "$CERTIFICATE"' EXIT
           printf '%s' "$CERTIFICATE_P12" | base64 --decode > "$CERTIFICATE"
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
@@ -102,7 +102,7 @@ jobs:
       - name: Resolve signing identity
         id: identity
         run: |
-          KEYCHAIN_PATH="$RUNNER_TEMP/muxy-alpha-signing.keychain-db"
+          KEYCHAIN_PATH="$RUNNER_TEMP/muxy-beta-signing.keychain-db"
           IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | awk '/Developer ID Application/ {print $2; exit}')
           if [[ -z "$IDENTITY" ]]; then
             echo "Error: no Developer ID Application identity found" >&2
@@ -118,29 +118,29 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: bash scripts/notarize-release.sh "target/alpha/$VERSION/$ARCH/Muxy-$VERSION-$ARCH.dmg"
+        run: bash scripts/notarize-release.sh "target/beta/$VERSION/$ARCH/Muxy-$VERSION-$ARCH.dmg"
       - name: Upload notarized DMG
         uses: actions/upload-artifact@v4
         with:
-          name: alpha-dmg-${{ matrix.arch }}
-          path: target/alpha/${{ env.VERSION }}/${{ matrix.arch }}/*.dmg
+          name: beta-dmg-${{ matrix.arch }}
+          path: target/beta/${{ env.VERSION }}/${{ matrix.arch }}/*.dmg
           if-no-files-found: error
           retention-days: 7
       - name: Upload app and server debug symbols
         uses: actions/upload-artifact@v4
         with:
-          name: alpha-symbols-${{ matrix.arch }}
-          path: target/alpha/${{ env.VERSION }}/${{ matrix.arch }}/*-symbols.zip
+          name: beta-symbols-${{ matrix.arch }}
+          path: target/beta/${{ env.VERSION }}/${{ matrix.arch }}/*-symbols.zip
           if-no-files-found: error
           retention-days: 30
       - name: Remove signing keychain
         if: always()
         run: |
-          KEYCHAIN_PATH="$RUNNER_TEMP/muxy-alpha-signing.keychain-db"
+          KEYCHAIN_PATH="$RUNNER_TEMP/muxy-beta-signing.keychain-db"
           if [[ -f "$KEYCHAIN_PATH" ]]; then
             security delete-keychain "$KEYCHAIN_PATH"
           fi
-          rm -f "$RUNNER_TEMP/muxy-alpha-certificate.p12"
+          rm -f "$RUNNER_TEMP/muxy-beta-certificate.p12"
 
   release:
     needs: [validate, build]
@@ -155,11 +155,11 @@ jobs:
           fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
-          pattern: alpha-dmg-*
+          pattern: beta-dmg-*
           merge-multiple: true
           path: artifacts
-      - name: Publish alpha prerelease
+      - name: Publish beta prerelease
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.validate.outputs.version }}
-        run: bash scripts/publish-alpha.sh "$VERSION" artifacts
+        run: bash scripts/publish-beta.sh "$VERSION" artifacts
