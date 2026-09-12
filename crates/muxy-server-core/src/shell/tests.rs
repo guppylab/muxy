@@ -113,6 +113,10 @@ impl Shell {
             )?;
         } else if shell.ends_with("fish") {
             let config = home.join(".config/fish");
+            request.env.push((
+                "XDG_CONFIG_HOME".into(),
+                home.join(".config").into_os_string(),
+            ));
             fs::create_dir_all(&config)?;
             fs::write(
                 config.join("config.fish"),
