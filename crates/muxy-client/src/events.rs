@@ -13,6 +13,9 @@ use crate::requests::Pending;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ClientEvent {
+    CatalogChanged {
+        revision: u64,
+    },
     Frame {
         channel: ChannelId,
         frame: ScreenFrame,
@@ -62,6 +65,9 @@ fn next_event(
             return None;
         }
         match (channel, message) {
+            (CONTROL, Message::CatalogChanged { revision }) => {
+                return Some(ClientEvent::CatalogChanged { revision });
+            }
             (CONTROL, Message::ServerRestarting) => return Some(ClientEvent::ServerRestarting),
             (CONTROL, Message::Reply { id, body }) => pending.resolve(id, body),
             (CONTROL, Message::SessionEnded { session, reason }) => {

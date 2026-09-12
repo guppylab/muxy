@@ -155,7 +155,7 @@ impl Connection {
                     channel: received,
                     frame,
                 } if received == channel => return Ok(frame),
-                ClientEvent::Metadata { .. } => {}
+                ClientEvent::Metadata { .. } | ClientEvent::CatalogChanged { .. } => {}
                 other => return Err(format!("expected frame, got {other:?}").into()),
             }
         }
@@ -190,7 +190,7 @@ impl Connection {
                     attachment.grid.apply(&frame);
                     self.client.ack(channel, frame.seq)?;
                 }
-                Ok(ClientEvent::Metadata { .. }) => {}
+                Ok(ClientEvent::Metadata { .. } | ClientEvent::CatalogChanged { .. }) => {}
                 Err(RecvTimeoutError::Timeout) => return Ok(()),
                 other => return Err(format!("connection did not become quiet: {other:?}").into()),
             }
@@ -204,7 +204,9 @@ impl Connection {
                     session: ended,
                     reason,
                 } if ended == session => return Ok(reason),
-                ClientEvent::Frame { .. } | ClientEvent::Metadata { .. } => {}
+                ClientEvent::Frame { .. }
+                | ClientEvent::Metadata { .. }
+                | ClientEvent::CatalogChanged { .. } => {}
                 other => return Err(format!("expected session ended, got {other:?}").into()),
             }
         }
@@ -411,7 +413,9 @@ fn server_exit_disconnects_the_client() -> TestResult {
     loop {
         match connection.events.recv_timeout(TIMEOUT)? {
             ClientEvent::ServerRestarting | ClientEvent::Disconnected => break,
-            ClientEvent::Frame { .. } | ClientEvent::Metadata { .. } => {}
+            ClientEvent::Frame { .. }
+            | ClientEvent::Metadata { .. }
+            | ClientEvent::CatalogChanged { .. } => {}
             other @ ClientEvent::SessionEnded { .. } => {
                 return Err(format!("expected disconnect, got {other:?}").into());
             }
@@ -713,7 +717,7 @@ fn wait_input_modes(
                 channel,
                 event: muxy_protocol::MetadataEvent::InputModes(modes),
             } if channel == expected => return Ok(modes),
-            ClientEvent::Metadata { .. } => {}
+            ClientEvent::Metadata { .. } | ClientEvent::CatalogChanged { .. } => {}
             ClientEvent::Frame { channel, frame } => connection.client.ack(channel, frame.seq)?,
             event => return Err(format!("expected input modes, got {event:?}").into()),
         }
@@ -734,5 +738,93 @@ fn explicit_disconnect_closes_all_clones_without_ending_sessions() -> TestResult
     );
     assert!(matches!(clone.ping(), Err(ClientError::Disconnected)));
     assert!(fixture.registry.handle(session.id).is_some());
+    Ok(())
+}
+
+#[test]
+fn two_clients_observe_project_metadata_deletion_and_explicit_session_membership() -> TestResult {
+    use muxy_protocol::{
+        OperationId, ProjectDescriptor, ProjectId, ProjectIntent, ProjectMutation, ProjectPatch,
+        ServerPath,
+    };
+    let fixture = Fixture::new()?;
+    let first = fixture.connect()?;
+    let second = fixture.connect()?;
+    let initial = second.client.catalog()?;
+    let project = ProjectDescriptor {
+        id: ProjectId::new(),
+        home: false,
+        name: "First".into(),
+        icon: None,
+        color: "#808080".into(),
+        directory: ServerPath(fixture.directory.as_os_str().as_bytes().into()),
+        kind: None,
+        parent_id: None,
+    };
+    first.client.mutate_project(ProjectIntent {
+        operation: OperationId::new(),
+        mutation: ProjectMutation::Create(project.clone()),
+    })?;
+    let session = first.client.create_project_session(
+        project.id,
+        OperationId::new(),
+        &fixture.directory,
+        SIZE,
+    )?;
+    assert_eq!(
+        second
+            .client
+            .project_sessions(project.id, None, None)?
+            .sessions[0]
+            .info,
+        session
+    );
+    let renamed = first.client.mutate_project(ProjectIntent {
+        operation: OperationId::new(),
+        mutation: ProjectMutation::Patch {
+            project: project.id,
+            patch: ProjectPatch::Name("Shared name".into()),
+        },
+    })?;
+    loop {
+        if matches!(second.events.recv_timeout(TIMEOUT)?, ClientEvent::CatalogChanged { revision } if revision >= renamed)
+        {
+            break;
+        }
+    }
+    let refreshed = second.client.catalog()?;
+    assert!(refreshed.revision > initial.revision);
+    assert!(
+        refreshed
+            .projects
+            .iter()
+            .any(|entry| entry.id == project.id && entry.name == "Shared name")
+    );
+    let attached = second.client.attach(session.id, SIZE)?;
+    let deleted = first.client.mutate_project(ProjectIntent {
+        operation: OperationId::new(),
+        mutation: ProjectMutation::Delete(project.id),
+    })?;
+    let mut ended = false;
+    let mut invalidated = false;
+    while !ended || !invalidated {
+        match second.events.recv_timeout(TIMEOUT)? {
+            ClientEvent::CatalogChanged { revision } if revision >= deleted => invalidated = true,
+            ClientEvent::SessionEnded { session: id, .. } if id == session.id => ended = true,
+            ClientEvent::Frame { channel, frame } => second.client.ack(channel, frame.seq)?,
+            _ => {}
+        }
+    }
+    assert!(
+        !second
+            .client
+            .catalog()?
+            .projects
+            .iter()
+            .any(|entry| entry.id == project.id)
+    );
+    assert!(second.client.read_saved_screen(session.id).is_err());
+    assert!(second.client.resize(attached.channel, SIZE).is_err());
+    assert!(fixture.directory.is_dir());
     Ok(())
 }

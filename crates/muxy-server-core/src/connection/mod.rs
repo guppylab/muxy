@@ -44,10 +44,18 @@ pub fn serve(
             result
         })?;
     let output = Arc::clone(&outbox);
+    let catalog = Arc::clone(&registry);
     let forward = match thread::Builder::new()
         .name("connection-events".into())
         .spawn(move || {
+            let mut revision = 0;
             while !output.is_closed() {
+                let current = catalog.catalog_revision();
+                if current > revision && output.catalog_watched() {
+                    output
+                        .push_control(muxy_protocol::Message::CatalogChanged { revision: current });
+                    revision = current;
+                }
                 match events.recv_timeout(POLL) {
                     Ok(ServerEvent::SessionEnded { id, reason }) => {
                         output.session_ended(id, reason);

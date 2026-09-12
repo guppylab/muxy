@@ -24,16 +24,16 @@ fn signed_bundle(path: &Path, server: &Path, identity: &str) -> Result<()> {
 </dict></plist>"#,
     )?;
     std::fs::copy("/usr/bin/true", binaries.join("muxy-app"))?;
-    std::fs::copy(server, binaries.join("muxy-server"))?;
-    for path in [
-        binaries.join("muxy-app"),
-        binaries.join("muxy-server"),
-        path.to_owned(),
-    ] {
+    std::fs::copy(server, binaries.join("muxy"))?;
+    for executable in [binaries.join("muxy-app"), binaries.join("muxy")] {
         run(Command::new("/usr/bin/codesign")
             .args(["--force", "--timestamp=none", "--sign", identity])
-            .arg(path))?;
+            .arg(executable))?;
     }
+    std::fs::hard_link(binaries.join("muxy"), binaries.join("muxy-server"))?;
+    run(Command::new("/usr/bin/codesign")
+        .args(["--force", "--timestamp=none", "--sign", identity])
+        .arg(path))?;
     Ok(())
 }
 
@@ -80,7 +80,8 @@ fn signed_bundle_updates_preserve_shell_and_retire_only_unused_bundles() -> Resu
     let data = directory.path().join("data");
     std::fs::create_dir(&data)?;
     let socket = data.join("server.sock");
-    let child = Command::new(bundle.join("Contents/MacOS/muxy-server"))
+    let child = Command::new(bundle.join("Contents/MacOS/muxy"))
+        .arg("server")
         .env("MUXY_DIR", &data)
         .env("SHELL", "/bin/sh")
         .stdin(Stdio::null())
@@ -119,7 +120,8 @@ fn signed_bundle_updates_preserve_shell_and_retire_only_unused_bundles() -> Resu
     client.end_session(session.id)?;
     assert!(client.stop_server_if_idle()?);
     server.0.wait()?;
-    server.0 = Command::new(bundle.join("Contents/MacOS/muxy-server"))
+    server.0 = Command::new(bundle.join("Contents/MacOS/muxy"))
+        .arg("server")
         .env("MUXY_DIR", &data)
         .env("SHELL", "/bin/sh")
         .stdin(Stdio::null())
@@ -154,7 +156,7 @@ fn replace_bundle(
         installation: installation.clone(),
         staging: staging.clone(),
         build: Some(crate::server::read_build_info(
-            &candidate.join("Contents/MacOS/muxy-server"),
+            &candidate.join("Contents/MacOS/muxy"),
         )?),
     };
     assert!(update.compatible_with(server));

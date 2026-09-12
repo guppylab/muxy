@@ -1,6 +1,6 @@
 //! Product domain and persistence policy owned by the Muxy application.
 //!
-//! Workspaces, projects, tabs, panes, and window state live here; server
+//! Workspaces, cached project views, tabs, panes, and window state live here; server
 //! execution and UI toolkit code do not.
 
 mod error;
@@ -25,3 +25,5 @@ pub use project::{Color, PROJECT_COLORS, Project, ProjectKind, ProjectStatus};
 pub use state::AppState;
 pub use tab::Tab;
 pub use window::{WindowBounds, WindowState};
+
+mod catalog;

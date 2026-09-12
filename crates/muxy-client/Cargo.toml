@@ -13,6 +13,8 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+serde_json.workspace = true
+tempfile = "3"
 muxy-protocol = { path = "../muxy-protocol" }
 muxy-transport = { path = "../muxy-transport" }
 muxy-wire = { path = "../muxy-wire" }

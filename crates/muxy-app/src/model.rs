@@ -1,3 +1,4 @@
+mod catalog;
 mod links;
 mod preferences;
 mod quick_terminal;
@@ -59,6 +60,7 @@ struct CloseRequest {
 }
 
 pub(crate) struct AppModel {
+    catalog: catalog::Synchronization,
     pub(crate) quick: quick_terminal::QuickTerminalRuntime,
     pub(crate) window: gpui::AnyWindowHandle,
     pub(crate) state: AppState,
@@ -240,6 +242,7 @@ impl AppModel {
         let (theme, palette) = themes.resolve(&boot.settings.appearance, dark);
         let theme_error = (!themes.errors.is_empty()).then(|| themes.errors.join("; "));
         let mut model = Self {
+            catalog: catalog::Synchronization::default(),
             quick: quick_terminal::QuickTerminalRuntime::new(&boot.settings.quick_terminal, cx),
             window: window.window_handle(),
             state: boot.state,
@@ -478,6 +481,7 @@ impl AppModel {
             self.navigation
                 .record((self.state.current_project().id, tab));
         }
+        self.replay_projects(cx);
         self.sync_visible(cx);
         self.focus_requested = true;
         cx.notify();
@@ -771,6 +775,7 @@ impl AppModel {
             self.close_request = None;
         }
         self.discarding.clear();
+        self.catalog.cancelling.clear();
         for pane in self.grids.values() {
             pane.view
                 .update(cx, |pane, cx| pane.set_state(PaneState::Connecting, cx));
@@ -868,6 +873,14 @@ impl AppModel {
     fn discard_pending(&mut self, cx: &mut Context<Self>) {
         if self.connection != ConnectionState::Ready {
             return;
+        }
+        for operation in self.state.pending_cancellations().to_vec() {
+            if self.catalog.cancelling.insert(operation)
+                && !self.send(Work::CancelCreation(operation), cx)
+            {
+                self.catalog.cancelling.remove(&operation);
+                break;
+            }
         }
         for session in self.state.pending_discards().to_vec() {
             if self.discarding.insert(session) && !self.send(Work::Discard(session), cx) {
@@ -1122,6 +1135,12 @@ impl AppModel {
     }
 
     fn start_attach(&mut self, pane: PaneId, size: Size, cx: &mut Context<Self>) {
+        if self.pending.contains(&pane)
+            || !self.state.project_intents().is_empty()
+            || self.catalog.restore.is_some()
+        {
+            return;
+        }
         if self.updates.replacing() {
             self.updates.queued_attaches.insert(pane, size);
             return;
@@ -1146,12 +1165,22 @@ impl AppModel {
             .get(&pane)
             .unwrap_or(&project.directory)
             .clone();
+        let project_id = project.id;
+        let directory = self.state.prepare_creation(pane, &directory);
+        if !self.save(cx) {
+            return;
+        }
+        let directory = {
+            use std::os::unix::ffi::OsStringExt;
+            PathBuf::from(std::ffi::OsString::from_vec(directory.0))
+        };
         if !self.pending.insert(pane) {
             return;
         }
         self.send(
             Work::Attach {
                 pane,
+                project: project_id,
                 session: self.pane_session(pane),
                 directory,
                 size,
@@ -1240,9 +1269,11 @@ impl AppModel {
         if !self.send(Work::Colors(self.palette.terminal_colors()), cx) {
             return;
         }
+        self.catalog.pending = false;
+        self.catalog.replaying = false;
+        self.catalog.restore = Some(sessions.to_vec());
         self.discard_pending(cx);
-        self.apply_restore(sessions, cx);
-        self.resume_update_attaches(cx);
+        self.refresh_catalog(cx);
         if self.settings_window.is_some() {
             self.read_server_settings(cx);
         }
@@ -1254,6 +1285,18 @@ impl AppModel {
             return;
         }
         match update {
+            Update::ProjectSessions {
+                project,
+                after,
+                result,
+            } => self.receive_session_page(project, after, result, cx),
+            Update::CreationCancelled { operation, result } => {
+                self.receive_creation_cancelled(operation, result, cx);
+            }
+            Update::Catalog(result) => self.receive_catalog(result, cx),
+            Update::ProjectMutated { operation, result } => {
+                self.receive_project_mutation(operation, result, cx);
+            }
             Update::ServerInfo(server) => self.receive_server_info(server, cx),
             Update::ServerChecked(result) => self.receive_server_update(result, cx),
             Update::ServerSettings(result) => self.receive_server_settings(result, cx),
@@ -1302,20 +1345,7 @@ impl AppModel {
                         .update(cx, |pane, cx| pane.receive_history(request, result, cx));
                 }
             }
-            Update::Discarded { session, result } => {
-                self.discarding.remove(&session);
-                match result {
-                    Ok(()) => {
-                        self.state.complete_discard(session);
-                        self.save(cx);
-                    }
-                    Err(muxy_client::ClientError::Disconnected) => self.disconnect(cx),
-                    Err(error) => self.fail(
-                        format!("Tab closed; server cleanup is pending: {error}"),
-                        cx,
-                    ),
-                }
-            }
+            Update::Discarded { session, result } => self.receive_discarded(session, result, cx),
             Update::CloseChecked {
                 tab,
                 session,
@@ -1487,6 +1517,11 @@ impl AppModel {
 
     fn receive_event(&mut self, event: ClientEvent, cx: &mut Context<Self>) {
         match event {
+            ClientEvent::CatalogChanged { revision } => {
+                self.catalog.dirty = self.catalog.dirty.max(revision);
+                self.refresh_catalog(cx);
+                self.refresh_session_picker(cx);
+            }
             ClientEvent::Frame { channel, frame } => {
                 let pane = self
                     .grids
@@ -1672,6 +1707,37 @@ mod tests {
 
     type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
+    fn acknowledge_catalog(model: &mut AppModel, cx: &mut Context<AppModel>) {
+        if let Some(sessions) = &mut model.catalog.restore {
+            for session in sessions {
+                if let Some(project) = model.state.projects().iter().find(|project| project.tabs.iter().flat_map(|tab| &tab.panes).any(|pane| matches!(pane.content, PaneContent::Terminal { session: Some(id) } if id == session.id))) {
+                    session.project = project.id;
+                }
+            }
+        }
+
+        while let Some(intent) = model.state.project_intents().first().cloned() {
+            model
+                .state
+                .complete_project_intent(intent.operation)
+                .expect("fixture server acknowledged project");
+        }
+        let page = muxy_protocol::CatalogPage {
+            server: muxy_protocol::ServerIdentity::from_u128(1),
+            home: model.state.home().id,
+            revision: model.state.catalog_revision() + 1,
+            projects: model
+                .state
+                .projects()
+                .iter()
+                .map(muxy_app_core::Project::descriptor)
+                .collect(),
+            next: None,
+            legacy_home: None,
+        };
+        model.receive_catalog(Ok(page), cx);
+    }
+
     fn stub_boot(state: AppState) -> (Boot, std::sync::mpsc::Receiver<(u64, Work)>) {
         let (work, requests) = std::sync::mpsc::channel();
         let (_, updates) = async_channel::unbounded();
@@ -1732,6 +1798,7 @@ mod tests {
         let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
         view.update(cx, |model, cx| {
             model.receive((1, Update::Connected(vec![])), cx);
+            acknowledge_catalog(model, cx);
             model.new_tab(cx);
             let pane = model.active_pane().expect("pane");
             let session = SessionId::new(42).expect("session");
@@ -1782,6 +1849,7 @@ mod tests {
         let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
         view.update(cx, |model, cx| {
             model.receive((1, Update::Connected(vec![])), cx);
+            acknowledge_catalog(model, cx);
             model.new_tab(cx);
             let pane = model.active_pane().expect("pane");
             let tab = model.active_tab().expect("tab");
@@ -1853,12 +1921,14 @@ mod tests {
                 (
                     1,
                     Update::Connected(vec![SessionInfo {
+                        project: ProjectId::from_u128(1),
                         id: session,
                         directory: muxy_protocol::ServerPath(b"/tmp".to_vec()),
                     }]),
                 ),
                 cx,
             );
+            acknowledge_catalog(model, cx);
             assert!(model.state.home().tabs.is_empty());
             let work: Vec<_> = requests.try_iter().map(|(_, work)| work).collect();
             assert!(
@@ -1899,6 +1969,7 @@ mod tests {
         let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
         view.update(cx, |model, cx| {
             model.receive((1, Update::Connected(vec![])), cx);
+            acknowledge_catalog(model, cx);
             model.close_tab(tab, cx);
             assert_eq!(model.state.home().tabs.len(), 1);
             assert_eq!(model.active_tab(), Some(other));
@@ -1928,6 +1999,7 @@ mod tests {
             assert!(model.error.is_none());
             model.connect(cx);
             model.receive((2, Update::Connected(vec![])), cx);
+            acknowledge_catalog(model, cx);
             assert!(
                 requests
                     .try_iter()
@@ -1964,12 +2036,14 @@ mod tests {
                 (
                     1,
                     Update::Connected(vec![SessionInfo {
+                        project: ProjectId::from_u128(1),
                         id: session,
                         directory: muxy_protocol::ServerPath(b"/tmp".to_vec()),
                     }]),
                 ),
                 cx,
             );
+            acknowledge_catalog(model, cx);
             model.receive(
                 (
                     1,
@@ -2034,6 +2108,7 @@ mod tests {
         let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
         view.update(cx, |model, cx| {
             model.receive((1, Update::Connected(vec![])), cx);
+            acknowledge_catalog(model, cx);
             model.new_tab(cx);
             let pane = model.active_pane().expect("pane");
             let mut attachment = attachment();
@@ -2144,6 +2219,7 @@ mod tests {
                     Update::Connected(
                         [first_session, second_session]
                             .map(|id| SessionInfo {
+                                project: ProjectId::from_u128(1),
                                 id,
                                 directory: muxy_protocol::ServerPath(b"/tmp".to_vec()),
                             })
@@ -2152,6 +2228,7 @@ mod tests {
                 ),
                 cx,
             );
+            acknowledge_catalog(model, cx);
             let mut attachment = attachment();
             attachment.process = Some(muxy_protocol::ForegroundProcess {
                 name: "sleep".into(),
@@ -2243,12 +2320,14 @@ mod tests {
                     (
                         generation,
                         Update::Connected(vec![SessionInfo {
+                            project: ProjectId::from_u128(1),
                             id: session,
                             directory: muxy_protocol::ServerPath(b"/tmp".to_vec()),
                         }]),
                     ),
                     cx,
                 );
+                acknowledge_catalog(model, cx);
                 model.select_tab(first, cx);
                 let terminal = model.terminal(&pane).expect("terminal");
                 assert!(terminal.view.read(cx).channel().is_none());
@@ -2319,12 +2398,14 @@ mod tests {
                 (
                     1,
                     Update::Connected(vec![SessionInfo {
+                        project: ProjectId::from_u128(1),
                         id: session,
                         directory: muxy_protocol::ServerPath(b"/tmp".to_vec()),
                     }]),
                 ),
                 cx,
             );
+            acknowledge_catalog(model, cx);
             model.close_tab(first, cx);
             model.close_tab(first, cx);
             assert_eq!(model.pending_close, Some(first));
@@ -2456,6 +2537,7 @@ mod tests {
         let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
         view.update(cx, |model, cx| {
             model.receive((1, Update::Connected(vec![])), cx);
+            acknowledge_catalog(model, cx);
             model.receive(
                 (
                     1,
@@ -2486,6 +2568,7 @@ mod tests {
             model.receive((1, Update::ConnectFailed("stale".into())), cx);
             assert!(model.connection == ConnectionState::Connecting);
             model.receive((2, Update::Connected(vec![])), cx);
+            acknowledge_catalog(model, cx);
             model.receive(
                 (
                     2,
@@ -2524,12 +2607,14 @@ mod tests {
                 (
                     2,
                     Update::Connected(vec![SessionInfo {
+                        project: ProjectId::from_u128(1),
                         id: session,
                         directory: muxy_protocol::ServerPath(b"/tmp".to_vec()),
                     }]),
                 ),
                 cx,
             );
+            acknowledge_catalog(model, cx);
             model.viewport(pane, Size { cols: 80, rows: 24 }, cx);
             model.receive(
                 (
@@ -2593,6 +2678,7 @@ mod tests {
         let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
         view.update(cx, |model, cx| {
             model.receive((1, Update::Connected(vec![])), cx);
+            acknowledge_catalog(model, cx);
             model.new_tab(cx);
             let tab = model.active_tab().expect("tab");
             let pane = model.active_pane().expect("pane");
@@ -2639,6 +2725,7 @@ mod tests {
             model.receive((1, Update::ConnectFailed("offline".into())), cx);
             model.connect(cx);
             model.receive((2, Update::Connected(vec![])), cx);
+            acknowledge_catalog(model, cx);
             assert!(model.state.home().tabs.is_empty());
         });
         assert!(
@@ -2649,7 +2736,7 @@ mod tests {
     }
 
     #[gpui::test]
-    #[ignore = "requires a built muxy-server and a fresh MUXY_DIR under /tmp/muxy-phase12-"]
+    #[ignore = "requires a built muxy CLI and a fresh MUXY_DIR under /tmp/muxy-phase12-"]
     fn phase12_settings_walkthrough(cx: &mut TestAppContext) {
         let result = run_settings_walkthrough(cx);
         assert!(result.is_ok(), "{result:?}");
@@ -2711,8 +2798,8 @@ mod tests {
             assert_eq!(
                 cx.pending_prompt(),
                 Some((
-                    crate::views::confirm::TITLE.into(),
-                    crate::views::confirm::MESSAGE.into()
+                    crate::views::confirm::PANE_TITLE.into(),
+                    crate::views::confirm::PANE_MESSAGE.into()
                 ))
             );
             cx.simulate_prompt_answer("Cancel");
@@ -2802,6 +2889,9 @@ mod tests {
         let closed = active_session(&view, cx)?;
         let closed_pid = record_shell_pid(cx, &view, &directory, "closed")?;
         shell(cx, "sleep 60");
+        wait(cx, &view, |model, cx| {
+            active_process(model, cx).is_some_and(|process| process.name == "sleep")
+        })?;
         cx.simulate_keystrokes("cmd-t");
         wait_live(cx, &view)?;
         let other = active_session(&view, cx)?;
@@ -2811,6 +2901,9 @@ mod tests {
         cx.simulate_keystrokes("cmd-1");
         wait_live(cx, &view)?;
         cx.simulate_keystrokes("cmd-w");
+        wait(cx, &view, |model, _| model.close_prompt.is_some())?;
+        cx.simulate_prompt_answer("Close");
+        wait(cx, &view, |model, _| model.state.home().tabs.len() == 1)?;
         assert_eq!(
             view.read_with(cx, |model, _| model.state.home().tabs.len()),
             1
@@ -2844,7 +2937,7 @@ mod tests {
         assert!(view.read_with(cx, |model, _| model.state.home().tabs.is_empty()));
         assert!(process_exists(other_pid));
         assert_eq!(
-            store::load(directory.join("state.json"))?.pending_discards(),
+            store::load(directory.join("desktop-state.json"))?.pending_discards(),
             &[other]
         );
         reload_model(cx, &view)?;
@@ -3064,7 +3157,12 @@ mod tests {
         assert!(screen(view, cx).contains("phase-13 final output"));
         view.update(cx, AppModel::connect);
         wait_exited(cx, view)?;
-        assert_eq!(view.read_with(cx, |model, _| model.state.clone()), before);
+        view.read_with(cx, |model, _| {
+            assert_eq!(model.state.projects(), before.projects());
+            assert_eq!(model.state.window(), before.window());
+            assert_eq!(model.state.pending_discards(), before.pending_discards());
+            assert!(model.state.catalog_revision() >= before.catalog_revision());
+        });
         let probe = Client::connect(&directory.join("server.sock"))?;
         assert!(probe.list_sessions()?.is_empty());
         for index in 0..3 {
@@ -3122,6 +3220,9 @@ mod tests {
         assert!(probe.read_saved_screen(exited).is_err());
         cx.simulate_keystrokes("cmd-t");
         wait_live(cx, view)?;
+        wait(cx, view, |model, cx| {
+            active_process(model, cx).is_some_and(|process| process.is_shell)
+        })?;
         let live = view
             .read_with(cx, |model, _| {
                 model.pane_session(model.active_pane().expect("pane"))
@@ -3151,7 +3252,7 @@ mod tests {
         wait(cx, view, |model, _| model.state.home().tabs.is_empty())?;
         assert!(probe.list_sessions()?.is_empty());
         assert!(
-            store::load(directory.join("state.json"))?
+            store::load(directory.join("desktop-state.json"))?
                 .home()
                 .tabs
                 .is_empty()
@@ -3263,7 +3364,7 @@ mod tests {
     }
 
     #[gpui::test]
-    #[ignore = "requires a built muxy-server and a fresh MUXY_DIR under /tmp/muxy-phase11-"]
+    #[ignore = "requires a built muxy CLI and a fresh MUXY_DIR under /tmp/muxy-phase11-"]
     fn live_server_walkthrough(cx: &mut TestAppContext) {
         let result = run_walkthrough(cx);
         assert!(result.is_ok(), "{result:?}");

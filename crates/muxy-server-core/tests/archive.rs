@@ -176,10 +176,9 @@ fn discard_racing_checkpoints_and_exit_cannot_recreate_an_archive() -> TestResul
     assert!(fixture.registry.read_saved_screen(id).is_err());
     fixture.registry.shutdown();
     assert!(fixture.registry.is_stopped());
-    assert!(
-        fs::read_dir(fixture.root.join("sessions"))?
-            .next()
-            .is_none()
-    );
+    let remaining = fs::read_dir(fixture.root.join("sessions"))?
+        .map(|entry| entry.map(|entry| entry.file_name()))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    assert_eq!(remaining, [std::ffi::OsString::from("catalog.json")]);
     Ok(())
 }

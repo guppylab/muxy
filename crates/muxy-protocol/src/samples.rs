@@ -38,6 +38,8 @@ impl Message {
             Self::Request {
                 id: RequestId(1),
                 body: RequestBody::CreateSession {
+                    project: crate::ProjectId::from_u128(1),
+                    operation: crate::OperationId::from_u128(2),
                     directory: directory.clone(),
                     size,
                 },
@@ -96,18 +98,8 @@ impl Message {
         samples.extend(search_samples(session, channel));
         samples.extend(color_samples());
         samples.extend(settings_samples());
-        samples.push(Self::Metadata(MetadataEvent::CursorBlinking(true)));
-        samples.push(Self::Metadata(MetadataEvent::Links {
-            seq: 1,
-            rows: vec![crate::LinkRow {
-                row: 0,
-                spans: vec![crate::LinkSpan {
-                    start: 0,
-                    end: 4,
-                    uri: "https://example.com".into(),
-                }],
-            }],
-        }));
+        samples.extend(project_samples());
+        terminal_metadata_samples(&mut samples);
         samples
     }
 }
@@ -295,4 +287,103 @@ fn sample_cursor() -> Cursor {
         col: 3,
         visible: true,
     }
+}
+
+fn terminal_metadata_samples(samples: &mut Vec<Message>) {
+    samples.push(Message::Metadata(MetadataEvent::CursorBlinking(true)));
+    samples.push(Message::Metadata(MetadataEvent::Links {
+        seq: 1,
+        rows: vec![crate::LinkRow {
+            row: 0,
+            spans: vec![crate::LinkSpan {
+                start: 0,
+                end: 4,
+                uri: "https://example.com".into(),
+            }],
+        }],
+    }));
+}
+
+fn project_samples() -> Vec<Message> {
+    use crate::{
+        CatalogPage, OperationId, ProjectDescriptor, ProjectId, ProjectIntent, ProjectMutation,
+        ProjectSession, ProjectSessions, ServerIdentity, SessionInfo, SessionStatus,
+    };
+    let project = ProjectDescriptor {
+        id: ProjectId::from_u128(1),
+        home: false,
+        name: "Example".into(),
+        directory: ServerPath(b"/tmp".to_vec()),
+        icon: None,
+        color: "#808080".into(),
+        kind: None,
+        parent_id: None,
+    };
+    let operation = OperationId::from_u128(2);
+    vec![
+        Message::CatalogChanged { revision: 1 },
+        Message::Request {
+            id: RequestId(1),
+            body: RequestBody::ReadCatalog {
+                after: None,
+                revision: None,
+            },
+        },
+        Message::Request {
+            id: RequestId(2),
+            body: RequestBody::MutateProject(ProjectIntent {
+                operation,
+                mutation: ProjectMutation::Create(project.clone()),
+            }),
+        },
+        Message::Request {
+            id: RequestId(3),
+            body: RequestBody::ListProjectSessions {
+                project: project.id,
+                after: None,
+                revision: None,
+            },
+        },
+        Message::Request {
+            id: RequestId(4),
+            body: RequestBody::CancelCreation(operation),
+        },
+        Message::Reply {
+            id: RequestId(1),
+            body: ReplyBody::Catalog(CatalogPage {
+                server: ServerIdentity::from_u128(3),
+                home: project.id,
+                revision: 1,
+                projects: vec![ProjectDescriptor {
+                    home: true,
+                    ..project.clone()
+                }],
+                next: None,
+                legacy_home: Some(project.id),
+            }),
+        },
+        Message::Reply {
+            id: RequestId(2),
+            body: ReplyBody::ProjectMutated { revision: 1 },
+        },
+        Message::Reply {
+            id: RequestId(3),
+            body: ReplyBody::ProjectSessions(ProjectSessions {
+                revision: 1,
+                sessions: vec![ProjectSession {
+                    info: SessionInfo {
+                        id: SessionId::from(NonZeroU64::MIN),
+                        project: project.id,
+                        directory: project.directory,
+                    },
+                    status: SessionStatus::Ended,
+                }],
+                next: None,
+            }),
+        },
+        Message::Reply {
+            id: RequestId(4),
+            body: ReplyBody::CreationCancelled,
+        },
+    ]
 }

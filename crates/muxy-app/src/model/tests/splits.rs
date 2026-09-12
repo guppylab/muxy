@@ -297,6 +297,7 @@ fn shortcuts_split_focus_zoom_and_close_the_expected_pane(cx: &mut TestAppContex
     let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
     view.update(cx, |model, cx| {
         model.receive((1, Update::Connected(vec![])), cx);
+        acknowledge_catalog(model, cx);
     });
     cx.simulate_keystrokes("cmd-t");
     let first = view.read_with(cx, |model, _| model.active_pane().expect("first"));
@@ -554,7 +555,7 @@ fn divider_drag_persists_ratios_and_click_focus_routes_input(cx: &mut TestAppCon
 }
 
 #[gpui::test]
-#[ignore = "requires a built muxy-server, top, vim, and a fresh MUXY_DIR under /tmp/muxy-phase23-"]
+#[ignore = "requires a built muxy CLI, top, vim, and a fresh MUXY_DIR under /tmp/muxy-phase23-"]
 fn phase23_split_walkthrough(cx: &mut TestAppContext) {
     let result = run_split_walkthrough(cx);
     assert!(result.is_ok(), "{result:?}");

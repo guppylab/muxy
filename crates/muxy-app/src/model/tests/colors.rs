@@ -10,6 +10,7 @@ fn colors_are_sent_before_attach_and_refreshed_on_theme_change_and_reconnect(
     let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
     view.update(cx, |model, cx| {
         model.receive((1, Update::Connected(vec![])), cx);
+        acknowledge_catalog(model, cx);
         let pane = model.active_pane().expect("pane");
         model.start_attach(pane, Size { cols: 80, rows: 24 }, cx);
         let work: Vec<_> = requests.try_iter().collect();
@@ -30,6 +31,7 @@ fn colors_are_sent_before_attach_and_refreshed_on_theme_change_and_reconnect(
         model.connect(cx);
         assert!(matches!(requests.try_recv(), Ok((2, Work::Connect))));
         model.receive((2, Update::Connected(vec![])), cx);
+        acknowledge_catalog(model, cx);
         assert!(matches!(requests.try_recv(), Ok((2, Work::Colors(colors))) if colors == initial));
     });
 }

@@ -20,6 +20,7 @@ struct Attachment {
 
 #[derive(Default)]
 struct State {
+    catalog_watched: bool,
     colors: Option<TerminalColors>,
     control: VecDeque<Message>,
     pending: HashMap<ChannelId, ScreenFrame>,
@@ -45,6 +46,13 @@ impl Outbox {
         }
     }
 
+    pub(super) fn watch_catalog(&self) {
+        self.lock().catalog_watched = true;
+    }
+    pub(super) fn catalog_watched(&self) -> bool {
+        self.lock().catalog_watched
+    }
+
     pub(super) fn colors(&self) -> Option<TerminalColors> {
         self.lock().colors
     }
@@ -63,6 +71,15 @@ impl Outbox {
         };
         let mut state = self.lock();
         if !state.closed {
+            if let Message::CatalogChanged { revision } = &message
+                && let Some(Message::CatalogChanged { revision: pending }) = state
+                    .control
+                    .iter_mut()
+                    .find(|message| matches!(message, Message::CatalogChanged { .. }))
+            {
+                *pending = (*pending).max(*revision);
+                return;
+            }
             state.control.push_back(message);
             self.ready.notify_one();
         }

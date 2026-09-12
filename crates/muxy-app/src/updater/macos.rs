@@ -88,8 +88,7 @@ impl Installation {
         let candidate = staging.path().join("Muxy Beta.app");
         run(Command::new("/usr/bin/ditto").arg(&source).arg(&candidate))?;
         self.verify_app(&candidate, &release.version)?;
-        let build =
-            crate::server::read_build_info(&candidate.join("Contents/MacOS/muxy-server")).ok();
+        let build = crate::server::read_build_info(&candidate.join("Contents/MacOS/muxy")).ok();
         if build
             .as_ref()
             .is_some_and(|info| info.version != release.version)
@@ -129,8 +128,7 @@ impl Installation {
         }
         let candidate = staging.join("Muxy Beta.app");
         self.verify_app(&candidate, &version)?;
-        let build =
-            crate::server::read_build_info(&candidate.join("Contents/MacOS/muxy-server")).ok();
+        let build = crate::server::read_build_info(&candidate.join("Contents/MacOS/muxy")).ok();
         if build.as_ref().is_some_and(|build| build.version != version) {
             return Err("Pending update version mismatch".into());
         }
@@ -188,6 +186,8 @@ impl Installation {
                     .as_u64()
                     .is_some_and(|instance| instance != server.instance)
                 && path.join("previous.app").is_dir()
+                && let Some(_lease) =
+                    muxy_client::local::bundle::lock_unused(&path.join("previous.app"))?
             {
                 std::fs::remove_dir_all(path)?;
             }
@@ -232,7 +232,7 @@ impl Installation {
         } else {
             "x86_64"
         };
-        for binary in ["muxy-app", "muxy-server"] {
+        for binary in ["muxy-app", "muxy", "muxy-server"] {
             run(Command::new("/usr/bin/lipo")
                 .arg(app.join("Contents/MacOS").join(binary))
                 .args(["-verify_arch", arch]))?;
@@ -268,8 +268,7 @@ impl PreparedUpdate {
         self.installation
             .verify_app(&self.installation.bundle, env!("CARGO_PKG_VERSION"))?;
         let build =
-            crate::server::read_build_info(&self.candidate().join("Contents/MacOS/muxy-server"))
-                .ok();
+            crate::server::read_build_info(&self.candidate().join("Contents/MacOS/muxy")).ok();
         if build != self.build {
             return Err("The staged update metadata changed. Check for updates again.".into());
         }
@@ -438,7 +437,7 @@ mod tests {
 <key>CFBundlePackageType</key><string>APPL</string>
 </dict></plist>"#,
         )?;
-        for binary in ["muxy-app", "muxy-server"] {
+        for binary in ["muxy-app", "muxy", "muxy-server"] {
             let path = binaries.join(binary);
             std::fs::copy("/usr/bin/true", &path)?;
             run(Command::new("/usr/bin/codesign")
@@ -455,7 +454,7 @@ mod tests {
             team: "TESTTEAM00".into(),
         };
         assert!(installation.verify_signature(&app, true).is_err());
-        std::fs::write(binaries.join("muxy-server"), b"changed helper")?;
+        std::fs::write(binaries.join("muxy"), b"changed helper")?;
         assert!(verify_code(&app, "identifier \"com.muxy-beta.app\"").is_err());
         Ok(())
     }

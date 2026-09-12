@@ -5,8 +5,11 @@ cost time to learn.
 
 ## Platform
 
-- The first release supports macOS only. Server paths on the wire are Unix
-  pathname bytes; other platforms are a later release.
+- The desktop supports macOS 14+. Standalone CLI/server targets are macOS 14+
+  and Linux with glibc 2.35+, each on x86_64 and ARM64. Linux support requires
+  native build and runtime verification on both architectures.
+- Server paths are Unix pathname bytes. Connections are local Unix sockets;
+  remote transport, native Windows, and musl/Alpine support are deferred.
 
 ## Ghostty terminal core
 

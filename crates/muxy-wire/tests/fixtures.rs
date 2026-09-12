@@ -35,7 +35,53 @@ fn generate_fixtures() -> Result<(), Box<dyn Error>> {
 }
 
 fn fixture_path(message: &Message) -> PathBuf {
-    let name = match message {
+    let name = project_fixture_name(message).unwrap_or_else(|| legacy_fixture_name(message));
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(format!("{name}.bin"))
+}
+
+fn project_fixture_name(message: &Message) -> Option<&'static str> {
+    Some(match message {
+        Message::Request {
+            body: RequestBody::ReadCatalog { .. },
+            ..
+        } => "ReadCatalog",
+        Message::Request {
+            body: RequestBody::MutateProject(_),
+            ..
+        } => "MutateProject",
+        Message::Request {
+            body: RequestBody::ListProjectSessions { .. },
+            ..
+        } => "ListProjectSessions",
+        Message::Request {
+            body: RequestBody::CancelCreation(_),
+            ..
+        } => "CancelCreation",
+        Message::Reply {
+            body: ReplyBody::Catalog(_),
+            ..
+        } => "Catalog",
+        Message::Reply {
+            body: ReplyBody::ProjectMutated { .. },
+            ..
+        } => "ProjectMutated",
+        Message::Reply {
+            body: ReplyBody::ProjectSessions(_),
+            ..
+        } => "ProjectSessions",
+        Message::Reply {
+            body: ReplyBody::CreationCancelled,
+            ..
+        } => "CreationCancelled",
+
+        _ => return None,
+    })
+}
+
+fn legacy_fixture_name(message: &Message) -> &'static str {
+    match message {
         Message::Request {
             body: RequestBody::StopServerIfIdle,
             ..
@@ -118,10 +164,7 @@ fn fixture_path(message: &Message) -> PathBuf {
             ..
         } if !snapshot.history.is_empty() => "attached_history_reply",
         _ => kind_name(MessageKind::from(message)),
-    };
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures")
-        .join(format!("{name}.bin"))
+    }
 }
 
 fn channel(message: &Message) -> ChannelId {
@@ -152,6 +195,7 @@ fn development_messages_share_one_version_and_reject_unknown_schemas() -> Result
 
 fn kind_name(kind: MessageKind) -> &'static str {
     match kind {
+        MessageKind::CatalogChanged => "catalog_changed",
         MessageKind::Hello => "hello",
         MessageKind::Request => "request",
         MessageKind::FrameAck => "frame_ack",

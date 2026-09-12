@@ -172,6 +172,29 @@ impl Archive {
         }))))
     }
 
+    pub(crate) fn ids(&self) -> io::Result<Vec<SessionId>> {
+        match self.0.as_ref() {
+            Backend::Memory { records, .. } => Ok(lock(records).keys().copied().collect()),
+            Backend::Disk(disk) => {
+                let mut ids = Vec::new();
+                for entry in fs::read_dir(&disk.directory)? {
+                    let entry = entry?;
+                    let name = entry.file_name();
+                    if let Some(stem) = name
+                        .to_str()
+                        .and_then(|name| name.strip_suffix(".postcard"))
+                        && stem.len() == 16
+                        && let Ok(value) = u64::from_str_radix(stem, 16)
+                        && let Some(id) = SessionId::new(value)
+                    {
+                        ids.push(id);
+                    }
+                }
+                Ok(ids)
+            }
+        }
+    }
+
     pub(crate) fn contains(&self, session: SessionId) -> bool {
         match self.0.as_ref() {
             Backend::Memory { records, .. } => lock(records).contains_key(&session),

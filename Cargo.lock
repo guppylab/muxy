@@ -3361,6 +3361,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "muxy-cli"
+version = "2.0.0-beta-0"
+dependencies = [
+ "muxy-app-core",
+ "muxy-client",
+ "muxy-core",
+ "muxy-protocol",
+ "muxy-server",
+ "muxy-transport",
+ "muxy-wire",
+ "serde_json",
+]
+
+[[package]]
 name = "muxy-client"
 version = "2.0.0-beta-0"
 dependencies = [
@@ -3368,6 +3382,8 @@ dependencies = [
  "muxy-server-core",
  "muxy-transport",
  "muxy-wire",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -3384,6 +3400,8 @@ version = "2.0.0-beta-0"
 dependencies = [
  "muxy-core",
  "serde",
+ "unicode-segmentation",
+ "uuid",
 ]
 
 [[package]]
@@ -3402,7 +3420,6 @@ dependencies = [
  "muxy-protocol",
  "muxy-server-core",
  "muxy-transport",
- "muxy-wire",
  "serde",
  "serde_json",
  "signal-hook",
@@ -3424,6 +3441,7 @@ dependencies = [
  "muxy-wire",
  "postcard",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

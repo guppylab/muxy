@@ -1,6 +1,7 @@
 import json
 import os
 import plistlib
+import re
 import shutil
 import struct
 import subprocess
@@ -11,6 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 VERSION = "2.0.0-beta-1234"
+COMPATIBILITY = int(re.search(r"pub const COMPATIBILITY: u[0-9]+ = ([0-9]+)", (ROOT / "crates/muxy-protocol/src/build.rs").read_text())[1])
 TARGETS = {"arm64": "aarch64-apple-darwin", "x86_64": "x86_64-apple-darwin"}
 
 FAKE_TOOL = r'''
@@ -58,8 +60,8 @@ class BuildReleaseTests(unittest.TestCase):
         for target in TARGETS.values():
             binaries = self.root / "target" / target / "release"
             binaries.mkdir(parents=True)
-            for name in ("muxy-app", "muxy-server"):
-                (binaries / name).write_text(f"#!{sys.executable}\nimport json\nprint(json.dumps({{'version': '{VERSION}', 'compatibility': 1}}))\n")
+            for name in ("muxy-app", "muxy"):
+                (binaries / name).write_text(f"#!{sys.executable}\nimport json\nprint(json.dumps({{'version': '{VERSION}', 'compatibility': {COMPATIBILITY}}}))\n")
                 (binaries / f"{name}.dSYM").mkdir()
         tools = self.root / "tools"
         tools.mkdir()
@@ -115,6 +117,20 @@ class BuildReleaseTests(unittest.TestCase):
                 self.assertEqual(len(conversion), 1)
                 self.assertEqual(conversion[0][1:4], ["--convert", "icns", "--output"])
                 self.assertTrue(conversion[0][4].endswith(f"/Contents/Resources/{icon}"))
+
+    def test_bundle_has_same_bytes_alias_and_builds_only_canonical_executables(self):
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        binaries = self.root / "target/beta" / VERSION / "arm64/Muxy Beta.app/Contents/MacOS"
+        canonical, alias = binaries / "muxy", binaries / "muxy-server"
+        self.assertEqual(canonical.read_bytes(), alias.read_bytes())
+        self.assertEqual(canonical.stat().st_ino, alias.stat().st_ino)
+        build = self.calls("cargo")[0]
+        self.assertIn("muxy-cli", build)
+        self.assertNotIn("muxy-server", build)
+        signing = [call[-1] for call in self.calls("codesign") if "--sign" in call]
+        self.assertEqual(sum(path.endswith("/muxy") for path in signing), 1)
+        self.assertFalse(any(path.endswith("/muxy-server") for path in signing))
 
     def test_non_beta_releases_are_rejected_before_packaging(self):
         for version in ("2.0.0", "2.0.0-alpha-1", "2.0.0-beta-0"):

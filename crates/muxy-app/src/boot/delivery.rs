@@ -36,6 +36,15 @@ impl Delivery {
             *previous = event;
             return Ok(Vec::new());
         }
+        if let ClientEvent::CatalogChanged { revision } = &event
+            && let Some(ClientEvent::CatalogChanged { revision: previous }) = self
+                .deferred
+                .iter_mut()
+                .find(|previous| matches!(previous, ClientEvent::CatalogChanged { .. }))
+        {
+            *previous = (*previous).max(*revision);
+            return Ok(Vec::new());
+        }
         if self.deferred.len() == MAX_DEFERRED_EVENTS {
             return Err("too many events arrived before request completion");
         }
@@ -95,7 +104,8 @@ impl Delivery {
                 ClientEvent::Frame { channel, .. } | ClientEvent::Metadata { channel, .. } => {
                     channel.0 <= self.installed_through
                 }
-                ClientEvent::SessionEnded { .. }
+                ClientEvent::CatalogChanged { .. }
+                | ClientEvent::SessionEnded { .. }
                 | ClientEvent::ServerRestarting
                 | ClientEvent::Disconnected => false,
             }

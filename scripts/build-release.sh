@@ -49,8 +49,8 @@ if [[ -e "$OUTPUT_DIR" ]]; then
 fi
 
 cd "$ROOT"
-echo "==> Building app and server for $TARGET"
-cargo build --locked --release --target "$TARGET" -p muxy-app -p muxy-server
+echo "==> Building app and unified CLI for $TARGET"
+cargo build --locked --release --target "$TARGET" -p muxy-app -p muxy-cli
 BIN_DIR="$CARGO_TARGET_DIR/$TARGET/release"
 
 mkdir -p "$(dirname "$OUTPUT_DIR")"
@@ -59,7 +59,7 @@ trap 'rm -rf "$STAGING"' EXIT
 APP="$STAGING/dmg/Muxy Beta.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$STAGING/symbols" "$STAGING/artifacts"
 
-for BINARY in muxy-app muxy-server; do
+for BINARY in muxy-app muxy; do
     install -m 755 "$BIN_DIR/$BINARY" "$APP/Contents/MacOS/$BINARY"
     EXECUTABLE="$APP/Contents/MacOS/$BINARY"
     if [[ "$(lipo -archs "$EXECUTABLE")" != "$ARCH" ]]; then
@@ -101,13 +101,15 @@ if [[ "$SIGN_IDENTITY" == - ]]; then
 else
     SIGN_ARGS+=(--options runtime --timestamp)
 fi
-# Sign the server and app executable before sealing the containing bundle.
-for BINARY in muxy-server muxy-app; do
+# Sign canonical executables before forming the compatibility alias and sealing the bundle.
+for BINARY in muxy muxy-app; do
     codesign "${SIGN_ARGS[@]}" "$APP/Contents/MacOS/$BINARY"
 done
+ln "$APP/Contents/MacOS/muxy" "$APP/Contents/MacOS/muxy-server"
 codesign "${SIGN_ARGS[@]}" "$APP"
+cmp "$APP/Contents/MacOS/muxy" "$APP/Contents/MacOS/muxy-server"
 codesign --verify --deep --strict --verbose=2 "$APP"
-python3 "$ROOT/scripts/beta_release.py" check-build "$VERSION" "$APP/Contents/MacOS/muxy-server"
+python3 "$ROOT/scripts/beta_release.py" check-build "$VERSION" "$APP/Contents/MacOS/muxy"
 
 ln -s /Applications "$STAGING/dmg/Applications"
 DMG="$STAGING/artifacts/Muxy-${VERSION}-${ARCH}.dmg"

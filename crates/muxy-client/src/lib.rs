@@ -1,7 +1,7 @@
-//! App-side server connection, handshake, routing, and synchronization.
+//! Shared client connection, handshake, routing, and synchronization.
 //!
 //! This crate translates shared protocol traffic without owning project,
-//! tab, pane, UI, or server-execution policy.
+//! tab, pane, UI, or desktop update policy. Local startup launches an explicit executable.
 
 mod client;
 mod error;
@@ -14,3 +14,7 @@ pub use client::{Attachment, Client};
 pub use error::ClientError;
 pub use events::ClientEvent;
 pub use grid::{RunGrid, ScreenLinks, ScreenPrompts};
+
+mod catalog;
+
+pub mod local;

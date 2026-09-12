@@ -215,14 +215,23 @@ fn ordered_request(
             outbox.resize(channel, id, size)?;
             return Ok(None);
         }
+        RequestBody::CancelCreation(_)
+        | RequestBody::ReadCatalog { .. }
+        | RequestBody::MutateProject(_)
+        | RequestBody::ListProjectSessions { .. } => project_request(body, registry, outbox)?,
         RequestBody::ListSessions => ReplyBody::Sessions(registry.list()),
-        RequestBody::CreateSession { directory, size } => {
-            ReplyBody::SessionCreated(registry.create_with_colors(
-                Path::new(OsStr::from_bytes(&directory.0)),
-                size,
-                outbox.colors(),
-            )?)
-        }
+        RequestBody::CreateSession {
+            project,
+            operation,
+            directory,
+            size,
+        } => ReplyBody::SessionCreated(registry.create_with_colors(
+            project,
+            operation,
+            Path::new(OsStr::from_bytes(&directory.0)),
+            size,
+            outbox.colors(),
+        )?),
         RequestBody::EndSession(session) => {
             registry.end(session)?;
             ReplyBody::SessionEnded
@@ -270,6 +279,38 @@ fn ordered_request(
         },
         RequestBody::Ping => ReplyBody::Pong,
     }))
+}
+
+fn project_request(
+    body: RequestBody,
+    registry: &Registry,
+    outbox: &Outbox,
+) -> Result<ReplyBody, ServerError> {
+    Ok(match body {
+        RequestBody::CancelCreation(operation) => {
+            registry.cancel_creation(operation)?;
+            ReplyBody::CreationCancelled
+        }
+
+        RequestBody::ReadCatalog { after, revision } => {
+            outbox.watch_catalog();
+            ReplyBody::Catalog(registry.read_catalog(after, revision)?)
+        }
+        RequestBody::MutateProject(intent) => ReplyBody::ProjectMutated {
+            revision: registry.mutate_project(&intent)?,
+        },
+        RequestBody::ListProjectSessions {
+            project,
+            after,
+            revision,
+        } => ReplyBody::ProjectSessions(registry.list_project_sessions(project, after, revision)?),
+        _ => {
+            return Err(ServerError::new(
+                ErrorCode::BadRequest,
+                "expected project request",
+            ));
+        }
+    })
 }
 
 fn live_history(

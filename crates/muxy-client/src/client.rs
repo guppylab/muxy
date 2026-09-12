@@ -64,10 +64,24 @@ impl std::fmt::Debug for Client {
 
 impl Client {
     pub fn connect(socket: &Path) -> Result<Self, ClientError> {
-        Self::from_stream(muxy_transport::connect(socket)?)
+        Self::connect_with_timeout(socket, DEFAULT_TIMEOUT)
+    }
+
+    pub fn connect_with_timeout(socket: &Path, timeout: Duration) -> Result<Self, ClientError> {
+        if timeout.is_zero() {
+            return Err(ClientError::Timeout);
+        }
+        Self::from_stream_with_timeout(muxy_transport::connect(socket)?, timeout)
     }
 
     pub fn from_stream(stream: Box<dyn ByteStream>) -> Result<Self, ClientError> {
+        Self::from_stream_with_timeout(stream, DEFAULT_TIMEOUT)
+    }
+
+    fn from_stream_with_timeout(
+        stream: Box<dyn ByteStream>,
+        timeout: Duration,
+    ) -> Result<Self, ClientError> {
         let cancellation = stream.cancellation()?;
         let reader_cancellation = stream.cancellation()?;
         let (read, write) = stream.split()?;
@@ -90,7 +104,7 @@ impl Client {
                 );
             })?;
         let negotiated = accepted
-            .recv_timeout(DEFAULT_TIMEOUT)
+            .recv_timeout(timeout)
             .map_err(|error| match error {
                 RecvTimeoutError::Timeout => ClientError::Timeout,
                 RecvTimeoutError::Disconnected => ClientError::Disconnected,
@@ -175,9 +189,26 @@ impl Client {
         }
     }
 
+    /// Creates an ad-hoc session in this server's Home project.
     pub fn create_session(&self, directory: &Path, size: Size) -> Result<SessionInfo, ClientError> {
+        let home = self.catalog_page(None, None)?.home;
+        self.create_project_session(home, muxy_protocol::OperationId::new(), directory, size)
+    }
+
+    pub fn create_project_session(
+        &self,
+        project: muxy_protocol::ProjectId,
+        operation: muxy_protocol::OperationId,
+        directory: &Path,
+        size: Size,
+    ) -> Result<SessionInfo, ClientError> {
         let directory = ServerPath(directory.as_os_str().as_bytes().to_vec());
-        match self.request(RequestBody::CreateSession { directory, size })? {
+        match self.request(RequestBody::CreateSession {
+            project,
+            operation,
+            directory,
+            size,
+        })? {
             ReplyBody::SessionCreated(info) => Ok(info),
             other => Err(ClientError::UnexpectedReply(Box::new(other))),
         }
@@ -330,7 +361,7 @@ impl Client {
         self.send(CONTROL, &Message::FrameAck { channel, seq })
     }
 
-    fn request(&self, body: RequestBody) -> Result<ReplyBody, ClientError> {
+    pub(crate) fn request(&self, body: RequestBody) -> Result<ReplyBody, ClientError> {
         let (id, reply) = self.shared.pending.register()?;
         if let Err(error) = self.send(CONTROL, &Message::Request { id, body }) {
             self.shared.pending.forget(id);

@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    branches: [main, codex/unified-cli-checkpoint-c-20260912]
   pull_request:
   workflow_call:
 
@@ -39,3 +39,66 @@ jobs:
       - run: cargo doc --locked --workspace --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
+
+  headless:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config zsh fish binutils
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.92.0
+          components: rustfmt, clippy
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: headless-${{ matrix.target }}-glibc-2.35
+      - run: python3 scripts/check-headless.py --target "${{ matrix.target }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: headless-${{ matrix.target }}
+          path: target/release/muxy
+          if-no-files-found: error
+
+  headless-newer:
+    needs: headless
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config zsh fish binutils
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.92.0
+          components: rustfmt, clippy
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: headless-${{ matrix.target }}-newer
+      - uses: actions/download-artifact@v4
+        with:
+          name: headless-${{ matrix.target }}
+          path: floor-runtime
+      - run: chmod +x floor-runtime/muxy
+      - run: python3 scripts/check-headless.py --target "${{ matrix.target }}" --runtime-binary floor-runtime/muxy

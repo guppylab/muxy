@@ -39,3 +39,10 @@ mod graphics;
 pub use graphics::{
     CellSize, GraphicImage, GraphicPlacement, Graphics, MAX_GRAPHICS_BYTES, MAX_GRAPHICS_PLACEMENTS,
 };
+
+mod project;
+pub use project::{
+    CATALOG_PAGE_SIZE, CatalogPage, MAX_PROJECTS, OperationId, ProjectDescriptor, ProjectId,
+    ProjectIntent, ProjectKind, ProjectMutation, ProjectPatch, ProjectSession, ProjectSessions,
+    ServerIdentity, SessionStatus,
+};

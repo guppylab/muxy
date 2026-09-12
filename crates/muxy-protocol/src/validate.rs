@@ -75,7 +75,8 @@ impl Message {
             }
             Self::Metadata(MetadataEvent::Links { rows, .. }) => validate_links(rows),
             Self::Metadata(MetadataEvent::Directory(path)) => validate_path(path),
-            Self::ServerRestarting
+            Self::CatalogChanged { .. }
+            | Self::ServerRestarting
             | Self::FrameAck { .. }
             | Self::VersionUnsupported
             | Self::SessionEnded { .. }
@@ -109,6 +110,7 @@ fn validate_mouse(event: &MouseEvent) -> Result<(), ErrorCode> {
 
 fn validate_request(body: &RequestBody) -> Result<(), ErrorCode> {
     match body {
+        RequestBody::MutateProject(intent) => intent.mutation.validate(),
         RequestBody::WriteServerSettings(settings) => settings.validate(),
         RequestBody::Search {
             source,
@@ -121,7 +123,9 @@ fn validate_request(body: &RequestBody) -> Result<(), ErrorCode> {
             }
             validate_search(query, *max_results)
         }
-        RequestBody::CreateSession { directory, size } => {
+        RequestBody::CreateSession {
+            directory, size, ..
+        } => {
             validate_path(directory)?;
             validate_size(*size)
         }
@@ -135,7 +139,10 @@ fn validate_request(body: &RequestBody) -> Result<(), ErrorCode> {
             validate_page_size(*max_rows)
         }
         RequestBody::SavedHistoryPage { max_rows, .. } => validate_page_size(*max_rows),
-        RequestBody::ReadServerSettings
+        RequestBody::ReadCatalog { .. }
+        | RequestBody::ListProjectSessions { .. }
+        | RequestBody::CancelCreation(_)
+        | RequestBody::ReadServerSettings
         | RequestBody::StopServerIfIdle
         | RequestBody::StopServer
         | RequestBody::ListSessions
@@ -150,6 +157,8 @@ fn validate_request(body: &RequestBody) -> Result<(), ErrorCode> {
 
 fn validate_reply(body: &ReplyBody) -> Result<(), ErrorCode> {
     match body {
+        ReplyBody::Catalog(page) => page.validate(),
+        ReplyBody::ProjectSessions(page) => page.validate(),
         ReplyBody::ServerSettings(settings) => settings.validate(),
         ReplyBody::SearchPage(page) => {
             if page.matches.len() > 500
@@ -207,7 +216,9 @@ fn validate_reply(body: &ReplyBody) -> Result<(), ErrorCode> {
             )
         }
         ReplyBody::SavedScreen(screen) => validate_saved_screen(screen),
-        ReplyBody::ServerSettingsWritten
+        ReplyBody::ProjectMutated { .. }
+        | ReplyBody::CreationCancelled
+        | ReplyBody::ServerSettingsWritten
         | ReplyBody::ServerBusy
         | ReplyBody::ServerStopping
         | ReplyBody::SessionEnded

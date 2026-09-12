@@ -8,7 +8,10 @@ use muxy_pty::{Pty, PtySize, SpawnRequest};
 use crate::error::ServerError;
 use crate::settings::ServerSettings;
 
+#[cfg(target_os = "macos")]
 const FALLBACK_SHELL: &str = "/bin/zsh";
+#[cfg(target_os = "linux")]
+const FALLBACK_SHELL: &str = "/bin/sh";
 const LOGIN_FLAG: &str = "-l";
 const TERMINAL_ENV: [(&str, &str); 3] = [
     ("TERM", "xterm-256color"),
@@ -47,15 +50,29 @@ pub(crate) fn spawn_shell(
 }
 
 fn resolve_shell(settings: &ServerSettings) -> PathBuf {
-    settings
-        .default_shell
-        .clone()
+    select_shell(
+        settings.default_shell.clone(),
+        env::var_os("SHELL"),
+        cfg!(target_os = "linux"),
+    )
+}
+
+fn select_shell(configured: Option<PathBuf>, inherited: Option<OsString>, linux: bool) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    configured
         .or_else(|| {
-            env::var_os("SHELL")
+            inherited
                 .filter(|shell| !shell.is_empty())
                 .map(PathBuf::from)
+                .filter(|shell| {
+                    !linux
+                        || (shell.is_absolute()
+                            && shell.metadata().is_ok_and(|metadata| {
+                                metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+                            }))
+                })
         })
-        .unwrap_or_else(|| PathBuf::from(FALLBACK_SHELL))
+        .unwrap_or_else(|| PathBuf::from(if linux { "/bin/sh" } else { FALLBACK_SHELL }))
 }
 
 fn environment() -> Vec<(OsString, OsString)> {
@@ -66,4 +83,37 @@ fn environment() -> Vec<(OsString, OsString)> {
             .map(|(key, value)| (OsString::from(key), OsString::from(value))),
     );
     env
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linux_falls_back_only_for_invalid_inherited_shells() {
+        for inherited in [
+            None,
+            Some("".into()),
+            Some("/does-not-exist".into()),
+            Some("/tmp".into()),
+            Some("sh".into()),
+        ] {
+            assert_eq!(
+                select_shell(None, inherited, true),
+                PathBuf::from("/bin/sh")
+            );
+        }
+        assert_eq!(
+            select_shell(None, Some("/bin/bash".into()), true),
+            PathBuf::from("/bin/bash")
+        );
+        assert_eq!(
+            select_shell(Some("/does-not-exist".into()), Some("/bin/sh".into()), true),
+            PathBuf::from("/does-not-exist")
+        );
+        assert_eq!(
+            select_shell(None, Some("/does-not-exist".into()), false),
+            PathBuf::from("/does-not-exist")
+        );
+    }
 }

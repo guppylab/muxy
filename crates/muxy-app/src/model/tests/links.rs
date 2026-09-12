@@ -218,7 +218,7 @@ fn prompt_shortcuts_and_command_output_menu_act_on_the_focused_terminal(cx: &mut
 }
 
 #[gpui::test]
-#[ignore = "requires a built muxy-server and isolated MUXY_DIR under /tmp/muxy-phase22-"]
+#[ignore = "requires a built muxy CLI and isolated MUXY_DIR under /tmp/muxy-phase22-"]
 fn shell_integration_live_walkthrough(cx: &mut TestAppContext) {
     run_shell_integration_live_walkthrough(cx).expect("phase 22 walkthrough");
 }

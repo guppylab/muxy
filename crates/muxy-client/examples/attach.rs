@@ -101,7 +101,9 @@ fn attach(client: &Client, session: SessionId) -> Result {
             } if received == channel => {
                 writeln!(io::stdout(), "metadata: {event:?}")?;
             }
-            ClientEvent::Frame { .. } | ClientEvent::Metadata { .. } => {}
+            ClientEvent::CatalogChanged { .. }
+            | ClientEvent::Frame { .. }
+            | ClientEvent::Metadata { .. } => {}
             ClientEvent::SessionEnded {
                 session: ended,
                 reason,
@@ -134,7 +136,8 @@ fn end(client: &Client, session: SessionId) -> Result {
             ClientEvent::ServerRestarting | ClientEvent::Disconnected => {
                 return Err("disconnected from server".into());
             }
-            ClientEvent::Frame { .. }
+            ClientEvent::CatalogChanged { .. }
+            | ClientEvent::Frame { .. }
             | ClientEvent::Metadata { .. }
             | ClientEvent::SessionEnded { .. } => {}
         }

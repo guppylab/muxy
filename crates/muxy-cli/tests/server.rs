@@ -1,3 +1,5 @@
+mod support;
+
 use std::error::Error;
 use std::fs;
 use std::io::{Read, Write};
@@ -47,8 +49,9 @@ impl Fixture {
     }
 
     fn command(&self) -> Command {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_muxy-server"));
+        let mut command = Command::new(support::binary());
         command
+            .arg("server")
             .env("MUXY_DIR", &self.directory)
             .env("SHELL", "/bin/sh")
             .stdin(Stdio::null())
@@ -180,7 +183,12 @@ impl Client {
     }
 
     fn receive(&self) -> TestResult<(ChannelId, Message)> {
-        Ok(self.incoming.recv_timeout(TIMEOUT)??)
+        loop {
+            let event = self.incoming.recv_timeout(TIMEOUT)??;
+            if !matches!(event, (_, Message::CatalogChanged { .. })) {
+                return Ok(event);
+            }
+        }
     }
 
     fn request(&mut self, body: RequestBody) -> TestResult<ReplyBody> {
@@ -199,14 +207,27 @@ impl Client {
                         seq: frame.seq,
                     },
                 )?,
-                (_, Message::Metadata(_)) => {}
+                (_, Message::Metadata(_) | Message::CatalogChanged { .. }) => {}
                 other => return Err(format!("unexpected reply: {other:?}").into()),
             }
         }
     }
 
+    fn home(&mut self) -> TestResult<muxy_protocol::ProjectId> {
+        match self.request(RequestBody::ReadCatalog {
+            after: None,
+            revision: None,
+        })? {
+            ReplyBody::Catalog(page) => Ok(page.home),
+            other => Err(format!("expected catalog, got {other:?}").into()),
+        }
+    }
+
     fn create(&mut self, directory: &Path) -> TestResult<SessionId> {
+        let project = self.home()?;
         match self.request(RequestBody::CreateSession {
+            project,
+            operation: muxy_protocol::OperationId::new(),
             directory: ServerPath(directory.as_os_str().as_encoded_bytes().to_vec()),
             size: SIZE,
         })? {
@@ -248,11 +269,13 @@ impl Client {
     }
 
     fn closed(&self) -> TestResult {
-        assert!(matches!(
-            self.incoming.recv_timeout(TIMEOUT)?,
-            Err(WireError::Closed)
-        ));
-        Ok(())
+        loop {
+            match self.incoming.recv_timeout(TIMEOUT)? {
+                Ok((_, Message::CatalogChanged { .. })) => {}
+                Err(WireError::Closed) => return Ok(()),
+                other => return Err(format!("expected closed, got {other:?}").into()),
+            }
+        }
     }
 }
 
@@ -492,7 +515,9 @@ fn custom_paths_and_settings_are_used_without_default_directory() -> TestResult 
         .arg(&log);
     fixture.start_command(command, &socket)?;
     let mut client = Client::new(&socket)?;
+    let project = client.home()?;
     assert!(matches!(client.request(RequestBody::CreateSession {
+        project, operation: muxy_protocol::OperationId::new(),
         directory: ServerPath(fixture.directory.as_os_str().as_encoded_bytes().to_vec()),
         size: SIZE,
     })?, ReplyBody::Error(error) if error.code == muxy_protocol::ErrorCode::SpawnFailed));
@@ -548,7 +573,13 @@ fn default_directory_does_not_touch_other_channels() -> TestResult {
 fn socket_length_and_invalid_arguments_fail_clearly() -> TestResult {
     let mut fixture = Fixture::new()?;
     for (arguments, expected) in [
-        (vec!["--socket".to_owned(), "a".repeat(104)], "104 bytes"),
+        (
+            vec![
+                "--socket".to_owned(),
+                "a".repeat(if cfg!(target_os = "linux") { 108 } else { 104 }),
+            ],
+            "platform limit",
+        ),
         (vec!["--socket".to_owned()], "requires a path"),
         (vec!["--stdio".to_owned()], "unknown argument: --stdio"),
         (
@@ -702,7 +733,10 @@ fn settings_persist_and_protocol_stop_gracefully_ends_sessions_before_restart() 
 #[test]
 fn build_info_has_no_server_or_storage_side_effects() -> TestResult {
     let fixture = Fixture::new()?;
-    let output = fixture.command().arg("--build-info").output()?;
+    let output = Command::new(support::binary())
+        .env("MUXY_DIR", &fixture.directory)
+        .arg("--build-info")
+        .output()?;
     assert!(output.status.success());
     let build: muxy_protocol::BuildInfo = serde_json::from_slice(&output.stdout)?;
     assert_eq!(build, muxy_protocol::BuildInfo::current());
@@ -714,7 +748,7 @@ fn build_info_has_no_server_or_storage_side_effects() -> TestResult {
 fn replacing_the_binary_and_reconnecting_preserves_the_shell_process() -> TestResult {
     let mut fixture = Fixture::new()?;
     let executable = fixture.directory.join("muxy-server");
-    fs::copy(env!("CARGO_BIN_EXE_muxy-server"), &executable)?;
+    fs::copy(support::binary(), &executable)?;
     let mut command = Command::new(&executable);
     command
         .env("MUXY_DIR", &fixture.directory)
@@ -731,7 +765,7 @@ fn replacing_the_binary_and_reconnecting_preserves_the_shell_process() -> TestRe
     let pid = fs::read(fixture.directory.join("before.pid"))?;
     drop(client);
     fs::rename(&executable, fixture.directory.join("previous-server"))?;
-    fs::copy(env!("CARGO_BIN_EXE_muxy-server"), &executable)?;
+    fs::copy(support::binary(), &executable)?;
     let mut client = Client::new(&fixture.socket())?;
     let channel = client.attach(session)?;
     client

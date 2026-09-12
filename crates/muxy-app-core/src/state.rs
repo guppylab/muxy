@@ -12,6 +12,11 @@ use crate::{
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "StoredState")]
 pub struct AppState {
+    pub(crate) pending_cancellations: Vec<muxy_protocol::OperationId>,
+    pub(crate) catalog_server: Option<muxy_protocol::ServerIdentity>,
+    pub(crate) catalog_revision: u64,
+    pub(crate) project_intents: Vec<muxy_protocol::ProjectIntent>,
+    pub(crate) starting_directories: std::collections::BTreeMap<PaneId, muxy_protocol::ServerPath>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) quick_terminal: Option<Pane>,
     pub(crate) version: u32,
@@ -23,6 +28,16 @@ pub struct AppState {
 
 #[derive(Deserialize)]
 struct StoredState {
+    #[serde(default)]
+    pending_cancellations: Vec<muxy_protocol::OperationId>,
+    #[serde(default)]
+    catalog_server: Option<muxy_protocol::ServerIdentity>,
+    #[serde(default)]
+    catalog_revision: u64,
+    #[serde(default)]
+    project_intents: Vec<muxy_protocol::ProjectIntent>,
+    #[serde(default)]
+    starting_directories: std::collections::BTreeMap<PaneId, muxy_protocol::ServerPath>,
     #[serde(default)]
     quick_terminal: Option<Pane>,
     version: u32,
@@ -36,12 +51,17 @@ impl TryFrom<StoredState> for AppState {
     type Error = AppError;
 
     fn try_from(stored: StoredState) -> Result<Self, Self::Error> {
-        if stored.version != 1 {
+        if ![1, 2].contains(&stored.version) {
             return Err(AppError::UnsupportedVersion(stored.version));
         }
         let mut state = Self {
+            pending_cancellations: stored.pending_cancellations,
+            catalog_server: stored.catalog_server,
+            catalog_revision: stored.catalog_revision,
+            project_intents: stored.project_intents,
+            starting_directories: stored.starting_directories,
             quick_terminal: stored.quick_terminal,
-            version: stored.version,
+            version: 2,
             projects: stored.projects,
             window: stored.window,
             pending_discards: stored.pending_discards,
@@ -133,6 +153,9 @@ impl AppState {
     }
 
     pub fn close_quick_terminal(&mut self) {
+        if let Some(pane) = &self.quick_terminal {
+            self.cancel_pending_creation(pane.id);
+        }
         if let Some(Pane {
             content: PaneContent::Terminal {
                 session: Some(session),
@@ -209,7 +232,7 @@ impl AppState {
         let color = PROJECT_COLORS[(self.projects.len() - 1) % PROJECT_COLORS.len()]
             .1
             .parse()?;
-        self.projects.push(Project {
+        let project = Project {
             id,
             home: false,
             name,
@@ -221,7 +244,9 @@ impl AppState {
             parent_id: None,
             tabs: Vec::new(),
             status: ProjectStatus::Available,
-        });
+        };
+        self.queue_project(muxy_protocol::ProjectMutation::Create(project.descriptor()))?;
+        self.projects.push(project);
         self.window.current_project = id;
         self.window.active_pane = None;
         Ok(id)
@@ -235,7 +260,8 @@ impl AppState {
                 "project name cannot be empty".into(),
             ));
         }
-        name.trim().clone_into(&mut project.name);
+        self.patch_project(id, muxy_protocol::ProjectPatch::Name(name.trim().into()))?;
+        name.trim().clone_into(&mut self.project_mut(id)?.name);
         Ok(())
     }
 
@@ -247,14 +273,17 @@ impl AppState {
         let project = self.project_mut(id)?;
         project.require_available()?;
         crate::project::validate_icon(icon.as_deref())?;
-        project.icon = icon;
+        self.patch_project(id, muxy_protocol::ProjectPatch::Icon(icon.clone()))?;
+        self.project_mut(id)?.icon = icon;
         Ok(())
     }
 
     pub fn set_project_color(&mut self, id: ProjectId, color: Color) -> Result<(), AppError> {
         let project = self.project_mut(id)?;
         project.require_available()?;
-        project.color = color;
+        let patch = muxy_protocol::ProjectPatch::Color(color.to_string());
+        self.patch_project(id, patch)?;
+        self.project_mut(id)?.color = color;
         Ok(())
     }
 
@@ -285,6 +314,7 @@ impl AppState {
         if self.projects[index].home {
             return Err(AppError::InvalidState("Home cannot be removed".into()));
         }
+        self.queue_project(muxy_protocol::ProjectMutation::Delete(id))?;
         let project = self.projects.remove(index);
         self.window.selected_tab.remove(&id);
         self.window
@@ -319,6 +349,20 @@ impl AppState {
     }
 
     pub fn close_tab(&mut self, project: ProjectId, tab: TabId) -> Result<(), AppError> {
+        let panes: Vec<_> = self
+            .project(project)
+            .ok_or(AppError::UnknownProject(project))?
+            .tabs
+            .iter()
+            .find(|candidate| candidate.id == tab)
+            .ok_or(AppError::UnknownTab { project, tab })?
+            .panes
+            .iter()
+            .map(|pane| pane.id)
+            .collect();
+        for pane in panes {
+            self.cancel_pending_creation(pane);
+        }
         let active = self.window.active_pane;
         let tabs = &mut self.project_mut(project)?.tabs;
         let index = tabs
@@ -388,6 +432,7 @@ impl AppState {
                 })
             })
             .ok_or(AppError::UnknownPane(pane))?;
+        self.cancel_pending_creation(pane);
         let target = self
             .project_mut(project)?
             .tabs
@@ -521,7 +566,7 @@ impl AppState {
         Ok(())
     }
 
-    fn focus_selected_tab(&mut self) {
+    pub(crate) fn focus_selected_tab(&mut self) {
         let selected = self.window.selected_tab.get(&self.window.current_project);
         let tab = self
             .current_project()
@@ -626,18 +671,21 @@ impl AppState {
                     project.id
                 )));
             }
-            if project.kind.is_some()
-                || project.parent_id.is_some()
-                || project.server_id != ServerId::local()
-            {
+            if project.server_id != ServerId::local() {
                 return Err(AppError::InvalidState(
-                    "only top-level projects on the current device are supported".into(),
+                    "only projects on the current device are supported".into(),
                 ));
             }
-            if !project.directory.is_absolute() || project.name.trim().is_empty() {
-                return Err(AppError::InvalidState(
-                    "project must have a name and an absolute directory".into(),
-                ));
+            project
+                .descriptor()
+                .validate()
+                .map_err(|_| AppError::InvalidState("invalid project metadata".into()))?;
+            if let Some(parent) = project.parent_id
+                && self.project(parent).is_none_or(|parent| {
+                    parent.home || parent.kind.is_some() || parent.parent_id.is_some()
+                })
+            {
+                return Err(AppError::InvalidState("invalid project parent".into()));
             }
             crate::project::validate_icon(project.icon.as_deref())?;
         }

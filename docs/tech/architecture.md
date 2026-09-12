@@ -8,17 +8,20 @@ boundaries. It stays above code: names are roles, not types.
 ```mermaid
 flowchart LR
     subgraph APP["App process · Rust + GPUI"]
-        UI["Windows, projects, tabs, panes"]
+        UI["Windows, project views, tabs, panes"]
         GRID["Run grid per attached session"]
         CONN["Connection per server"]
     end
-    subgraph SERVER["Server process · Rust, one per host"]
-        ACCEPT["Listener / stdio entry"]
+    subgraph SERVER["muxy server process · Rust, one per profile"]
+        ACCEPT["Local Unix listener"]
+        CATALOG["Projects and session membership"]
         CLIENT["Client connection<br/>reader · writer thread · outbox"]
         S1["Session thread 1"]
         S2["Session thread 2"]
         SN["…"]
     end
+    TUI["muxy TUI · Ratatui · independent layout"] <-->|"local socket"| ACCEPT
+    CATALOG --- CLIENT
     UI --> GRID
     GRID <--> CONN
     CONN <-->|"byte stream"| ACCEPT
@@ -30,10 +33,11 @@ flowchart LR
 
 - The app never parses terminal output. It holds, per attached session, the
   visible rows as style runs plus whatever history window it has fetched.
-- The server knows sessions and clients, nothing about projects or panes,
-  as the [server model](../product/server-model.md) requires.
-- A server reached remotely is the same binary started in stdio mode by
-  whatever exec mechanism reaches the host. The protocol is identical.
+- The server owns the durable project catalog, shared metadata, Home, and
+  explicit session membership. Clients own tabs, panes, order, and workspaces.
+- The desktop bundles the standalone `muxy` executable. Its server runtime
+  runs in a separate process; client libraries do not embed the server.
+- Both clients connect locally. Remote transport is outside this phase.
 
 ## Session thread
 
@@ -124,14 +128,23 @@ flowchart LR
 
 | Situation | Adapter | Notes |
 | --- | --- | --- |
-| Server on this device | Unix domain socket | Default. Path owned by the app's server settings. |
-| Server reached through SSH, Docker exec, kubectl exec | Server started in stdio mode by the exec mechanism | Authentication and encryption are the exec mechanism's. No protocol change. |
-| Server exposed on a port | TCP with TLS and a token | Last resort; costs twice the client CPU and latency of the socket on loopback. |
+| Server on this device | Unix domain socket | Both clients and the runtime resolve the same profile and configured socket. |
+
+Remote, stdio, and network transports are deferred. Running `muxy` after an
+independent SSH login uses that machine's local server.
 
 ## Lifecycle notes
 
+The server imports legacy project identities and session references once,
+retaining the original desktop state for recovery. Clients save their migrated
+views separately. Retried mutations and session creation are idempotent;
+disconnected desktop edits keep their existing behavior through durable intents.
+Project deletion prevents new sessions before ending and discarding owned
+content, and resumes after interruption without touching project directories.
+
 - Compatible app updates keep the server running. Installation preserves the
-  old bundle until its server instance exits. Cleanup shares installation locks,
+  old bundle until its server instance exits and bundled runtime users release
+  their leases. A running TUI does not block app installation. Cleanup shares installation locks,
   verifies the current instance, and retains uncommitted recovery bundles. The app coordinates idle server
   replacement with startup and installation locks, then reconnects. Pending
   update schedules survive app restarts; no background updater launches the app.
