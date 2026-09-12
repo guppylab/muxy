@@ -248,7 +248,7 @@ fn metadata_crosses_the_connection_and_is_included_in_the_next_attachment() -> T
                     | MetadataEvent::ScreenPrompts { .. } => {}
                 }
             }
-            ClientEvent::Frame { .. } => {}
+            ClientEvent::Frame { .. } | ClientEvent::CatalogChanged { .. } => {}
             other => return Err(format!("unexpected event: {other:?}").into()),
         }
     }

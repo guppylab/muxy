@@ -30,12 +30,12 @@ pub(super) fn process_directory(pid: i32) -> Option<ServerPath> {
 
 fn parse_stat(stat: &[u8]) -> Option<(u32, String)> {
     // comm may contain spaces, parentheses, newlines and non-UTF-8 bytes.
-    let start = stat.iter().position(|byte| *byte == b'(')? + 1;
+    let opening = stat.iter().position(|byte| *byte == b'(')? + 1;
     let end = stat.iter().rposition(|byte| *byte == b')')?;
-    let name = String::from_utf8_lossy(stat.get(start..end)?).into_owned();
+    let name = String::from_utf8_lossy(stat.get(opening..end)?).into_owned();
     let mut fields = stat
         .get(end + 1..)?
-        .split(|byte| byte.is_ascii_whitespace())
+        .split(u8::is_ascii_whitespace)
         .filter(|field| !field.is_empty());
     if matches!(fields.next()?, b"Z" | b"X" | b"x") {
         return None;

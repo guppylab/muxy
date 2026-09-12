@@ -37,7 +37,7 @@ def smoke(binary):
                         identity = command("project", "list")
                     else:
                         assert command("project", "list") == identity, "catalog changed across restart"
-                    for name in ["sessions/catalog.json", "server.log"]:
+                    for name in ["sessions/catalog.json", "server.log", "server.toml"]:
                         assert (profile / name).stat().st_mode & 0o077 == 0, f"{name} is not private"
                     json.loads(command("--build-info"))
                 finally:

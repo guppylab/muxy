@@ -1,5 +1,6 @@
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 use muxy_server_core::ServerSettings;
@@ -30,7 +31,12 @@ pub(crate) fn load(path: &Path) -> io::Result<ServerSettings> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             let defaults =
                 toml::to_string_pretty(&SettingsFile::default()).map_err(io::Error::other)?;
-            let mut file = match OpenOptions::new().write(true).create_new(true).open(path) {
+            let mut file = match OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(path)
+            {
                 Ok(file) => file,
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => return load(path),
                 Err(error) => return Err(error),
@@ -61,7 +67,6 @@ pub(crate) fn load(path: &Path) -> io::Result<ServerSettings> {
 }
 
 pub(crate) fn save(path: &Path, settings: &ServerSettings) -> io::Result<()> {
-    use std::os::unix::fs::OpenOptionsExt;
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
     let source = toml::to_string_pretty(&SettingsFile {
