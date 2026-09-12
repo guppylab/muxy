@@ -1,9 +1,9 @@
-use std::fs::{File, OpenOptions};
 use std::io::{self, IsTerminal, Write};
-use std::os::unix::fs::OpenOptionsExt;
-use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver};
+use std::thread;
+use std::time::Duration;
 
 use ratatui::crossterm::{cursor, event, execute, terminal};
 use signal_hook::consts::signal::{SIGHUP, SIGINT, SIGSTOP, SIGTERM, SIGTSTP};
@@ -18,20 +18,54 @@ pub(crate) fn require_interactive() -> io::Result<()> {
     }
 }
 
-pub(crate) fn singleton(profile: &Path) -> io::Result<File> {
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .mode(0o600)
-        .open(profile.join("tui.lock"))?;
-    file.try_lock()
-        .map_err(|_| io::Error::other("another TUI is already running for this profile"))?;
-    Ok(file)
+pub(crate) type Terminal = ratatui::Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>;
+
+pub(crate) struct Events {
+    receiver: Receiver<io::Result<event::Event>>,
+    stop: Arc<AtomicBool>,
 }
 
-pub(crate) type Terminal = ratatui::Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>;
+impl Events {
+    pub(crate) fn start() -> io::Result<Self> {
+        let (sender, receiver) = mpsc::sync_channel(128);
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopped = Arc::clone(&stop);
+        thread::Builder::new()
+            .name("muxy-tui-host-input".into())
+            .spawn(move || {
+                while !stopped.load(Ordering::Acquire) {
+                    let event = match event::poll(Duration::from_millis(16)) {
+                        Ok(false) => continue,
+                        Ok(true) => event::read(),
+                        Err(error) => Err(error),
+                    };
+                    let failed = event.is_err();
+                    if sender.send(event).is_err() || failed {
+                        break;
+                    }
+                }
+            })?;
+        Ok(Self { receiver, stop })
+    }
+
+    pub(crate) fn next(&self) -> io::Result<Option<event::Event>> {
+        match self.receiver.recv_timeout(Duration::from_millis(16)) {
+            Ok(event) => event.map(Some),
+            Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                Err(io::Error::other("Terminal input closed"))
+            }
+        }
+    }
+}
+
+impl Drop for Events {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        // Crossterm 0.29's Mio reader can spin on a revoked TTY. Never join it:
+        // the main loop still restores the terminal and exits this CLI process.
+    }
+}
 
 pub(crate) struct Host {
     pub terminal: Terminal,

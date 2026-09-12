@@ -69,13 +69,20 @@ pub(crate) struct Shared {
     pub views: BTreeMap<PaneId, View>,
     pub message: String,
     pub refresh: bool,
-    pub done: bool,
-    pub failed: bool,
+    pub exit: Option<Result>,
+    pub confirm: Option<PaneId>,
+    pub focus: Option<ChannelId>,
+    pub host_unfocused: bool,
     pending: BTreeMap<ChannelId, Pending>,
     last_channel: u32,
 }
 
 impl Shared {
+    pub(crate) fn retire(&mut self, channel: ChannelId) {
+        self.last_channel = self.last_channel.max(channel.0);
+        self.pending.remove(&channel);
+    }
+
     pub(crate) fn insert(&mut self, id: PaneId, mut view: View) -> Option<(ChannelId, u64)> {
         let mut ack = None;
         if let Some(channel) = view.channel {
@@ -96,6 +103,7 @@ impl Shared {
 
     pub(crate) fn disconnected(&mut self) {
         self.client = None;
+        self.focus = None;
         self.pending.clear();
         self.last_channel = 0;
         for view in self.views.values_mut() {
@@ -182,10 +190,13 @@ pub(super) fn reader(client: Client, shared: Arc<Mutex<Shared>>) -> Result<JoinH
         .map_err(|error| error.to_string())
 }
 
-struct Input {
-    client: Client,
-    channel: ChannelId,
-    bytes: Vec<u8>,
+enum Input {
+    Bytes {
+        client: Client,
+        channel: ChannelId,
+        bytes: Vec<u8>,
+    },
+    Flush(SyncSender<()>),
 }
 
 pub(crate) struct InputWriter {
@@ -196,20 +207,31 @@ pub(crate) struct InputWriter {
 
 impl InputWriter {
     pub(crate) fn new(shared: Arc<Mutex<Shared>>) -> Result<Self> {
-        let (sender, receiver) = mpsc::sync_channel::<Input>(64);
+        let (sender, receiver) = mpsc::sync_channel::<Input>(1024);
         let queued = Arc::new(AtomicUsize::new(0));
         let count = Arc::clone(&queued);
         let worker = thread::Builder::new()
             .name("muxy-tui-input".into())
             .spawn(move || {
                 while let Ok(input) = receiver.recv() {
-                    for chunk in input.bytes.chunks(muxy_protocol::MAX_INPUT) {
-                        if let Err(error) = input.client.send_input(input.channel, chunk) {
+                    let Input::Bytes {
+                        client,
+                        channel,
+                        bytes,
+                    } = input
+                    else {
+                        if let Input::Flush(done) = input {
+                            let _ = done.send(());
+                        }
+                        continue;
+                    };
+                    for chunk in bytes.chunks(muxy_protocol::MAX_INPUT) {
+                        if let Err(error) = client.send_input(channel, chunk) {
                             lock(&shared).message = error.to_string();
                             break;
                         }
                     }
-                    count.fetch_sub(input.bytes.len(), Ordering::AcqRel);
+                    count.fetch_sub(bytes.len(), Ordering::AcqRel);
                 }
             })
             .map_err(|error| error.to_string())?;
@@ -233,7 +255,7 @@ impl InputWriter {
             .sender
             .as_ref()
             .ok_or("Input writer stopped")?
-            .try_send(Input {
+            .try_send(Input::Bytes {
                 client,
                 channel,
                 bytes,
@@ -244,6 +266,18 @@ impl InputWriter {
             return Err("Input buffer is full; wait before sending more text".into());
         }
         Ok(())
+    }
+
+    pub(crate) fn flush(&self) -> Result {
+        let (done, finished) = mpsc::sync_channel(1);
+        self.sender
+            .as_ref()
+            .ok_or("Input writer stopped")?
+            .try_send(Input::Flush(done))
+            .map_err(|_| "Input is busy; wait before changing panes")?;
+        finished
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .map_err(|_| "Input writer did not finish pending text".into())
     }
 }
 

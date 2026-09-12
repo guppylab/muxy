@@ -267,7 +267,7 @@ fn draw_overlay(frame: &mut Frame<'_>, shared: &Shared, overlay: &Overlay) {
                 "Ctrl-B Ctrl-B sends Ctrl-B. Escape cancels.".into(),
                 "Ctrl-C, Ctrl-D, typing and paste go to the focused terminal.".into(),
                 "Detach keeps terminals running; close ends and discards one.".into(),
-                "Each client keeps its own layouts. One TUI per profile.".into(),
+                "Desktop and CLI keep separate layouts. CLI instances share one layout.".into(),
                 "Unlike tmux: no mouse, copy mode, scrollback keys, or custom bindings.".into(),
                 "Graphics are omitted; unsupported text styles degrade to basic styles.".into(),
                 "Escape / Enter closes help".into(),
@@ -350,4 +350,121 @@ fn draw_overlay(frame: &mut Frame<'_>, shared: &Shared, overlay: &Overlay) {
         })
         .collect();
     frame.render_widget(Paragraph::new(lines), inner);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use muxy_protocol::{Message, ReplyBody, Run};
+    use ratatui::backend::{Backend, CrosstermBackend};
+
+    #[test]
+    fn unsupported_and_clipped_widths_are_safe_in_actual_backend_output()
+    -> Result<(), Box<dyn std::error::Error>> {
+        if std::env::var_os("MUXY_TEST_RENDER_COLORS").is_none() {
+            let output = std::process::Command::new(std::env::current_exe()?)
+                .args(["--exact", "render::tests::unsupported_and_clipped_widths_are_safe_in_actual_backend_output", "--nocapture"])
+                .env("MUXY_TEST_RENDER_COLORS", "1").env_remove("NO_COLOR").output()?;
+            assert!(
+                output.status.success(),
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return Ok(());
+        }
+        verify_backend_output()
+    }
+
+    fn verify_backend_output() -> Result<(), Box<dyn std::error::Error>> {
+        let snapshot = Message::samples()
+            .into_iter()
+            .find_map(|message| match message {
+                Message::Reply {
+                    body: ReplyBody::Attached { snapshot, .. },
+                    ..
+                } => Some(snapshot),
+                _ => None,
+            })
+            .ok_or("snapshot")?;
+        let mut source = RunGrid::from_snapshot(&snapshot);
+        let style = TerminalStyle {
+            fg: TerminalColor::Rgb(90, 120, 180),
+            bold: true,
+            italic: true,
+            underline: Underline::Dashed,
+            ..TerminalStyle::default()
+        };
+        source.rows = vec![vec![
+            Run {
+                text: "界".into(),
+                width: 1,
+                style,
+            },
+            Run {
+                text: "界".into(),
+                width: 2,
+                style,
+            },
+            Run {
+                text: "界".into(),
+                width: 2,
+                style,
+            },
+        ]];
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 12, 2));
+        let mut previous = buffer.clone();
+        buffer.set_string(4, 0, "|RIGHT", Style::new());
+        grid(&mut buffer, Rect::new(0, 0, 4, 1), &source);
+        let mut bytes = Vec::new();
+        draw_buffer(&buffer, &mut previous, &mut bytes)?;
+        let mut host = muxy_terminal::Terminal::new(muxy_terminal::Size { cols: 12, rows: 2 }, 0)?;
+        host.feed(&bytes);
+        let rows = host.screen()?;
+        assert_eq!(
+            rows[0]
+                .runs
+                .iter()
+                .map(|run| run.text.as_str())
+                .collect::<String>()
+                .trim_end(),
+            "?界?|RIGHT"
+        );
+        let first = &rows[0].runs[0];
+        assert!(
+            first.style.bold && first.style.italic,
+            "{first:?}; {bytes:?}"
+        );
+        assert_eq!(first.style.underline, muxy_terminal::Underline::Single);
+        source.rows = vec![vec![Run {
+            text: "q".into(),
+            width: 1,
+            style,
+        }]];
+        grid(&mut buffer, Rect::new(0, 0, 4, 1), &source);
+        bytes.clear();
+        draw_buffer(&buffer, &mut previous, &mut bytes)?;
+        host.feed(&bytes);
+        assert_eq!(
+            host.screen()?[0]
+                .runs
+                .iter()
+                .map(|run| run.text.as_str())
+                .collect::<String>()
+                .trim_end(),
+            "q   |RIGHT"
+        );
+        Ok(())
+    }
+
+    fn draw_buffer(
+        buffer: &Buffer,
+        previous: &mut Buffer,
+        bytes: &mut Vec<u8>,
+    ) -> std::io::Result<()> {
+        let mut backend = CrosstermBackend::new(bytes);
+        backend.draw(previous.diff(buffer).into_iter())?;
+        previous.clone_from(buffer);
+        backend.flush()
+    }
 }

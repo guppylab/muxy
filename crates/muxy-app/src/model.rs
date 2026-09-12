@@ -1693,6 +1693,7 @@ mod tests {
     mod sidebar;
     mod splits;
     mod tab_strip;
+    mod tui;
     mod updates;
     mod window_bounds;
 

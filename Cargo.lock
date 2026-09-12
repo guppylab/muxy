@@ -3660,7 +3660,9 @@ dependencies = [
  "muxy-client",
  "muxy-core",
  "muxy-protocol",
+ "muxy-pty",
  "muxy-settings",
+ "muxy-terminal",
  "muxy-ui",
  "muxy-wire",
  "serde_json",
@@ -3685,6 +3687,7 @@ dependencies = [
 name = "muxy-cli"
 version = "2.0.0-beta-0"
 dependencies = [
+ "libc",
  "muxy-app-core",
  "muxy-client",
  "muxy-core",

@@ -1,4 +1,5 @@
 use super::*;
+mod tui;
 use muxy_client::Client;
 use muxy_protocol::Size;
 use std::process::{Child, Stdio};
@@ -79,10 +80,13 @@ fn signed_bundle_updates_preserve_shell_and_retire_only_unused_bundles() -> Resu
     installation.verify_signature(&bundle, true)?;
     let data = directory.path().join("data");
     std::fs::create_dir(&data)?;
+    std::fs::write(data.join("shell-env"), "PS1='lease-test> '\n")?;
     let socket = data.join("server.sock");
     let child = Command::new(bundle.join("Contents/MacOS/muxy"))
         .arg("server")
         .env("MUXY_DIR", &data)
+        .env("HOME", &data)
+        .env("ENV", data.join("shell-env"))
         .env("SHELL", "/bin/sh")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -96,6 +100,16 @@ fn signed_bundle_updates_preserve_shell_and_retire_only_unused_bundles() -> Resu
     let attached = client.attach(session.id, size)?;
     client.send_input(attached.channel, b"echo $$ > before.pid\n")?;
     let pid = output(&data.join("before.pid"))?;
+    let mut tui = tui::Tui::start(&bundle.join("Contents/MacOS/muxy"), &data)?;
+    tui.output("lease-test>")?;
+    tui.write(b"printf '\\nLIVE_BUNDLED_TUI\\n'\r")?;
+    tui.output("LIVE_BUNDLED_TUI")?;
+    let tui_session = client
+        .list_sessions()?
+        .into_iter()
+        .find(|other| other.id != session.id)
+        .ok_or("TUI session")?
+        .id;
     drop(client);
     let first = replace_bundle(&installation, &info, &binary, &identity)?;
     let client = connect(&socket)?;
@@ -117,12 +131,17 @@ fn signed_bundle_updates_preserve_shell_and_retire_only_unused_bundles() -> Resu
     assert!(second.join("previous.app").exists());
     client.send_input(attached.channel, b"echo $$ > second.pid\n")?;
     assert_eq!(output(&data.join("second.pid"))?, pid);
+    client.end_session(tui_session)?;
+    tui.output("Ended")?;
+    tui.suspend()?;
     client.end_session(session.id)?;
     assert!(client.stop_server_if_idle()?);
     server.0.wait()?;
     server.0 = Command::new(bundle.join("Contents/MacOS/muxy"))
         .arg("server")
         .env("MUXY_DIR", &data)
+        .env("HOME", &data)
+        .env("ENV", data.join("shell-env"))
         .env("SHELL", "/bin/sh")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -130,6 +149,14 @@ fn signed_bundle_updates_preserve_shell_and_retire_only_unused_bundles() -> Resu
         .spawn()?;
     let replacement = crate::server::reconnect_after_update(&socket, info.instance)?;
     assert_ne!(replacement.server_info().instance, info.instance);
+    installation.cleanup(&socket)?;
+    assert!(first.join("previous.app").exists());
+    assert!(!second.exists());
+    tui.resume()?;
+    tui.write(b"\x02?")?;
+    tui.output("Keyboard help")?;
+    tui.write(b"\r\x02d")?;
+    tui.exit()?;
     installation.cleanup(&socket)?;
     replacement.stop_server()?;
     server.0.wait()?;

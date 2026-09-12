@@ -1,5 +1,6 @@
 use std::ffi::OsString;
 use std::fs;
+use std::os::fd::FromRawFd;
 use std::process::Command;
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
@@ -33,7 +34,7 @@ impl Fixture {
         Ok(Self { directory })
     }
 
-    fn environment(&self) -> Vec<(OsString, OsString)> {
+    pub(super) fn environment(&self) -> Vec<(OsString, OsString)> {
         vec![
             ("MUXY_DIR".into(), self.directory.path().as_os_str().into()),
             (
@@ -56,13 +57,22 @@ impl Fixture {
     }
 
     pub(super) fn client(&self) -> Result<Client> {
-        Ok(Client::connect(&self.directory.path().join("server.sock"))?)
+        let actual = self.directory.path().join("actual.sock");
+        Ok(Client::connect(&if actual.exists() {
+            actual
+        } else {
+            self.directory.path().join("server.sock")
+        })?)
     }
 
     pub(super) fn state(&self) -> Result<Value> {
-        Ok(serde_json::from_slice(&fs::read(
-            self.directory.path().join("tui-state.json"),
-        )?)?)
+        let mut state: Value =
+            serde_json::from_slice(&fs::read(self.directory.path().join("tui-state.json"))?)?;
+        state
+            .as_object_mut()
+            .ok_or("TUI state object")?
+            .remove("catalog_revision");
+        Ok(state)
     }
 }
 
@@ -99,9 +109,13 @@ impl<'a> Tui<'a> {
                 .iter()
                 .map(|(key, value)| ((*key).into(), (*value).into())),
         );
+        env.push(("MUXY_TEST_TUI_BIN".into(), super::support::binary().into()));
         let pty = Pty::spawn(SpawnRequest {
-            program: super::support::binary(),
-            args: Vec::new(),
+            program: "/bin/sh".into(),
+            args: vec![
+                "-c".into(),
+                "stty -g > \"$MUXY_DIR/termios-$$\"; exec \"$MUXY_TEST_TUI_BIN\"".into(),
+            ],
             cwd: fixture.directory.path().to_owned(),
             env,
             size: PtySize {
@@ -179,6 +193,30 @@ impl<'a> Tui<'a> {
         })
     }
 
+    pub(super) fn cells(&mut self) -> Result<Vec<Vec<String>>> {
+        Ok(self
+            .screen
+            .screen()?
+            .into_iter()
+            .map(|row| {
+                let mut cells = Vec::new();
+                for run in row.runs {
+                    if run.text.is_ascii() && run.text.len() == usize::from(run.width) {
+                        cells.extend(run.text.chars().map(|character| character.to_string()));
+                    } else if run.width > 0 {
+                        cells.push(run.text);
+                        cells.extend(std::iter::repeat_n(
+                            String::new(),
+                            usize::from(run.width - 1),
+                        ));
+                    }
+                }
+                cells.resize(usize::from(SIZE.cols), " ".into());
+                cells
+            })
+            .collect())
+    }
+
     pub(super) fn ready(&mut self) -> Result {
         self.output("tui-test>")
     }
@@ -226,7 +264,44 @@ impl<'a> Tui<'a> {
         self.write(b"\x02d")?;
         assert_eq!(self.exit()?.code, Some(0));
         assert!(self.raw.windows(8).any(|bytes| bytes == b"\x1b[?1049l"));
+        self.assert_restored()?;
         Ok(())
+    }
+
+    #[allow(unsafe_code)]
+    pub(super) fn assert_restored(&self) -> Result {
+        // SAFETY: the owned PTY keeps its master descriptor open throughout this call.
+        let descriptor = unsafe { libc::dup(self.pty.master_fd()) };
+        if descriptor < 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        // SAFETY: dup returned a new descriptor whose ownership transfers to File.
+        let file = unsafe { fs::File::from_raw_fd(descriptor) };
+        let output = Command::new("stty").arg("-g").stdin(file).output()?;
+        assert!(output.status.success(), "{:?}", output.stderr);
+        let before = fs::read_to_string(
+            self.fixture
+                .directory
+                .path()
+                .join(format!("termios-{}", self.pty.child_pid())),
+        )?;
+        assert_eq!(String::from_utf8(output.stdout)?.trim(), before.trim());
+        Ok(())
+    }
+
+    pub(super) fn signal(&self, signal: &str) -> Result {
+        let status = Command::new("kill")
+            .args(["-s", signal, &self.pty.child_pid().to_string()])
+            .status()?;
+        assert!(status.success());
+        Ok(())
+    }
+
+    pub(super) fn stopped(&self) -> Result<bool> {
+        let output = Command::new("ps")
+            .args(["-o", "stat=", "-p", &self.pty.child_pid().to_string()])
+            .output()?;
+        Ok(String::from_utf8(output.stdout)?.contains('T'))
     }
 }
 

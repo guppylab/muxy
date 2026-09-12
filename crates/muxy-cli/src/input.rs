@@ -1,6 +1,31 @@
 use muxy_protocol::Modes;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
+#[derive(Clone, Debug)]
+pub(crate) enum Input {
+    Key(KeyEvent),
+    Paste(String),
+    Bytes(Vec<u8>),
+}
+
+impl Input {
+    pub(crate) fn length(&self) -> usize {
+        match self {
+            Self::Key(_) => 16,
+            Self::Paste(text) => text.len() + 12,
+            Self::Bytes(bytes) => bytes.len(),
+        }
+    }
+
+    pub(crate) fn encode(self, modes: Modes) -> Vec<u8> {
+        match self {
+            Self::Key(key) => encode(key, modes).unwrap_or_default(),
+            Self::Paste(text) => paste(text, modes.bracketed_paste),
+            Self::Bytes(bytes) => bytes,
+        }
+    }
+}
+
 pub(crate) fn encode(key: KeyEvent, modes: Modes) -> Option<Vec<u8>> {
     if key.kind == KeyEventKind::Release
         || key

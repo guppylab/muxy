@@ -1,12 +1,11 @@
 use std::io;
 use std::sync::atomic::Ordering;
-use std::time::Duration;
 
 use muxy_app_core::{Direction, PaneId};
-use muxy_protocol::{ChannelId, CursorShape};
+use muxy_protocol::CursorShape;
 use ratatui::crossterm::{
     cursor,
-    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
+    event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute,
 };
 
@@ -30,7 +29,6 @@ pub(crate) enum Overlay {
 pub(crate) fn run() -> Result {
     terminal::require_interactive().map_err(|error| error.to_string())?;
     let profile = muxy_core::dirs::muxy_dir().map_err(|error| error.to_string())?;
-    let _lock = terminal::singleton(&profile).map_err(|error| error.to_string())?;
     let executable = std::env::current_exe()
         .map_err(|error| error.to_string())?
         .canonicalize()
@@ -51,28 +49,29 @@ pub(crate) fn run() -> Result {
 }
 
 fn events(host: &mut Host, worker: &Worker) -> Result {
+    let events = terminal::Events::start().map_err(|error| error.to_string())?;
     let mut prefix = false;
     let mut overlay = Overlay::None;
-    let mut focus = None;
     let mut shape = None;
     loop {
-        if host.stop.load(Ordering::Acquire) {
+        if host.stop.load(Ordering::Acquire) || terminal::require_interactive().is_err() {
             return Ok(());
         }
         host.resume_if_needed().map_err(|error| error.to_string())?;
         let size = host.terminal.size().map_err(|error| error.to_string())?;
         *lock(&worker.viewport) = ratatui::layout::Rect::new(0, 0, size.width, size.height);
         {
-            let shared = lock(&worker.shared);
-            if shared.done {
-                return if shared.failed {
-                    Err(shared.message.clone())
-                } else {
-                    Ok(())
-                };
+            let mut shared = lock(&worker.shared);
+            if let Some(id) = shared.confirm.take() {
+                overlay = Overlay::Confirm(id);
+            }
+            if let Some(result) = &shared.exit {
+                return result.clone();
             }
         }
-        report_focus(worker, &mut focus);
+        if let Err(error) = report_focus(worker) {
+            lock(&worker.shared).message = error;
+        }
         let next_shape = {
             let shared = lock(&worker.shared);
             shared
@@ -94,17 +93,17 @@ fn events(host: &mut Host, worker: &Worker) -> Result {
         host.terminal
             .draw(|frame| render::draw(frame, &lock(&worker.shared), prefix, &overlay))
             .map_err(|error| error.to_string())?;
-        if !event::poll(Duration::from_millis(16)).map_err(|error| error.to_string())? {
+        let Some(event) = events.next().map_err(|error| error.to_string())? else {
             continue;
-        }
-        let result = match event::read().map_err(|error| error.to_string())? {
+        };
+        let result = match event {
             Event::Key(key) if key.kind != KeyEventKind::Release => {
                 key_event(key, worker, &mut prefix, &mut overlay)
             }
             Event::Paste(text) => {
                 prefix = false;
                 if overlay == Overlay::None {
-                    send_text(worker, |modes| input::paste(text, modes.bracketed_paste))
+                    worker.typing(input::Input::Paste(text))
                 } else {
                     Ok(())
                 }
@@ -128,7 +127,7 @@ fn key_event(key: KeyEvent, worker: &Worker, prefix: &mut bool, overlay: &mut Ov
     if *prefix {
         *prefix = false;
         if control_b {
-            return send_text(worker, |_| vec![0x02]);
+            return worker.typing(input::Input::Bytes(vec![0x02]));
         }
         let action = match key.code {
             KeyCode::Char('c') => Action::New(None),
@@ -165,27 +164,7 @@ fn key_event(key: KeyEvent, worker: &Worker, prefix: &mut bool, overlay: &mut Ov
                 *overlay = Overlay::Help;
                 return Ok(());
             }
-            KeyCode::Char('x') => {
-                let shared = lock(&worker.shared);
-                let id = shared
-                    .state
-                    .as_ref()
-                    .and_then(|state| state.tab())
-                    .map(|tab| tab.focus)
-                    .ok_or("No pane to close")?;
-                let confirm = shared.views.get(&id).is_some_and(|view| {
-                    !view.ended
-                        && view
-                            .process
-                            .as_ref()
-                            .is_none_or(|process| !process.is_shell)
-                });
-                if confirm {
-                    *overlay = Overlay::Confirm(id);
-                    return Ok(());
-                }
-                Action::Close(id)
-            }
+            KeyCode::Char('x') => Action::CheckClose,
             _ => return Ok(()),
         };
         worker.send(action)
@@ -193,9 +172,7 @@ fn key_event(key: KeyEvent, worker: &Worker, prefix: &mut bool, overlay: &mut Ov
         *prefix = true;
         Ok(())
     } else {
-        send_text(worker, |modes| {
-            input::encode(key, modes).unwrap_or_default()
-        })
+        worker.typing(input::Input::Key(key))
     }
 }
 
@@ -265,86 +242,43 @@ fn picker_key(key: KeyEvent, worker: &Worker, overlay: &mut Overlay) -> Result {
     Ok(())
 }
 
-fn send_text(worker: &Worker, bytes: impl FnOnce(muxy_protocol::Modes) -> Vec<u8>) -> Result {
-    let shared = lock(&worker.shared);
-    let Some(view) = shared
-        .state
-        .as_ref()
-        .and_then(|state| state.tab())
-        .and_then(|tab| shared.views.get(&tab.focus))
-        .filter(|view| !view.ended)
-    else {
-        return Ok(());
-    };
-    let Some((client, channel)) = shared.client.clone().zip(view.channel) else {
-        return Ok(());
-    };
-    let modes = view.grid.modes;
-    drop(shared);
-    let bytes = bytes(modes);
-    if !bytes.is_empty() {
-        worker.input.send(client, channel, bytes)?;
-    }
-    Ok(())
-}
-
 fn host_focus(worker: &Worker, gained: bool) -> Result {
-    let shared = lock(&worker.shared);
-    let Some(view) = shared
-        .state
-        .as_ref()
-        .and_then(|state| state.tab())
-        .and_then(|tab| shared.views.get(&tab.focus))
-        .filter(|view| view.input.focus_events && !view.ended)
-    else {
-        return Ok(());
-    };
-    let Some((client, channel)) = shared.client.clone().zip(view.channel) else {
-        return Ok(());
-    };
-    drop(shared);
-    worker.input.send(
-        client,
-        channel,
-        if gained {
-            b"\x1b[I".to_vec()
-        } else {
-            b"\x1b[O".to_vec()
-        },
-    )
+    lock(&worker.shared).host_unfocused = !gained;
+    report_focus(worker)
 }
 
-fn report_focus(worker: &Worker, previous: &mut Option<ChannelId>) {
-    let shared = lock(&worker.shared);
+fn report_focus(worker: &Worker) -> Result {
+    let mut shared = lock(&worker.shared);
     let next = shared
         .state
         .as_ref()
         .and_then(|state| state.tab())
         .and_then(|tab| shared.views.get(&tab.focus))
-        .filter(|view| view.input.focus_events && !view.ended)
+        .filter(|view| view.input.focus_events && !view.ended && !shared.host_unfocused)
         .and_then(|view| view.channel);
-    if *previous == next {
-        return;
+    if shared.focus == next {
+        return Ok(());
     }
     let Some(client) = shared.client.clone() else {
-        *previous = None;
-        return;
+        shared.focus = None;
+        return Ok(());
     };
-    let old = previous.and_then(|channel| {
+    let old = shared.focus.and_then(|channel| {
         shared
             .views
             .values()
             .any(|view| view.channel == Some(channel) && view.input.focus_events && !view.ended)
             .then_some(channel)
     });
+    shared.focus = next;
     drop(shared);
     if let Some(channel) = old {
-        let _ = worker
+        worker
             .input
-            .send(client.clone(), channel, b"\x1b[O".to_vec());
+            .send(client.clone(), channel, b"\x1b[O".to_vec())?;
     }
     if let Some(channel) = next {
-        let _ = worker.input.send(client, channel, b"\x1b[I".to_vec());
+        worker.input.send(client, channel, b"\x1b[I".to_vec())?;
     }
-    *previous = next;
+    Ok(())
 }

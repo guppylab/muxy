@@ -43,7 +43,7 @@ muxy-app = ["muxy-core", "muxy-app-core", "muxy-client", "muxy-settings", "muxy-
 muxy-ui = ["muxy-core"]
 
 [workspace.metadata.architecture.allowed-dev-dependencies]
-muxy-app = ["muxy-wire"]
+muxy-app = ["muxy-wire", "muxy-pty", "muxy-terminal"]
 muxy-client = ["muxy-server-core"]
 muxy-cli = ["muxy-transport", "muxy-wire", "muxy-pty", "muxy-terminal"]
 

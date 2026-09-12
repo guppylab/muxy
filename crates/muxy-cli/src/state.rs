@@ -17,6 +17,8 @@ const MAX_STATE_BYTES: u64 = 4 * 1024 * 1024;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct State {
     version: u8,
+    #[serde(default)]
+    pub catalog_revision: u64,
     pub server: ServerIdentity,
     pub active: ProjectId,
     pub projects: BTreeMap<ProjectId, Project>,
@@ -55,6 +57,7 @@ impl State {
     pub(crate) fn new(catalog: &CatalogPage) -> Self {
         Self {
             version: 1,
+            catalog_revision: 0,
             server: catalog.server,
             active: catalog.home,
             projects: BTreeMap::new(),
@@ -66,6 +69,10 @@ impl State {
         if self.server != catalog.server {
             return Err("This TUI layout belongs to a different server. Move tui-state.json aside to start a new layout.".into());
         }
+        if catalog.revision < self.catalog_revision {
+            return Ok(());
+        }
+        self.catalog_revision = catalog.revision;
         self.projects
             .retain(|id, _| catalog.projects.iter().any(|project| project.id == *id));
         if !catalog
@@ -100,6 +107,44 @@ impl State {
     pub(crate) fn tab_mut(&mut self) -> Option<&mut Tab> {
         let project = self.projects.get_mut(&self.active)?;
         project.tabs.get_mut(project.active)
+    }
+
+    pub(crate) fn selection(&self) -> (ProjectId, Option<PaneId>) {
+        (self.active, self.tab().map(|tab| tab.focus))
+    }
+
+    pub(crate) fn tab_selection(&self, index: usize) -> Option<(ProjectId, Option<PaneId>)> {
+        Some((
+            self.active,
+            Some(self.projects.get(&self.active)?.tabs.get(index)?.focus),
+        ))
+    }
+
+    pub(crate) fn cycle_selection(&self, forward: bool) -> Option<(ProjectId, Option<PaneId>)> {
+        let project = self.projects.get(&self.active)?;
+        let count = project.tabs.len();
+        if count == 0 {
+            return None;
+        }
+        self.tab_selection((project.active + if forward { 1 } else { count - 1 }) % count)
+    }
+
+    pub(crate) fn select(&mut self, (id, pane): (ProjectId, Option<PaneId>)) -> Result {
+        let project = self
+            .projects
+            .get_mut(&id)
+            .ok_or("Project is no longer available")?;
+        if let Some(pane) = pane {
+            let index = project
+                .tabs
+                .iter()
+                .position(|tab| tab.panes.contains_key(&pane))
+                .ok_or("Pane was closed in another instance")?;
+            project.active = index;
+            project.tabs[index].focus = pane;
+        }
+        self.active = id;
+        Ok(())
     }
 
     pub(crate) fn pane_mut(&mut self, id: PaneId) -> Option<&mut Pane> {
@@ -231,6 +276,7 @@ impl State {
         }
         let mut ids = BTreeSet::new();
         let mut sessions = BTreeSet::new();
+        let mut creations = BTreeSet::new();
         for project in self.projects.values() {
             if project.tabs.len() > MAX_TABS || project.active >= project.tabs.len().max(1) {
                 return Err("Invalid TUI tabs".into());
@@ -250,6 +296,10 @@ impl State {
                 for pane in tab.panes.values() {
                     if pane.session.is_some() && pane.creation.is_some()
                         || pane.session.is_some_and(|id| !sessions.insert(id))
+                        || pane.creation.is_some_and(|id| !creations.insert(id))
+                        || (pane.session.is_none()
+                            && pane.creation.is_none()
+                            && pane.error.is_none())
                         || pane.error.as_ref().is_some_and(|error| error.len() > 4096)
                     {
                         return Err("Invalid TUI session reference".into());
@@ -261,6 +311,15 @@ impl State {
         }
         if ids.len() > MAX_PANES {
             return Err("TUI pane limit exceeded".into());
+        }
+        for (index, discard) in self.discards.iter().enumerate() {
+            let visible = match discard {
+                Discard::Session(id) => sessions.contains(id),
+                Discard::Creation(id) => creations.contains(id),
+            };
+            if visible || self.discards[..index].contains(discard) {
+                return Err("Invalid pending TUI closure".into());
+            }
         }
         Ok(())
     }
@@ -308,6 +367,7 @@ pub(crate) struct Store {
     path: PathBuf,
     pub state: State,
     blocked: bool,
+    saved: bool,
 }
 
 impl Store {
@@ -320,40 +380,46 @@ impl Store {
     }
     pub(crate) fn load(profile: &Path, catalog: &CatalogPage) -> Result<Self> {
         let path = profile.join("tui-state.json");
-        let state = match File::open(&path) {
-            Ok(file) => {
-                if !file
-                    .metadata()
-                    .map_err(|error| error.to_string())?
-                    .is_file()
-                {
-                    return Err("TUI state must be a regular file".into());
-                }
-                let mut bytes = Vec::new();
-                file.take(MAX_STATE_BYTES + 1)
-                    .read_to_end(&mut bytes)
-                    .map_err(|error| error.to_string())?;
-                if bytes.len() as u64 > MAX_STATE_BYTES {
-                    return Err("TUI state file is too large".into());
-                }
-                serde_json::from_slice::<State>(&bytes)
-                    .map_err(|error| format!("Cannot read tui-state.json: {error}"))?
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => State::new(catalog),
-            Err(error) => return Err(error.to_string()),
-        };
-        state.validate()?;
+        let _guard = state_lock(&path)?;
+        let saved = read_state(&path)?;
         Ok(Self {
             path,
-            state,
+            saved: saved.is_some(),
+            state: saved.unwrap_or_else(|| State::new(catalog)),
             blocked: false,
         })
+    }
+
+    fn read_latest(&mut self) -> Result {
+        let latest = match read_state(&self.path) {
+            Ok(Some(state)) => state,
+            Ok(None) if !self.saved => return Ok(()),
+            Ok(None) => {
+                self.blocked = true;
+                return Err(
+                    "The shared TUI state disappeared; restore it before continuing".into(),
+                );
+            }
+            Err(error) => {
+                self.blocked = true;
+                return Err(error);
+            }
+        };
+        if latest.server != self.state.server {
+            self.blocked = true;
+            return Err("The shared TUI state belongs to another server".into());
+        }
+        self.state = latest;
+        self.saved = true;
+        Ok(())
     }
 
     pub(crate) fn change<T>(&mut self, change: impl FnOnce(&mut State) -> Result<T>) -> Result<T> {
         if self.blocked {
             return Err("TUI state could not be restored after a failed save. Detach and repair its storage before continuing.".into());
         }
+        let _guard = state_lock(&self.path)?;
+        self.read_latest()?;
         let mut next = self.state.clone();
         let result = change(&mut next)?;
         next.validate()?;
@@ -367,9 +433,57 @@ impl Store {
                 return Err(format!("Could not save TUI state: {error}"));
             }
             self.state = next;
+            self.saved = true;
         }
         Ok(result)
     }
+}
+
+fn state_lock(path: &Path) -> Result<File> {
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(path.with_file_name("tui.lock"))
+        .map_err(|error| error.to_string())?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(file),
+            Err(error) if std::time::Instant::now() >= deadline => {
+                return Err(format!("Shared TUI state is busy: {error}"));
+            }
+            Err(_) => std::thread::sleep(std::time::Duration::from_millis(5)),
+        }
+    }
+}
+
+fn read_state(path: &Path) -> Result<Option<State>> {
+    let file = match File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    };
+    if !file
+        .metadata()
+        .map_err(|error| error.to_string())?
+        .is_file()
+    {
+        return Err("TUI state must be a regular file".into());
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_STATE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    if bytes.len() as u64 > MAX_STATE_BYTES {
+        return Err("TUI state file is too large".into());
+    }
+    let state: State = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("Cannot read tui-state.json: {error}"))?;
+    state.validate()?;
+    Ok(Some(state))
 }
 
 fn persist(path: &Path, state: &State) -> io::Result<()> {
@@ -510,7 +624,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid_state_is_reported_without_overwriting_it_and_singleton_is_exclusive() -> Result {
+    fn invalid_state_is_reported_without_overwriting_it() -> Result {
         let directory = tempfile::tempdir().map_err(|error| error.to_string())?;
         let path = directory.path().join("tui-state.json");
         fs::write(&path, b"not json").map_err(|error| error.to_string())?;
@@ -519,11 +633,47 @@ mod tests {
             fs::read(&path).map_err(|error| error.to_string())?,
             b"not json"
         );
-        let first =
-            crate::terminal::singleton(directory.path()).map_err(|error| error.to_string())?;
-        assert!(crate::terminal::singleton(directory.path()).is_err());
-        drop(first);
-        crate::terminal::singleton(directory.path()).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn stale_instances_merge_changes_and_retries_do_not_remove_another_close_intent() -> Result {
+        let directory = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let catalog = catalog();
+        let mut first = Store::load(directory.path(), &catalog)?;
+        let mut second = Store::load(directory.path(), &catalog)?;
+        first.change(|state| state.reconcile(&catalog))?;
+        second.change(|state| state.reconcile(&catalog))?;
+        assert_eq!(first.state, second.state);
+        let original = first.state.selection();
+        let added =
+            first.change(|state| state.new_pane(None, ServerPath(b"/tmp".to_vec()), None))?;
+        let split = second.change(|state| {
+            state.select(original)?;
+            state.new_pane(Some(Direction::Right), ServerPath(b"/tmp".to_vec()), None)
+        })?;
+        let mut saved = Store::load(directory.path(), &catalog)?;
+        assert_eq!(saved.state.projects[&catalog.home].tabs.len(), 2);
+        assert_eq!(saved.state.tab().ok_or("tab")?.panes.len(), 2);
+        first.change(|state| {
+            state.select((catalog.home, Some(added)))?;
+            state.close(added)
+        })?;
+        second.change(|state| {
+            state.select((catalog.home, Some(split)))?;
+            state.close(split)
+        })?;
+        saved.change(|_| Ok(()))?;
+        let first_discard = saved.state.discards[0];
+        let second_discard = saved.state.discards[1];
+        for store in [&mut first, &mut second] {
+            store.change(|state| {
+                state.discards.retain(|pending| *pending != first_discard);
+                Ok(())
+            })?;
+        }
+        saved.change(|_| Ok(()))?;
+        assert_eq!(saved.state.discards, vec![second_discard]);
         Ok(())
     }
 }
