@@ -130,6 +130,7 @@ cp "$VERIFY_DOWNLOADS/${URL##*/}" "$OUTPUT"
                 os.environ['PATH'] = str(ROOT / 'scripts/zig') + os.pathsep + os.environ['PATH']
                 run('cargo', 'clean', '-p', 'libghostty-vt-sys', cwd=ROOT)
             test_env = {**os.environ, 'MUXY_TEST_RUNTIME': str(destination / 'muxy'),
+                        'MUXY_TEST_SERVER_PROFILE': 'beta',
                         'MUXY_TEST_SERVER': str(destination / 'muxy-server')}
             run('cargo', 'test', '--locked', '-p', 'muxy-cli', '--test', 'commands', '--test', 'tui', env=test_env, cwd=ROOT)
             run('cargo', 'test', '--locked', '-p', 'muxy-server', '--test', 'lifecycle', env=test_env, cwd=ROOT)

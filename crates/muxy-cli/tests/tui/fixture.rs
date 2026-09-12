@@ -1,6 +1,5 @@
 use std::ffi::OsString;
 use std::fs;
-use std::os::fd::FromRawFd;
 use std::process::Command;
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
@@ -120,7 +119,7 @@ impl<'a> Tui<'a> {
             program: "/bin/sh".into(),
             args: vec![
                 "-c".into(),
-                "stty -g > \"$MUXY_DIR/termios-$$\"; exec \"$MUXY_TEST_TUI_BIN\"".into(),
+                "stty -g > \"$MUXY_DIR/termios-$$\"; tty > \"$MUXY_DIR/tty-$$\"; exec \"$MUXY_TEST_TUI_BIN\"".into(),
             ],
             cwd: fixture.directory.path().to_owned(),
             env,
@@ -274,15 +273,14 @@ impl<'a> Tui<'a> {
         Ok(())
     }
 
-    #[allow(unsafe_code)]
     pub(super) fn assert_restored(&self) -> Result {
-        // SAFETY: the owned PTY keeps its master descriptor open throughout this call.
-        let descriptor = unsafe { libc::dup(self.pty.master_fd()) };
-        if descriptor < 0 {
-            return Err(std::io::Error::last_os_error().into());
-        }
-        // SAFETY: dup returned a new descriptor whose ownership transfers to File.
-        let file = unsafe { fs::File::from_raw_fd(descriptor) };
+        let tty = fs::read_to_string(
+            self.fixture
+                .directory
+                .path()
+                .join(format!("tty-{}", self.pty.child_pid())),
+        )?;
+        let file = fs::File::open(tty.trim())?;
         let output = Command::new("stty").arg("-g").stdin(file).output()?;
         assert!(output.status.success(), "{:?}", output.stderr);
         let before = fs::read_to_string(

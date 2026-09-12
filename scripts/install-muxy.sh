@@ -58,6 +58,7 @@ TEMP=$(mktemp -d "${TMPDIR:-/tmp}/muxy-install.XXXXXX")
 LOCK=
 STAGE=
 GENERATION=
+PREVIOUS=
 COMMITTED=false
 CHANGED=
 cleanup() {
@@ -73,6 +74,14 @@ cleanup() {
                 rm -f "$DEST/$BINARY"
             fi
         done
+        if [ -n "$PREVIOUS" ] && [ -L "$MANAGED/current" ] &&
+            [ "$(readlink "$MANAGED/current")" = "${PREVIOUS##*/}" ]; then
+            if [ -L "$STAGE/old-current" ]; then
+                mv -f "$MOVE_FLAG" "$STAGE/old-current" "$MANAGED/current" || true
+            else
+                rm -f "$MANAGED/current"
+            fi
+        fi
         [ -z "$GENERATION" ] || rm -rf "$GENERATION"
     fi
     [ -z "$STAGE" ] || rm -rf "$STAGE"
@@ -155,6 +164,20 @@ fi
 GENERATION=$(mktemp -d "$MANAGED/pair-$VERSION.XXXXXX")
 mv "$STAGE/pair/muxy" "$STAGE/pair/muxy-server" "$STAGE/pair/LICENSE" "$GENERATION/"
 ln -s "${GENERATION##*/}" "$STAGE/current"
+
+# Preserve a usable previous pair while converting ordinary files or bundle
+# links. Public commands must never point at a missing or unrelated generation.
+if [ -f "$DEST/muxy" ] && [ -f "$DEST/muxy-server" ] &&
+    { [ ! -L "$DEST/muxy" ] || [ "$(readlink "$DEST/muxy")" != '.muxy/current/muxy' ] ||
+      [ ! -L "$DEST/muxy-server" ] || [ "$(readlink "$DEST/muxy-server")" != '.muxy/current/muxy-server' ]; }; then
+    PREVIOUS=$(mktemp -d "$MANAGED/pair-previous.XXXXXX")
+    cp -pL "$DEST/muxy" "$DEST/muxy-server" "$PREVIOUS/"
+    if [ -L "$MANAGED/current" ]; then
+        cp -P "$MANAGED/current" "$STAGE/old-current"
+    fi
+    ln -s "${PREVIOUS##*/}" "$STAGE/previous"
+    mv -f "$MOVE_FLAG" "$STAGE/previous" "$MANAGED/current"
+fi
 
 # Existing managed commands already use this shared pointer. For the first
 # installation, prepare both public links with rollback before activating it.

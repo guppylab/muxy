@@ -224,6 +224,7 @@ impl Core {
             .change(|state| state.reconcile(&catalog))?;
         self.publish(&catalog);
         lock(&self.shared).client = Some(client.clone());
+        lock(&self.shared).refresh = true;
         self.message("");
         while !self.stop.load(Ordering::Acquire) && client.is_connected() {
             let refresh = {
@@ -236,6 +237,10 @@ impl Core {
                         self.store_mut()?.change(|state| state.reconcile(&next))?;
                         catalog = next;
                         self.publish(&catalog);
+                        let picker = lock(&self.shared).session_picker;
+                        if picker && let Err(error) = self.list_sessions(client, &catalog) {
+                            self.message(&error);
+                        }
                     }
                     Err(error) => self.message(&error.to_string()),
                 }

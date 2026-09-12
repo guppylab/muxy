@@ -110,13 +110,24 @@ fn server_restart_restores_ended_content_without_creating_another_shell() -> Res
     tui.write(b"printf '\\nBEFORE_SERVER_RESTART\\n'\r")?;
     tui.output("BEFORE_SERVER_RESTART")?;
     let saved = fixture.state()?;
-    fixture.client()?.stop_server()?;
+    let before = fixture.client()?;
+    let instance = before.server_info().instance;
+    before.stop_server()?;
     tui.output("Ended")?;
     tui.wait(|_| {
-        Ok(fixture.client().is_ok_and(|client| {
-            client
-                .list_sessions()
-                .is_ok_and(|sessions| sessions.is_empty())
+        // A draining listener can still accept a connection without answering.
+        // Keep each probe within the PTY wait budget and require a new server.
+        let timeout = std::time::Duration::from_millis(200);
+        Ok(muxy_client::Client::connect_with_timeout(
+            &fixture.directory.path().join("server.sock"),
+            timeout,
+        )
+        .is_ok_and(|client| {
+            client.server_info().instance != instance
+                && client
+                    .with_timeout(timeout)
+                    .list_sessions()
+                    .is_ok_and(|sessions| sessions.is_empty())
         }))
     })?;
     assert_eq!(fixture.state()?, saved);

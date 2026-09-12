@@ -440,3 +440,36 @@ fn handled_signals_and_suspend_restore_the_original_terminal_modes() -> Result {
     tui.detach()?;
     Ok(())
 }
+
+#[test]
+fn open_session_picker_refreshes_other_clients_creation_end_and_discard() -> Result {
+    let fixture = Fixture::new()?;
+    let mut tui = Tui::start(&fixture, &[])?;
+    tui.ready()?;
+    let client = fixture.client()?;
+    tui.write(b"\x02w")?;
+    tui.output("Existing terminals")?;
+    let session = client.create_session(
+        &fixture.directory.path().join("home"),
+        muxy_protocol::Size { cols: 80, rows: 24 },
+    )?;
+    tui.output(&format!("{}  Live", session.id.get()))?;
+    client.end_session(session.id)?;
+    tui.output(&format!("{}  Ended", session.id.get()))?;
+    client.discard_session(session.id)?;
+    tui.wait(|tui| {
+        Ok(!tui
+            .text()?
+            .iter()
+            .any(|row| row.contains(&format!("{}  ", session.id.get()))))
+    })?;
+    tui.write(b"\x1b")?;
+    tui.wait(|tui| {
+        Ok(!tui
+            .text()?
+            .iter()
+            .any(|row| row.contains("Existing terminals")))
+    })?;
+    tui.detach()?;
+    Ok(())
+}

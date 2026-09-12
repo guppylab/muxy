@@ -530,8 +530,14 @@ fn default_directory_does_not_touch_other_channels() -> TestResult {
     } else {
         ("Muxy Dev", "Muxy Beta")
     };
-    let (current, other) = if cfg!(debug_assertions) || env!("CARGO_PKG_VERSION") == "2.0.0-beta-0"
-    {
+    // Packaged-runtime verification runs a release server from a debug test harness.
+    let development_build = match std::env::var("MUXY_TEST_SERVER_PROFILE").as_deref() {
+        Ok("beta") => false,
+        Ok("dev") => true,
+        Ok(_) => return Err("invalid MUXY_TEST_SERVER_PROFILE".into()),
+        Err(_) => cfg!(debug_assertions) || env!("CARGO_PKG_VERSION") == "2.0.0-beta-0",
+    };
+    let (current, other) = if development_build {
         (development, beta)
     } else {
         (beta, development)

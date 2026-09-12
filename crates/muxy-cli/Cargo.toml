@@ -32,4 +32,3 @@ muxy-wire = { path = "../muxy-wire" }
 muxy-pty = { path = "../muxy-pty" }
 muxy-terminal = { path = "../muxy-terminal" }
 tempfile = "3"
-libc = "0.2"

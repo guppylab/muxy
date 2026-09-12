@@ -32,7 +32,12 @@ elif name == 'curl':
 elif name == 'mv':
     if os.environ.get('ACTIVATE_FAIL') and args[-1].endswith('/.muxy/current'): sys.exit(1)
     args = [('-h' if sys.platform == 'darwin' else '-T') if x in ('-h', '-T') else x for x in args]
-    sys.exit(subprocess.call([os.environ['REAL_MV'], *args]))
+    status = subprocess.call([os.environ['REAL_MV'], *args])
+    if not status and os.environ.get('CHECK_TRANSITION') and args[-1].endswith('/muxy-server'):
+        parent = Path(args[-1]).parent
+        with open(os.environ['CHECK_TRANSITION'], 'w') as output:
+            json.dump({name: (parent / name).read_text() for name in ('muxy', 'muxy-server')}, output)
+    sys.exit(status)
 '''
 
 
@@ -141,6 +146,23 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(self.install('--replace').returncode, 0)
         self.assert_pair()
         self.assertTrue(all(p.read_bytes() == b'original' for p in bundle.iterdir()))
+
+    def test_unmanaged_pair_stays_usable_during_public_link_conversion(self):
+        self.dest.mkdir()
+        for name in ('muxy', 'muxy-server'):
+            (self.dest / name).write_text('old-' + name)
+        managed = self.dest / '.muxy'
+        stale = managed / 'stale'
+        stale.mkdir(parents=True)
+        for name in ('muxy', 'muxy-server'):
+            (stale / name).write_text('unrelated')
+        (managed / 'current').symlink_to('stale')
+        transition = self.root / 'transition.json'
+        self.env['CHECK_TRANSITION'] = str(transition)
+        result = self.install('--replace')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(transition.read_text()), {'muxy': 'old-muxy', 'muxy-server': 'old-muxy-server'})
+        self.assert_pair()
 
     def test_identical_regular_files_are_a_noop(self):
         self.dest.mkdir()

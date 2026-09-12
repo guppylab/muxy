@@ -42,6 +42,9 @@ export MACOSX_DEPLOYMENT_TARGET=14.0
 export LIBGHOSTTY_VT_SYS_OPTIMIZE=ReleaseFast
 export CARGO_TARGET_DIR="$ROOT/target"
 export CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=packed
+MUXY_ZIG="$(command -v zig)"
+export MUXY_ZIG
+export PATH="$ROOT/scripts/zig:$PATH"
 OUTPUT_DIR="$CARGO_TARGET_DIR/beta/$VERSION/$ARCH"
 if [[ -e "$OUTPUT_DIR" ]]; then
     echo "Error: output already exists: $OUTPUT_DIR" >&2
@@ -50,6 +53,7 @@ fi
 
 cd "$ROOT"
 echo "==> Building app, CLI and server for $TARGET"
+cargo clean -p libghostty-vt-sys
 cargo build --locked --release --target "$TARGET" -p muxy-app -p muxy-cli -p muxy-server
 BIN_DIR="$CARGO_TARGET_DIR/$TARGET/release"
 

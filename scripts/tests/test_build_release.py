@@ -51,7 +51,7 @@ class BuildReleaseTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         for relative in (
-            "scripts/build-release.sh", "scripts/beta_release.py", "scripts/beta_compatibility.py",
+            "scripts/build-release.sh", "scripts/beta_release.py", "scripts/beta_compatibility.py", "scripts/zig/zig",
             "crates/muxy-protocol/src/build.rs", "LICENSE",
             "packaging/macos/AppIcon.png", "packaging/macos/AppIconBeta.png",
         ):
@@ -68,7 +68,7 @@ class BuildReleaseTests(unittest.TestCase):
         tools.mkdir()
         for name in (
             "uname", "cargo", "lipo", "otool", "ditto", "strip", "plutil",
-            "sips", "iconutil", "codesign", "hdiutil",
+            "sips", "iconutil", "codesign", "hdiutil", "zig",
         ):
             tool = tools / name
             tool.write_text(f"#!{sys.executable}\n" + FAKE_TOOL)
@@ -126,7 +126,7 @@ class BuildReleaseTests(unittest.TestCase):
         canonical, alias = binaries / "muxy", binaries / "muxy-server"
         self.assertEqual(canonical.read_bytes(), alias.read_bytes())
         self.assertNotEqual(canonical.stat().st_ino, alias.stat().st_ino)
-        build = self.calls("cargo")[0]
+        build = next(call for call in self.calls("cargo") if call[1] == "build")
         self.assertIn("muxy-cli", build)
         self.assertIn("muxy-server", build)
         signing = [call[-1] for call in self.calls("codesign") if "--sign" in call]

@@ -66,6 +66,7 @@ pub(crate) struct Shared {
     pub state: Option<State>,
     pub catalog: Option<CatalogPage>,
     pub sessions: Vec<ProjectSession>,
+    pub session_picker: bool,
     pub views: BTreeMap<PaneId, View>,
     pub message: String,
     pub refresh: bool,
@@ -103,6 +104,7 @@ impl Shared {
 
     pub(crate) fn disconnected(&mut self) {
         self.client = None;
+        self.sessions.clear();
         self.focus = None;
         self.pending.clear();
         self.last_channel = 0;

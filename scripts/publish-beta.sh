@@ -44,7 +44,7 @@ for ARCH in arm64 x86_64; do
     ASSETS+=("Muxy-${VERSION}-${ARCH}.dmg" "muxy-${VERSION}-macos-${ARCH}.zip" "muxy-${VERSION}-linux-${ARCH}.tar.gz")
 done
 for ASSET in "${ASSETS[@]}"; do
-    if [[ ! -s "$ASSET" || -L "$ASSET" ]]; then
+    if [[ ! -f "$ASSET" || ! -s "$ASSET" || -L "$ASSET" ]]; then
         echo "Error: missing regular release asset: $ASSET" >&2
         exit 1
     fi

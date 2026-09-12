@@ -73,7 +73,8 @@ jobs:
           version: 0.15.2
       - uses: Swatinem/rust-cache@v2
         with:
-          key: beta-${{ matrix.target }}
+          cache-on-failure: true
+          key: beta-${{ matrix.target }}-baseline
       - name: Stamp the build version without committing a bump
         run: python3 scripts/beta_release.py stamp "$VERSION"
       - name: Import signing certificate
@@ -185,6 +186,7 @@ jobs:
           version: 0.15.2
       - uses: Swatinem/rust-cache@v2
         with:
+          cache-on-failure: true
           key: beta-${{ matrix.target }}-glibc-2.35-baseline
       - run: python3 scripts/beta_release.py stamp "$VERSION"
       - name: Build and audit the native glibc 2.35 pair
@@ -237,6 +239,7 @@ jobs:
           version: 0.15.2
       - uses: Swatinem/rust-cache@v2
         with:
+          cache-on-failure: true
           key: beta-newer-${{ matrix.arch }}-baseline
       - run: python3 scripts/beta_release.py stamp "$VERSION"
       - uses: actions/download-artifact@v4

@@ -43,15 +43,14 @@ fn divide(layout: &Layout, area: Rect, regions: &mut Vec<(PaneId, Rect)>) {
         } => {
             let mut a = area;
             let mut b = area;
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             match axis {
                 Axis::Horizontal => {
-                    a.width = (f32::from(area.width) * ratio).round() as u16;
+                    a.width = split_extent(area.width, *ratio);
                     b.x += a.width;
                     b.width -= a.width;
                 }
                 Axis::Vertical => {
-                    a.height = (f32::from(area.height) * ratio).round() as u16;
+                    a.height = split_extent(area.height, *ratio);
                     b.y += a.height;
                     b.height -= a.height;
                 }
@@ -60,6 +59,21 @@ fn divide(layout: &Layout, area: Rect, regions: &mut Vec<(PaneId, Rect)>) {
             divide(second, b, regions);
         }
     }
+}
+
+fn split_extent(length: u16, ratio: f32) -> u16 {
+    let target = f32::from(length) * ratio;
+    let (mut lower, mut upper) = (0, length);
+    // Find the nearest cell boundary within the original integer extent.
+    while lower < upper {
+        let middle = lower + (upper - lower) / 2;
+        if f32::from(middle) + 0.5 <= target {
+            lower = middle + 1;
+        } else {
+            upper = middle;
+        }
+    }
+    lower
 }
 
 pub(crate) fn terminal_size(area: Rect) -> Option<Size> {
