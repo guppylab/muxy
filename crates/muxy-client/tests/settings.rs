@@ -73,9 +73,32 @@ fn settings_round_trip_validate_persist_and_reach_new_shells_only() -> TestResul
             (new.id, "shell-path=/bin/bash"),
         ] {
             let mut attachment = client.attach(session, size)?;
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while attachment
+                .grid
+                .rows
+                .iter()
+                .flatten()
+                .all(|run| run.text.trim().is_empty())
+            {
+                if let ClientEvent::Frame { channel, frame } = events
+                    .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                    .map_err(|error| {
+                        format!(
+                            "waiting for {expected} startup: {error}; rows={:?}",
+                            attachment.grid.rows
+                        )
+                    })?
+                {
+                    client.ack(channel, frame.seq)?;
+                    if channel == attachment.channel {
+                        attachment.grid.apply(&frame);
+                    }
+                }
+            }
             client.send_input(
                 attachment.channel,
-                b"printf 'shell-path=%s\\n' \"$SHELL\"\n",
+                b"printf '\\nshell-path=%s\\n' \"$SHELL\"\n",
             )?;
             let deadline = Instant::now() + Duration::from_secs(5);
             loop {
@@ -88,8 +111,14 @@ fn settings_round_trip_validate_persist_and_reach_new_shells_only() -> TestResul
                 {
                     break;
                 }
-                if let ClientEvent::Frame { channel, frame } =
-                    events.recv_timeout(deadline.saturating_duration_since(Instant::now()))?
+                if let ClientEvent::Frame { channel, frame } = events
+                    .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                    .map_err(|error| {
+                        format!(
+                            "waiting for {expected} output: {error}; rows={:?}",
+                            attachment.grid.rows
+                        )
+                    })?
                 {
                     client.ack(channel, frame.seq)?;
                     if channel == attachment.channel {

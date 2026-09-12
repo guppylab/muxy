@@ -183,6 +183,15 @@ impl<'a> Tui<'a> {
         self.output("tui-test>")
     }
 
+    pub(super) fn pick(&mut self, picker: u8, index: usize, expected: &str) -> Result {
+        self.write(&[0x02, picker])?;
+        self.output(expected)?;
+        for _ in 0..index {
+            self.write(b"\x1b[B")?;
+        }
+        self.write(b"\r")
+    }
+
     pub(super) fn tabs(&self) -> Result<Vec<Value>> {
         let state = self.fixture.state()?;
         let active = state["active"].as_str().ok_or("active project")?;

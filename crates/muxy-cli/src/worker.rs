@@ -1,7 +1,7 @@
 mod io;
 pub(crate) use io::{InputWriter, Shared, View, lock};
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::os::unix::ffi::OsStringExt;
 use std::path::PathBuf;
@@ -419,6 +419,17 @@ impl Core {
     }
 
     fn list_sessions(&self, client: &Client, catalog: &CatalogPage) -> Result {
+        let owned: BTreeSet<_> = self
+            .store
+            .as_ref()
+            .ok_or("TUI state is not ready")?
+            .state
+            .projects
+            .values()
+            .flat_map(|project| &project.tabs)
+            .flat_map(|tab| tab.panes.values())
+            .filter_map(|pane| pane.session)
+            .collect();
         let project = self
             .store
             .as_ref()
@@ -433,11 +444,10 @@ impl Core {
                 .project_sessions(project, after, revision)
                 .map_err(|error| error.to_string())?;
             revision = Some(page.revision);
-            sessions.extend(
-                page.sessions
-                    .into_iter()
-                    .filter(|session| Some(session.info.id) != hosting_session(catalog.server)),
-            );
+            sessions.extend(page.sessions.into_iter().filter(|session| {
+                Some(session.info.id) != hosting_session(catalog.server)
+                    && !owned.contains(&session.info.id)
+            }));
             if sessions.len() > 4096 {
                 return Err("Too many terminals for the picker".into());
             }

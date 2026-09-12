@@ -144,3 +144,83 @@ fn shell_identity_is_replaced_and_the_hosting_session_cannot_attach_to_itself() 
     assert_eq!(client.list_sessions()?.len(), 2);
     Ok(())
 }
+
+#[test]
+fn projects_existing_terminals_and_other_client_changes_share_sessions_without_sharing_layouts()
+-> Result {
+    use muxy_protocol::{
+        OperationId, ProjectDescriptor, ProjectId, ProjectIntent, ProjectMutation, ProjectPatch,
+        ServerPath, Size,
+    };
+    use std::os::unix::ffi::OsStrExt;
+    let fixture = Fixture::new()?;
+    let mut tui = Tui::start(&fixture, &[])?;
+    tui.ready()?;
+    let client = fixture.client()?;
+    let project = ProjectId::new();
+    let directory = fixture.directory.path().join("home");
+    client.mutate_project(ProjectIntent {
+        operation: OperationId::new(),
+        mutation: ProjectMutation::Create(ProjectDescriptor {
+            id: project,
+            home: false,
+            directory: ServerPath(directory.as_os_str().as_bytes().into()),
+            name: "Shared project".into(),
+            icon: None,
+            color: "#123456".into(),
+            kind: None,
+            parent_id: None,
+        }),
+    })?;
+    let size = Size { cols: 80, rows: 24 };
+    let shared = client.create_project_session(project, OperationId::new(), &directory, size)?;
+    let index = client
+        .catalog()?
+        .projects
+        .iter()
+        .position(|item| item.id == project)
+        .ok_or("project")?;
+    tui.pick(b's', index, "Shared project")?;
+    tui.wait(|tui| {
+        Ok(fixture.state()?["active"] == project.to_string()
+            && tui.active_tab()?["panes"]
+                .as_object()
+                .is_some_and(|panes| panes.values().all(|pane| !pane["session"].is_null())))
+    })?;
+    tui.pick(b'w', 0, &shared.id.get().to_string())?;
+    tui.wait(|tui| Ok(tui.tabs()?.len() == 2))?;
+    let attachment = client.attach(shared.id, size)?;
+    client.send_input(attachment.channel, b"printf '\\nOTHER_CLIENT_OUTPUT\\n'\n")?;
+    tui.output("OTHER_CLIENT_OUTPUT")?;
+    assert_eq!(client.list_sessions()?.len(), 3);
+    let layout = fixture.state()?;
+    client.mutate_project(ProjectIntent {
+        operation: OperationId::new(),
+        mutation: ProjectMutation::Patch {
+            project,
+            patch: ProjectPatch::Name("Renamed elsewhere".into()),
+        },
+    })?;
+    tui.output("Renamed elsewhere")?;
+    assert_eq!(fixture.state()?, layout);
+    client.mutate_project(ProjectIntent {
+        operation: OperationId::new(),
+        mutation: ProjectMutation::Delete(project),
+    })?;
+    tui.wait(|tui| {
+        Ok(tui.text()?.iter().any(|line| line.starts_with(" Home "))
+            && client.list_sessions()?.len() == 1)
+    })?;
+    assert!(directory.is_dir());
+    let remaining = client.list_sessions()?[0].id;
+    client.end_session(remaining)?;
+    tui.output("Ended")?;
+    tui.detach()?;
+    let state = fixture.state()?;
+    let mut restored = Tui::start(&fixture, &[])?;
+    restored.output("Ended")?;
+    assert_eq!(fixture.state()?, state);
+    assert!(client.list_sessions()?.is_empty());
+    restored.detach()?;
+    Ok(())
+}
