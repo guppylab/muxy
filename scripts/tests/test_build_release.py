@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -131,6 +132,16 @@ class BuildReleaseTests(unittest.TestCase):
         signing = [call[-1] for call in self.calls("codesign") if "--sign" in call]
         self.assertEqual(sum(path.endswith("/muxy") for path in signing), 1)
         self.assertEqual(sum(path.endswith("/muxy-server") for path in signing), 1)
+
+    def test_standalone_zip_contains_exact_bundle_executable_bytes(self):
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = self.root / "target/beta" / VERSION / "arm64"
+        with zipfile.ZipFile(output / f"muxy-{VERSION}-macos-arm64.zip") as archive:
+            self.assertEqual(set(archive.namelist()), {"muxy", "muxy-server", "LICENSE"})
+            for name in ("muxy", "muxy-server"):
+                self.assertEqual(archive.read(name), (output / "Muxy Beta.app/Contents/MacOS" / name).read_bytes())
+        self.assertNotEqual(self.build().returncode, 0)
 
     def test_non_beta_releases_are_rejected_before_packaging(self):
         for version in ("2.0.0", "2.0.0-alpha-1", "2.0.0-beta-0"):

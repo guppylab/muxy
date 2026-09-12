@@ -67,13 +67,13 @@ for BINARY in muxy-app muxy muxy-server; do
         exit 1
     fi
     # A release must not depend on Homebrew or Cargo build-directory dylibs.
-    otool -L "$EXECUTABLE" > "$STAGING/dependencies.txt"
+    otool -L "$EXECUTABLE" > "$STAGING/artifacts/$BINARY-dependencies.txt"
     while IFS= read -r LIBRARY; do
         case "$LIBRARY" in
             /System/Library/*|/usr/lib/*) ;;
             *) echo "Error: unbundled dependency in $BINARY: $LIBRARY" >&2; exit 1 ;;
         esac
-    done < <(tail -n +2 "$STAGING/dependencies.txt" | awk '{print $1}')
+    done < <(tail -n +2 "$STAGING/artifacts/$BINARY-dependencies.txt" | awk '{print $1}')
     ditto "$BIN_DIR/$BINARY.dSYM" "$STAGING/symbols/$BINARY.dSYM"
     strip -Sx "$EXECUTABLE"
 done
@@ -110,6 +110,12 @@ codesign --verify --deep --strict --verbose=2 "$APP"
 for BINARY in muxy muxy-server; do
     python3 "$ROOT/scripts/beta_release.py" check-build "$VERSION" "$APP/Contents/MacOS/$BINARY"
 done
+
+# Copy the sealed executables without stripping or signing them again.
+mkdir "$STAGING/cli"
+cp "$APP/Contents/MacOS/muxy" "$APP/Contents/MacOS/muxy-server" "$ROOT/LICENSE" "$STAGING/cli/"
+CLI_ARCHIVE="$STAGING/artifacts/muxy-${VERSION}-macos-${ARCH}.zip"
+(cd "$STAGING/cli" && zip -X "$CLI_ARCHIVE" muxy muxy-server LICENSE)
 
 ln -s /Applications "$STAGING/dmg/Applications"
 DMG="$STAGING/artifacts/Muxy-${VERSION}-${ARCH}.dmg"

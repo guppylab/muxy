@@ -2,9 +2,13 @@
 set -euo pipefail
 
 if [[ $# -ne 1 || ! -f "$1" ]]; then
-    echo "Usage: $0 <signed.dmg>" >&2
+    echo "Usage: $0 <signed.dmg|signed.zip>" >&2
     exit 1
 fi
+case "$1" in
+    *.dmg|*.zip) ;;
+    *) echo "Error: expected a DMG or ZIP" >&2; exit 1 ;;
+esac
 : "${APPLE_ID:?APPLE_ID is required}"
 : "${APPLE_APP_SPECIFIC_PASSWORD:?APPLE_APP_SPECIFIC_PASSWORD is required}"
 : "${APPLE_TEAM_ID:?APPLE_TEAM_ID is required}"
@@ -25,6 +29,20 @@ if [[ "$STATUS" -ne 0 ]]; then
 fi
 python3 -c 'import json, sys; sys.exit(0 if json.load(sys.stdin).get("status") == "Accepted" else 1)' \
     < "$TEMP/submission.json"
-xcrun stapler staple "$1"
-xcrun stapler validate "$1"
-spctl --assess --type open --context context:primary-signature --verbose=2 "$1"
+case "$1" in
+    *.dmg)
+        xcrun stapler staple "$1"
+        xcrun stapler validate "$1"
+        spctl --assess --type open --context context:primary-signature --verbose=2 "$1"
+        ;;
+    *.zip)
+        # ZIPs and bare executables cannot be stapled. Verify the submitted bytes.
+        for BINARY in muxy muxy-server; do
+            unzip -p "$1" "$BINARY" > "$TEMP/$BINARY"
+            chmod 755 "$TEMP/$BINARY"
+            codesign --verify --strict --verbose=2 "$TEMP/$BINARY"
+            codesign --verify --verbose=4 --requirement notarized --check-notarization "$TEMP/$BINARY"
+            "$TEMP/$BINARY" --build-info
+        done
+        ;;
+esac
