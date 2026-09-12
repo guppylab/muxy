@@ -29,10 +29,7 @@ pub(crate) enum Overlay {
 pub(crate) fn run() -> Result {
     terminal::require_interactive().map_err(|error| error.to_string())?;
     let profile = muxy_core::dirs::muxy_dir().map_err(|error| error.to_string())?;
-    let executable = std::env::current_exe()
-        .map_err(|error| error.to_string())?
-        .canonicalize()
-        .map_err(|error| error.to_string())?;
+    let executable = muxy_core::executable::current_path().map_err(|error| error.to_string())?;
     let _lease = muxy_client::local::bundle::acquire_runtime(&executable)
         .map_err(|error| error.to_string())?;
     let mut host = Host::enter().map_err(|error| error.to_string())?;

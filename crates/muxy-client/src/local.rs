@@ -19,9 +19,7 @@ pub fn server_executable() -> io::Result<PathBuf> {
         }
         return Ok(path.into());
     }
-    Ok(std::env::current_exe()?
-        .canonicalize()?
-        .with_file_name("muxy-server"))
+    Ok(muxy_core::executable::current_path()?.with_file_name("muxy-server"))
 }
 
 pub fn ensure_running(socket: &Path, executable: &Path) -> Result<Client, ClientError> {

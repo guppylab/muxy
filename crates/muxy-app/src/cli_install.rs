@@ -45,7 +45,7 @@ fn installation_message(result: io::Result<PathBuf>) -> (&'static str, String) {
 }
 
 fn install() -> io::Result<PathBuf> {
-    let executable = std::env::current_exe()?.canonicalize()?;
+    let executable = muxy_core::executable::current_path()?;
     let target = bundled_target(&executable)?;
     for executable in [&target, &target.with_file_name("muxy-server")] {
         if crate::server::read_build_info(executable)? != muxy_protocol::BuildInfo::current() {

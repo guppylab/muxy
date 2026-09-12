@@ -22,7 +22,7 @@ impl Installation {
     pub(crate) fn detect() -> Result<Self> {
         build_number(env!("CARGO_PKG_VERSION"))
             .ok_or("Automatic updates require an installed release of Muxy Beta")?;
-        let executable = std::env::current_exe()?.canonicalize()?;
+        let executable = muxy_core::executable::current_path()?;
         let bundle = executable
             .parent()
             .and_then(Path::parent)

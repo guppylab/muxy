@@ -4,6 +4,20 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+pub fn current_path() -> io::Result<std::path::PathBuf> {
+    // macOS current_exe can retain the launch symlink after its target changes.
+    #[cfg(target_os = "macos")]
+    let path = std::path::PathBuf::from(
+        libproc::libproc::proc_pid::pidpath(
+            i32::try_from(std::process::id()).map_err(io::Error::other)?,
+        )
+        .map_err(io::Error::other)?,
+    );
+    #[cfg(not(target_os = "macos"))]
+    let path = std::env::current_exe()?;
+    path.canonicalize()
+}
+
 pub fn build_metadata(executable: &Path) -> io::Result<Vec<u8>> {
     use std::io::{Read, Seek};
     let mut output = tempfile::tempfile()?;

@@ -29,7 +29,7 @@ fn main() -> ExitCode {
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let command = args::parse(&std::env::args_os().skip(1).collect::<Vec<_>>())?;
     let _lease = if matches!(command, Command::Projects | Command::AddProject { .. }) {
-        muxy_client::local::bundle::acquire_runtime(&std::env::current_exe()?.canonicalize()?)?
+        muxy_client::local::bundle::acquire_runtime(&muxy_core::executable::current_path()?)?
     } else {
         None
     };

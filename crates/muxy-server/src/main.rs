@@ -37,7 +37,7 @@ fn execute() -> io::Result<()> {
         _ => {
             let args = args::Args::parse(arguments)?;
             let _lease = muxy_core::bundle::acquire_runtime(
-                &std::env::current_exe()?.canonicalize()?,
+                &muxy_core::executable::current_path()?,
                 &serde_json::to_vec(&muxy_protocol::BuildInfo::current())?,
             )?;
             run::run(&args)

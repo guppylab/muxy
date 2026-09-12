@@ -3719,6 +3719,7 @@ dependencies = [
 name = "muxy-core"
 version = "2.0.0-beta-0"
 dependencies = [
+ "libproc",
  "serde",
  "serde_json",
  "tempfile",
