@@ -22,12 +22,14 @@ fn saved_screen_and_discard_messages_round_trip_without_a_session_channel()
         Message::Reply {
             id: RequestId(1),
             body: ReplyBody::SavedScreen(SavedScreen {
+                graphics: muxy_protocol::Graphics::default(),
                 size: Size { cols: 1, rows: 1 },
                 rows: vec![Row {
                     index: 0,
                     runs: Vec::new(),
                 }],
                 cursor: Cursor {
+                    shape: muxy_protocol::CursorShape::default(),
                     row: 0,
                     col: 0,
                     visible: false,

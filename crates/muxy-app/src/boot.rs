@@ -104,6 +104,7 @@ pub(crate) enum Work {
     Colors(TerminalColors),
     Input(ChannelId, Vec<u8>),
     Mouse(ChannelId, MouseEvent),
+    CellSize(ChannelId, muxy_protocol::CellSize),
     Ack(ChannelId, u64),
     Event(ClientEvent),
     Stop,
@@ -215,7 +216,10 @@ fn bridge(socket: PathBuf) -> std::io::Result<(Worker, async_channel::Receiver<(
                             }
                             vec![Update::Error(error.into())]
                         }),
-                        Work::Input(_, _) | Work::Mouse(_, _) | Work::Ack(_, _) => client
+                        Work::Input(_, _)
+                        | Work::Mouse(_, _)
+                        | Work::CellSize(_, _)
+                        | Work::Ack(_, _) => client
                             .as_ref()
                             .and_then(|client| perform(work, client))
                             .into_iter()
@@ -438,6 +442,7 @@ fn perform(work: Work, client: &Client) -> Option<Update> {
         Work::Colors(colors) => client.set_terminal_colors(colors),
         Work::Input(channel, bytes) => client.send_input(channel, &bytes),
         Work::Mouse(channel, event) => client.send_mouse(channel, event),
+        Work::CellSize(channel, cell) => client.send_cell_size(channel, cell),
         Work::Ack(channel, seq) => client.ack(channel, seq),
         Work::Connect
         | Work::ReconnectAfterUpdate(_)

@@ -44,6 +44,7 @@ pub enum Message {
     Frame(ScreenFrame),
     Metadata(MetadataEvent),
     Mouse(MouseEvent),
+    CellSize(crate::CellSize),
 }
 
 impl Message {
@@ -58,9 +59,11 @@ impl Message {
             | Self::Reply { .. }
             | Self::SessionEnded { .. }
             | Self::Fatal(_) => ChannelKind::Control,
-            Self::Input(_) | Self::Frame(_) | Self::Metadata(_) | Self::Mouse(_) => {
-                ChannelKind::Session
-            }
+            Self::Input(_)
+            | Self::Frame(_)
+            | Self::Metadata(_)
+            | Self::Mouse(_)
+            | Self::CellSize(_) => ChannelKind::Session,
         }
     }
 }

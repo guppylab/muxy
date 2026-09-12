@@ -17,6 +17,7 @@ fn run(text: &str, width: u16) -> Run {
 
 fn grid() -> RunGrid {
     RunGrid::from_snapshot(&AttachSnapshot {
+        graphics: muxy_protocol::Graphics::default(),
         prompts: Vec::new(),
         channel: ChannelId(1),
         size: Size { cols: 20, rows: 3 },
@@ -41,6 +42,7 @@ fn grid() -> RunGrid {
             },
         ],
         cursor: Cursor {
+            shape: muxy_protocol::CursorShape::default(),
             row: 0,
             col: 0,
             visible: true,

@@ -310,7 +310,7 @@ fn ghostty_values_support_comments_quotes_resets_fallbacks_and_height_adjustment
     assert_eq!(settings.cell_height, CellHeight::Percent(20.0));
     assert_eq!(settings.cell_height.apply(20.0, 2.0), 24.0);
     assert_eq!(CellHeight::Pixels(4).apply(20.0, 2.0), 22.0);
-    assert_eq!(CellHeight::Pixels(-100).apply(20.0, 2.0), 1.0);
+    assert_eq!(CellHeight::Pixels(-100).apply(20.0, 2.0), 0.5);
     assert_eq!(fs::read_to_string(&path)?, source);
     fs::write(
         &path,
@@ -339,10 +339,15 @@ fn ghostty_includes_apply_last_and_detect_cycles() -> Result {
 }
 
 #[test]
-fn ghostty_ignores_bare_boolean_settings_outside_font_scope() -> Result {
+fn ghostty_accepts_bare_font_thickening_and_ignores_unrelated_booleans() -> Result {
     let fixture = Fixture::new()?;
-    let path = fixture.write("ghostty.conf", "font-size = 16\nfont-thicken\n")?;
-    assert_eq!(TerminalSettings::load(&path)?.font_size, 16.0);
+    let path = fixture.write(
+        "ghostty.conf",
+        "font-size = 16\nfont-thicken\nbold-is-bright\n",
+    )?;
+    let settings = TerminalSettings::load(&path)?;
+    assert_eq!(settings.font_size, 16.0);
+    assert!(settings.font.thicken);
     Ok(())
 }
 
@@ -722,6 +727,7 @@ fn terminal_save_preserves_comments_unknown_keys_and_includes_and_returns_effect
     fixture.write("included.conf", "font-size = 22\n")?;
     let path = fixture.write("ghostty.conf", "# keep this comment\r\nunknown-option = keep\r\nconfig-file = included.conf\r\nfont-family = Menlo\r\nfont-size = 13\r\nfont-size = 14\r\nadjust-cell-height = 0")?;
     let requested = TerminalSettings {
+        font: muxy_settings::FontOptions::default(),
         font_families: vec!["SF Mono".into(), "Menlo".into()],
         font_size: 18.0,
         cell_height: CellHeight::Percent(10.0),
@@ -844,5 +850,49 @@ fn editing_terminal_values_does_not_copy_included_fonts_into_the_root() -> Resul
     }
     let claimed = Keymap::default().with_binding("new_tab", Some("cmd-n".parse()?))?;
     assert!(claimed.with_binding("new_home_tab", None).is_err());
+    Ok(())
+}
+
+#[test]
+fn terminal_font_controls_and_retina_metrics_are_preserved() -> Result {
+    let fixture = Fixture::new()?;
+    let path = fixture.write("fonts.conf", "font-family-bold = Custom Bold\nfont-family-italic = Custom Italic\nfont-family-bold-italic = Custom Bold Italic\nfont-feature = -calt\nfont-feature = ss01=2\nfont-codepoint-map = U+2500-U+257F,U+E0B0=Symbols\nfont-thicken = true\nfont-thicken-strength = 128\nadjust-cell-width = 1\n")?;
+    let settings = TerminalSettings::load_with_seed(&path, None)?;
+    assert_eq!(settings.font.bold, ["Custom Bold"]);
+    assert_eq!(
+        settings.font.features,
+        [("calt".into(), 0), ("ss01".into(), 2)]
+    );
+    assert_eq!(settings.font.codepoints.len(), 2);
+    assert!(settings.font.thicken);
+    assert_eq!(settings.font.thicken_strength, 128);
+    assert_eq!(CellHeight::Natural.apply(7.4, 2.0), 7.5);
+    assert_eq!(CellHeight::Pixels(1).apply(7.4, 2.0), 8.0);
+    assert_eq!(CellHeight::Pixels(-1).apply(7.4, 2.0), 7.0);
+    Ok(())
+}
+
+#[test]
+fn advanced_font_settings_round_trip_and_preserve_includes() -> Result {
+    let fixture = Fixture::new()?;
+    fixture.write(
+        "included.conf",
+        "font-feature = ss02\nfont-family-bold = Alternate Bold\n",
+    )?;
+    let path = fixture.write("ghostty.conf", "# retained\nconfig-file = included.conf\nfont-feature = \"calt\" 0\nfont-codepoint-map = U+2500=Symbols\n")?;
+    let mut settings = TerminalSettings::load_with_seed(&path, None)?;
+    assert_eq!(
+        settings.font.features,
+        [("calt".into(), 0), ("ss02".into(), 1)]
+    );
+    settings.font_size = 16.0;
+    assert_eq!(settings.save(&path)?, settings);
+    assert!(!fs::read_to_string(&path)?.contains("font-family-bold"));
+    let other = fixture.0.join("standalone.conf");
+    assert_eq!(settings.save(&other)?, settings);
+    let before = fs::read(&other)?;
+    settings.font.bold.push("bad\nfont-size=99".into());
+    assert!(settings.save(&other).is_err());
+    assert_eq!(fs::read(other)?, before);
     Ok(())
 }

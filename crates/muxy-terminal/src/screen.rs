@@ -14,6 +14,26 @@ pub enum Color {
     Rgb(u8, u8, u8),
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum Underline {
+    #[default]
+    None,
+    Single,
+    Double,
+    Curly,
+    Dotted,
+    Dashed,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum CursorShape {
+    #[default]
+    Block,
+    Bar,
+    Underline,
+    Hollow,
+}
+
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct Style {
@@ -21,7 +41,10 @@ pub struct Style {
     pub bg: Color,
     pub bold: bool,
     pub italic: bool,
-    pub underline: bool,
+    pub underline: Underline,
+    pub underline_color: Color,
+    pub invisible: bool,
+    pub overline: bool,
     pub inverse: bool,
     pub strikethrough: bool,
     pub faint: bool,
@@ -48,6 +71,7 @@ pub struct Row {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Cursor {
+    pub shape: CursorShape,
     pub row: u16,
     pub col: u16,
     pub visible: bool,

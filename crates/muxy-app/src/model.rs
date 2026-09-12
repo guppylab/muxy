@@ -1030,6 +1030,11 @@ impl AppModel {
                     model.send(Work::Input(*channel, bytes.clone()), cx);
                 }
             }
+            PaneEvent::CellSize(channel, cell) => {
+                if model.quitting == Quitting::Idle && !model.retained.contains(&id) {
+                    model.send(Work::CellSize(*channel, *cell), cx);
+                }
+            }
             PaneEvent::Mouse(channel, event) => {
                 if model.quitting == Quitting::Idle && !model.retained.contains(&id) {
                     model.send(Work::Mouse(*channel, *event), cx);
@@ -1686,6 +1691,7 @@ mod tests {
 
     fn saved_screen() -> muxy_protocol::SavedScreen {
         muxy_protocol::SavedScreen {
+            graphics: muxy_protocol::Graphics::default(),
             size: Size { cols: 80, rows: 24 },
             rows: (0..24)
                 .map(|index| muxy_protocol::Row {
@@ -1702,6 +1708,7 @@ mod tests {
                 })
                 .collect(),
             cursor: muxy_protocol::Cursor {
+                shape: muxy_protocol::CursorShape::default(),
                 row: 0,
                 col: 12,
                 visible: true,
@@ -2414,6 +2421,7 @@ mod tests {
         muxy_client::Attachment {
             channel: muxy_protocol::ChannelId(1),
             grid: RunGrid {
+                graphics: muxy_protocol::Graphics::default(),
                 prompts: std::collections::BTreeSet::default(),
                 prompt_state: muxy_client::ScreenPrompts::default(),
                 links: muxy_client::ScreenLinks::default(),

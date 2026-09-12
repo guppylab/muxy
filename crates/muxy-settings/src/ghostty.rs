@@ -5,6 +5,9 @@ use std::path::{Path, PathBuf};
 
 use crate::{Error, Result, settings::read_or_create};
 
+mod fonts;
+pub use fonts::{FontMap, FontOptions};
+
 const DEFAULT_CONFIG: &str = "font-family = Menlo\nfont-size = 13\nadjust-cell-height = 0\n";
 
 #[derive(Clone, Debug, PartialEq)]
@@ -12,6 +15,7 @@ pub struct TerminalSettings {
     pub font_families: Vec<String>,
     pub font_size: f32,
     pub cell_height: CellHeight,
+    pub font: FontOptions,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -24,13 +28,13 @@ pub enum CellHeight {
 
 impl CellHeight {
     pub fn apply(self, natural: f32, scale: f32) -> f32 {
-        match self {
-            Self::Natural => natural,
-            Self::Pixels(amount) => natural + f32::from(amount) / scale,
-            Self::Percent(amount) => natural * (1.0 + amount / 100.0),
-        }
-        .ceil()
-        .max(1.0)
+        let physical = natural * scale;
+        let adjusted = match self {
+            Self::Natural => physical,
+            Self::Pixels(amount) => physical.round() + f32::from(amount),
+            Self::Percent(amount) => physical * (1.0 + amount / 100.0),
+        };
+        adjusted.round().max(1.0) / scale
     }
 }
 
@@ -40,6 +44,7 @@ impl Default for TerminalSettings {
             font_families: vec!["Menlo".into()],
             font_size: 13.0,
             cell_height: CellHeight::Natural,
+            font: FontOptions::default(),
         }
     }
 }
@@ -125,7 +130,18 @@ impl TerminalSettings {
             let key = key.trim();
             if !matches!(
                 key,
-                "font-family" | "font-size" | "adjust-cell-height" | "config-file"
+                "font-family"
+                    | "font-size"
+                    | "adjust-cell-height"
+                    | "config-file"
+                    | "font-family-bold"
+                    | "font-family-italic"
+                    | "font-family-bold-italic"
+                    | "font-feature"
+                    | "font-codepoint-map"
+                    | "font-thicken"
+                    | "font-thicken-strength"
+                    | "adjust-cell-width"
             ) {
                 continue;
             }
@@ -136,12 +152,18 @@ impl TerminalSettings {
             }
             let context = format!("{context} {key}");
             let value = value
+                .or_else(|| (key == "font-thicken").then_some("true"))
                 .ok_or_else(|| Error::new(&context, "expected key = value"))?
                 .trim();
             let optional = key == "config-file" && value.starts_with('?');
             let value = if optional { &value[1..] } else { value };
-            let value = config_value(value).map_err(|error| Error::new(&context, error))?;
+            let value = if key == "font-feature" {
+                value
+            } else {
+                config_value(value).map_err(|error| Error::new(&context, error))?
+            };
             match key {
+                key if self.font.read(key, value)? => {}
                 "font-family" if value.is_empty() => families.clear(),
                 "font-family" => families.push(value.into()),
                 "font-size" => {
@@ -188,7 +210,15 @@ impl TerminalSettings {
         }
         let height = self.cell_height.to_string();
         parse_height(&height)?;
-        for family in &self.font_families {
+        parse_height(&self.font.cell_width.to_string())?;
+        for family in self
+            .font_families
+            .iter()
+            .chain(&self.font.bold)
+            .chain(&self.font.italic)
+            .chain(&self.font.bold_italic)
+            .chain(self.font.codepoints.iter().map(|map| &map.family))
+        {
             if family.is_empty() || family.chars().any(|ch| ch.is_control() || ch == '"') {
                 return Err(Error::new(
                     "font-family",
@@ -215,6 +245,7 @@ impl TerminalSettings {
         let height_changed = previous
             .as_ref()
             .is_none_or(|old| old.cell_height != self.cell_height);
+        let font_changed = previous.as_ref().is_none_or(|old| old.font != self.font);
         let mut updated = String::new();
         for line in source.split_inclusive('\n') {
             let key = line
@@ -225,6 +256,7 @@ impl TerminalSettings {
                 "font-family" => families_changed,
                 "font-size" => size_changed,
                 "adjust-cell-height" => height_changed,
+                key if fonts::KEYS.contains(&key) => font_changed,
                 _ => false,
             };
             if !rewrite {
@@ -245,6 +277,11 @@ impl TerminalSettings {
         }
         if height_changed {
             let _ = writeln!(updated, "adjust-cell-height = {height}");
+        }
+        if font_changed {
+            for line in self.font.lines() {
+                let _ = writeln!(updated, "{line}");
+            }
         }
         // Resolve before replacing the source, so a broken include never reports a saved value.
         let temporary = path.with_file_name(format!(

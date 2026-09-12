@@ -13,4 +13,5 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
 libghostty-vt = "=0.2.1"

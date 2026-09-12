@@ -418,11 +418,13 @@ mod tests {
 
     fn grid() -> RunGrid {
         RunGrid::from_snapshot(&AttachSnapshot {
+            graphics: muxy_protocol::Graphics::default(),
             prompts: Vec::new(),
             channel: ChannelId(1),
             size: Size { cols: 10, rows: 5 },
             rows: page(100, 105, None).rows,
             cursor: Cursor {
+                shape: muxy_protocol::CursorShape::default(),
                 row: 4,
                 col: 3,
                 visible: true,
@@ -541,6 +543,7 @@ mod tests {
             recent.total_rows = 110;
             recent.prompts = vec![19, 23];
             recent.screen = Some(SavedScreen {
+                graphics: muxy_protocol::Graphics::default(),
                 reason: None,
                 size: live.size,
                 rows: page(110, 115, None).rows,
@@ -569,6 +572,7 @@ mod tests {
         assert!(request.is_none());
         assert_eq!(scroll.take_command_output(), Some((1, 3)));
         live.apply(&ScreenFrame {
+            graphics: None,
             seq: 3,
             reset: false,
             rows: vec![],
@@ -594,6 +598,7 @@ mod tests {
             ["99", "100", "101", "102", "103"]
         );
         live.apply(&ScreenFrame {
+            graphics: None,
             seq: 1,
             reset: false,
             rows: vec![row(0, "new")],
@@ -716,6 +721,7 @@ mod tests {
         let request = scroll.move_rows(1.0, &live, 5).unwrap();
         let mut page = page(180, 200, Some(HistoryCursor(9)));
         page.screen = Some(SavedScreen {
+            graphics: muxy_protocol::Graphics::default(),
             size: live.size,
             rows: self::page(200, 205, None).rows,
             cursor: live.cursor,
@@ -767,6 +773,7 @@ mod tests {
     fn saved_content_keeps_its_width_and_resize_changes_only_the_visible_rows() {
         let live = grid();
         let saved = RunGrid::from_saved(SavedScreen {
+            graphics: muxy_protocol::Graphics::default(),
             size: live.size,
             rows: page(100, 105, None).rows,
             cursor: live.cursor,

@@ -29,6 +29,7 @@ pub fn encode(
         Message::Frame(frame) => serialize(frame, output)?,
         Message::Metadata(event) => serialize(event, output)?,
         Message::Mouse(event) => serialize(event, output)?,
+        Message::CellSize(cell) => serialize(cell, output)?,
     }
     let mut header = Header::new(
         output.len() - HEADER_LEN,
@@ -86,6 +87,7 @@ pub fn decode(header: Header, payload: &[u8]) -> Result<(ChannelId, Message), Wi
         MessageKind::Frame => Message::Frame(deserialize(payload)?),
         MessageKind::Metadata => Message::Metadata(deserialize(payload)?),
         MessageKind::Mouse => Message::Mouse(deserialize(payload)?),
+        MessageKind::CellSize => Message::CellSize(deserialize(payload)?),
     };
     if message_version(&message).0 > header.version {
         return Err(postcard::Error::DeserializeBadEncoding.into());

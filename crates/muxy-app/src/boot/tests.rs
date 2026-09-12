@@ -225,10 +225,12 @@ fn frame_event(channel: ChannelId) -> ClientEvent {
     ClientEvent::Frame {
         channel,
         frame: muxy_protocol::ScreenFrame {
+            graphics: None,
             seq: 1,
             reset: false,
             rows: Vec::new(),
             cursor: muxy_protocol::Cursor {
+                shape: muxy_protocol::CursorShape::default(),
                 row: 0,
                 col: 0,
                 visible: true,

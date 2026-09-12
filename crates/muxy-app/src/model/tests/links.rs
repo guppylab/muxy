@@ -43,6 +43,7 @@ fn terminal_menu_focuses_the_clicked_split_and_routes_clipboard_actions(cx: &mut
     terminal.update(cx, |pane, cx| {
         pane.apply(
             &muxy_protocol::ScreenFrame {
+                graphics: None,
                 seq: 1,
                 reset: true,
                 rows: saved_screen().rows,
@@ -134,10 +135,11 @@ fn verify_reporting_menu(
 #[gpui::test]
 #[allow(clippy::float_cmp)]
 fn prompt_shortcuts_and_command_output_menu_act_on_the_focused_terminal(cx: &mut TestAppContext) {
-    let (boot, _) = stub_boot(AppState::bootstrap().expect("state"));
+    let (boot, _requests) = stub_boot(AppState::bootstrap().expect("state"));
     cx.update(|cx| crate::views::workspace::bind_keys(&boot.settings.keymap, cx));
     let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
     let terminal = view.update(cx, |model, cx| {
+        model.connection = ConnectionState::Ready;
         model.new_tab(cx);
         model
             .terminal(&model.active_pane().expect("pane"))
@@ -171,6 +173,7 @@ fn prompt_shortcuts_and_command_output_menu_act_on_the_focused_terminal(cx: &mut
         attached.grid.prompts = [0, 2, 4].into();
         attached.grid.rows[0] = row(0, "$ ").runs;
         attached.grid.cursor = muxy_protocol::Cursor {
+            shape: muxy_protocol::CursorShape::default(),
             row: 0,
             col: 2,
             visible: true,

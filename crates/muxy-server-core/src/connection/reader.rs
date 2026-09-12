@@ -88,6 +88,17 @@ pub(super) fn run(
                     let _ = handle.send(SessionCommand::Input(bytes));
                 }
             }
+            (channel, Message::CellSize(cell))
+                if channel.0 > 0 && channel.0 <= requests.last_channel.load(Ordering::Acquire) =>
+            {
+                if let Some(handle) = outbox.handle(channel) {
+                    if validation.is_err() {
+                        outbox.close_with(fatal("invalid cell size"));
+                        return Ok(Exit::Fatal);
+                    }
+                    let _ = handle.send(SessionCommand::CellSize(cell));
+                }
+            }
             (channel, Message::Mouse(event))
                 if channel.0 > 0 && channel.0 <= requests.last_channel.load(Ordering::Acquire) =>
             {

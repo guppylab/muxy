@@ -29,6 +29,12 @@ pub(crate) fn cursor(cursor: muxy_terminal::Cursor) -> Cursor {
         row: cursor.row,
         col: cursor.col,
         visible: cursor.visible,
+        shape: match cursor.shape {
+            muxy_terminal::CursorShape::Block => muxy_protocol::CursorShape::Block,
+            muxy_terminal::CursorShape::Bar => muxy_protocol::CursorShape::Bar,
+            muxy_terminal::CursorShape::Underline => muxy_protocol::CursorShape::Underline,
+            muxy_terminal::CursorShape::Hollow => muxy_protocol::CursorShape::Hollow,
+        },
     }
 }
 
@@ -91,7 +97,17 @@ fn style(style: muxy_terminal::Style) -> Style {
         bg: color(style.bg),
         bold: style.bold,
         italic: style.italic,
-        underline: style.underline,
+        underline: match style.underline {
+            muxy_terminal::Underline::None => muxy_protocol::Underline::None,
+            muxy_terminal::Underline::Single => muxy_protocol::Underline::Single,
+            muxy_terminal::Underline::Double => muxy_protocol::Underline::Double,
+            muxy_terminal::Underline::Curly => muxy_protocol::Underline::Curly,
+            muxy_terminal::Underline::Dotted => muxy_protocol::Underline::Dotted,
+            muxy_terminal::Underline::Dashed => muxy_protocol::Underline::Dashed,
+        },
+        underline_color: color(style.underline_color),
+        invisible: style.invisible,
+        overline: style.overline,
         inverse: style.inverse,
         strikethrough: style.strikethrough,
         faint: style.faint,
@@ -103,5 +119,39 @@ fn color(color: muxy_terminal::Color) -> Color {
         muxy_terminal::Color::Default => Color::Default,
         muxy_terminal::Color::Indexed(index) => Color::Indexed(index),
         muxy_terminal::Color::Rgb(r, g, b) => Color::Rgb(r, g, b),
+    }
+}
+
+pub(crate) fn graphics(graphics: muxy_terminal::Graphics) -> muxy_protocol::Graphics {
+    muxy_protocol::Graphics {
+        cell: muxy_protocol::CellSize {
+            width: graphics.cell.width,
+            height: graphics.cell.height,
+        },
+        images: graphics
+            .images
+            .into_iter()
+            .map(|image| muxy_protocol::GraphicImage {
+                id: image.id,
+                generation: image.generation,
+                width: image.width,
+                height: image.height,
+                rgba: image.rgba,
+            })
+            .collect(),
+        placements: graphics
+            .placements
+            .into_iter()
+            .map(|p| muxy_protocol::GraphicPlacement {
+                image: p.image,
+                id: p.id,
+                column: p.column,
+                row: p.row,
+                offset: p.offset,
+                size: p.size,
+                source: p.source,
+                z: p.z,
+            })
+            .collect(),
     }
 }

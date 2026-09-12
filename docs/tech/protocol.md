@@ -58,7 +58,7 @@ share a supported contract. Any other traffic before hello is fatal.
 | Frame ack | client | control |
 | Session ended, server restarting for an update | server | control |
 | Error | server | control |
-| Input | client | session |
+| Input, cell pixel dimensions | client | session |
 | Screen frame, metadata event | server | session |
 
 A request carries a client-chosen ID and gets exactly one reply, in any
@@ -74,6 +74,12 @@ Rows are style runs with server-supplied cell boundaries, so the client
 needs no width table. A row in a message replaces that row entirely. Frames
 carry only visible rows, are numbered from one per attachment, and are
 acked cumulatively. A resize carries the whole screen as one reset.
+Synchronized output defers screen publication until the application finishes its
+update, with a one-second recovery timeout. Frames and attach snapshots also
+carry bounded Kitty image pixels and placements. Image replacements travel
+atomically with their screen; unchanged image state is omitted from deltas.
+Client cell pixel dimensions let the server resolve image sizes and positions.
+
 OSC 8 hyperlinks are bounded URI spans sent as whole-screen metadata
 replacements, including an empty replacement when cleared. Their attachment
 frame sequence prevents activation ahead of the matching screen; zero refers

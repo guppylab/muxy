@@ -27,6 +27,7 @@ pub(crate) enum PaneEvent {
     Viewport(Size),
     Input(ChannelId, Vec<u8>),
     Mouse(ChannelId, MouseEvent),
+    CellSize(ChannelId, muxy_protocol::CellSize),
     Title(String),
     Bell,
     History(HistoryRequest),
@@ -58,6 +59,9 @@ pub(crate) enum PaneState {
     reason = "Visibility, focus restoration and bell activity are independent pane states"
 )]
 pub(crate) struct TerminalPane {
+    pub(crate) sent_cell_size: Option<(ChannelId, muxy_protocol::CellSize)>,
+    pub(crate) images: element::images::Textures,
+    pub(crate) shades: element::shade::Textures,
     pub(crate) grid: Option<RunGrid>,
     pub(crate) copy_on_select: bool,
     pub(crate) open_context: Option<muxy_app_core::opener::OpenContext>,
@@ -106,8 +110,17 @@ impl TerminalPane {
         terminal: muxy_settings::TerminalSettings,
         cx: &mut Context<Self>,
     ) -> Self {
+        cx.on_release(|pane, cx| {
+            for image in pane.images.drain().chain(pane.shades.drain()) {
+                cx.drop_image(image, None);
+            }
+        })
+        .detach();
         Self {
             grid: None,
+            sent_cell_size: None,
+            images: element::images::Textures::default(),
+            shades: element::shade::Textures::default(),
             copy_on_select: false,
             open_context: None,
             link_hover: super::links::Hover::default(),
@@ -205,6 +218,7 @@ impl TerminalPane {
         self.clear_selection();
         self.scroll.reset();
         self.saved_history = None;
+        self.sent_cell_size = None;
         self.channel = Some(attachment.channel);
         self.state = PaneState::Live;
         self.cursor_blink = super::cursor::CursorBlink::default();
@@ -1217,6 +1231,7 @@ mod tests {
 
     fn grid() -> RunGrid {
         RunGrid {
+            graphics: muxy_protocol::Graphics::default(),
             prompts: std::collections::BTreeSet::default(),
             prompt_state: muxy_client::ScreenPrompts::default(),
             links: muxy_client::ScreenLinks::default(),
@@ -1227,6 +1242,7 @@ mod tests {
                 .map(|(index, text)| row(u16::try_from(index).unwrap(), text).runs)
                 .collect(),
             cursor: Cursor {
+                shape: muxy_protocol::CursorShape::default(),
                 row: 2,
                 col: 6,
                 visible: true,
@@ -1289,6 +1305,7 @@ mod tests {
                 total_rows: grid.history_total,
                 prompts: vec![0, 1, 3],
                 screen: Some(SavedScreen {
+                    graphics: muxy_protocol::Graphics::default(),
                     size: grid.size,
                     rows: grid
                         .rows
@@ -1436,6 +1453,7 @@ mod tests {
                         seq += 1;
                         pane.apply(
                             &ScreenFrame {
+                                graphics: None,
                                 seq,
                                 reset: true,
                                 rows: (0..frame_rows)
@@ -1445,6 +1463,7 @@ mod tests {
                                     })
                                     .collect(),
                                 cursor: Cursor {
+                                    shape: muxy_protocol::CursorShape::default(),
                                     row: 0,
                                     col: 0,
                                     visible: true,
@@ -1483,9 +1502,11 @@ mod tests {
             assert!((pane.scrollable_rows(5)).abs() < 0.01);
             pane.restore(
                 SavedScreen {
+                    graphics: muxy_protocol::Graphics::default(),
                     size: Size { cols: 20, rows: 3 },
                     rows: (0..3).map(|index| row(index, "saved output")).collect(),
                     cursor: Cursor {
+                        shape: muxy_protocol::CursorShape::default(),
                         row: 2,
                         col: 0,
                         visible: false,
@@ -1533,6 +1554,7 @@ mod tests {
                 pane.metadata(MetadataEvent::History { total_rows: 201 }, cx);
                 pane.apply(
                     &ScreenFrame {
+                        graphics: None,
                         seq: 1,
                         reset: false,
                         rows: vec![row(0, "alpha")],
@@ -1579,6 +1601,7 @@ mod tests {
             let request = find.results.restart().unwrap();
             pane.apply(
                 &ScreenFrame {
+                    graphics: None,
                     seq: 1,
                     reset: false,
                     rows: vec![row(0, "alpha")],
@@ -1995,6 +2018,7 @@ mod tests {
             };
             pane.select(selection, cx);
             let mut frame = ScreenFrame {
+                graphics: None,
                 seq: 1,
                 reset: false,
                 rows: vec![row(2, "new prompt")],

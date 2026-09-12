@@ -386,6 +386,7 @@ fn samples_cover_every_message_variant_once_and_use_the_right_channel() {
                 ("CursorBlinking", ChannelKind::Session)
             }
             Message::Metadata(_) => ("Metadata", ChannelKind::Session),
+            Message::CellSize(_) => ("CellSize", ChannelKind::Session),
         };
         assert!(seen.insert(name), "duplicate sample: {name}");
         assert_eq!(message.channel_kind(), channel, "{name}");
@@ -394,6 +395,7 @@ fn samples_cover_every_message_variant_once_and_use_the_right_channel() {
     assert_eq!(
         seen,
         BTreeSet::from([
+            "CellSize",
             "ReadServerSettings",
             "WriteServerSettings",
             "StopServer",
@@ -489,6 +491,7 @@ fn reply(body: ReplyBody) -> Message {
 
 fn snapshot() -> AttachSnapshot {
     AttachSnapshot {
+        graphics: muxy_protocol::Graphics::default(),
         prompts: Vec::new(),
         channel: ChannelId(1),
         size: Size { cols: 1, rows: 1 },
@@ -501,6 +504,7 @@ fn snapshot() -> AttachSnapshot {
             }],
         }],
         cursor: Cursor {
+            shape: muxy_protocol::CursorShape::default(),
             row: 0,
             col: 0,
             visible: true,
@@ -598,4 +602,42 @@ fn history_limits_and_page_shape_are_validated() {
             Err(ErrorCode::BadRequest)
         );
     }
+}
+
+#[test]
+fn graphics_reject_overflow_truncation_missing_images_and_invalid_crops() {
+    use muxy_protocol::{GraphicImage, GraphicPlacement, Graphics};
+    let mut graphics = Graphics {
+        images: vec![GraphicImage {
+            id: 1,
+            generation: 1,
+            width: 1,
+            height: 1,
+            rgba: vec![255; 4].into(),
+        }],
+        placements: vec![GraphicPlacement {
+            image: 1,
+            id: 1,
+            column: 0,
+            row: -1,
+            offset: [0, 0],
+            size: [8, 16],
+            source: [0, 0, 1, 1],
+            z: -1,
+        }],
+        ..Graphics::default()
+    };
+    assert!(graphics.validate().is_ok());
+    graphics.images[0].width = u32::MAX;
+    graphics.images[0].height = u32::MAX;
+    assert!(graphics.validate().is_err());
+    graphics.images[0].width = 2;
+    graphics.images[0].height = 1;
+    assert!(graphics.validate().is_err());
+    graphics.images[0].width = 1;
+    graphics.placements[0].source[0] = u32::MAX;
+    assert!(graphics.validate().is_err());
+    graphics.placements[0].source[0] = 0;
+    graphics.placements[0].image = 2;
+    assert!(graphics.validate().is_err());
 }

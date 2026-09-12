@@ -23,6 +23,7 @@ pub struct AttachmentId(pub u64);
 pub enum SessionCommand {
     Input(Vec<u8>),
     Mouse(MouseEvent),
+    CellSize(muxy_protocol::CellSize),
     Resize(Size),
     SetColors(TerminalColors),
     ResizeAttachment {

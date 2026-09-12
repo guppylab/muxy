@@ -20,6 +20,7 @@ use crate::session::metadata::Metadata;
 use crate::session::{AttachmentEvent, AttachmentId, SessionCommand, SessionHandle};
 
 const TICK: Duration = Duration::from_millis(16);
+const SYNC_TIMEOUT: Duration = Duration::from_secs(1);
 const CHECKPOINT: Duration = Duration::from_secs(1);
 const METADATA_POLL: Duration = Duration::from_secs(1);
 
@@ -72,9 +73,11 @@ struct Owner {
     input_modes: InputModes,
     cursor_blinking: bool,
     links: Vec<muxy_protocol::LinkRow>,
+    graphics: muxy_protocol::Graphics,
     prompts: Vec<u16>,
     frame_state: Option<(muxy_protocol::Cursor, muxy_protocol::Modes)>,
     next_tick: Option<Instant>,
+    synchronized_since: Option<Instant>,
     output_state: OutputState,
     archive: Archive,
     next_checkpoint: Option<Instant>,
@@ -157,9 +160,11 @@ pub(crate) fn start(
                 input_modes: InputModes::default(),
                 cursor_blinking: true,
                 links: Vec::new(),
+                graphics: muxy_protocol::Graphics::default(),
                 prompts: Vec::new(),
                 frame_state: None,
                 next_tick: None,
+                synchronized_since: None,
                 output_state: OutputState::Open,
                 archive,
                 next_checkpoint: Some(Instant::now() + CHECKPOINT),
@@ -229,6 +234,13 @@ impl Owner {
                 Wake::Event(OwnerEvent::WriteFailed(error)) => return Err(error.into()),
                 Wake::Event(OwnerEvent::Command(SessionCommand::Input(bytes))) => {
                     self.input.send(bytes)?;
+                }
+                Wake::Event(OwnerEvent::Command(SessionCommand::CellSize(cell))) => {
+                    self.terminal.set_cell_size(muxy_terminal::CellSize {
+                        width: cell.width,
+                        height: cell.height,
+                    })?;
+                    self.output_pending = true;
                 }
                 Wake::Event(OwnerEvent::Command(SessionCommand::Mouse(event))) => {
                     let bytes = self.terminal.encode_mouse(&mouse(event))?;
@@ -337,6 +349,11 @@ impl Owner {
 
     fn feed(&mut self, bytes: &[u8]) -> Result<(), Fault> {
         self.terminal.feed(bytes);
+        if self.terminal.synchronized_output()? {
+            self.synchronized_since.get_or_insert_with(Instant::now);
+        } else {
+            self.synchronized_since = None;
+        }
         let answers = self.terminal.take_pty_output();
         if !answers.is_empty() {
             self.input.send(answers)?;
@@ -390,6 +407,7 @@ impl Owner {
             .screen
             .ok_or_else(|| io::Error::other("fresh history has no screen"))?;
         let snapshot = AttachSnapshot {
+            graphics: screen.graphics,
             prompts: history.prompts,
             channel,
             size: self.size,
@@ -453,6 +471,9 @@ impl Owner {
                     .filter_map(|row| u16::try_from(history.len() + usize::from(row)).ok()),
             );
             Some(SavedScreen {
+                graphics: super::frames::graphics(
+                    self.terminal.graphics().map_err(terminal_error)?,
+                ),
                 size: self.size,
                 rows: rows(self.terminal.screen().map_err(terminal_error)?),
                 cursor: cursor(self.terminal.cursor().map_err(terminal_error)?),
@@ -493,6 +514,14 @@ impl Owner {
 
     fn tick(&mut self) -> Result<(), Fault> {
         self.next_tick = None;
+        if self.terminal.synchronized_output()? {
+            let since = self.synchronized_since.get_or_insert_with(Instant::now);
+            if since.elapsed() < SYNC_TIMEOUT {
+                return Ok(());
+            }
+            self.terminal.end_synchronized_output()?;
+        }
+        self.synchronized_since = None;
         self.update_metadata();
         let modes = input_modes(self.terminal.input_modes()?);
         if modes != self.input_modes {
@@ -588,7 +617,11 @@ impl Owner {
                     .is_ok()
             });
         }
+        let graphics = super::frames::graphics(self.terminal.graphics()?);
+        let graphics_changed = graphics != self.graphics || self.resize_pending;
+        self.graphics = graphics;
         let frame = ScreenFrame {
+            graphics: graphics_changed.then(|| self.graphics.clone()),
             seq: 0,
             reset: self.resize_pending,
             rows: rows(self.terminal.take_changed_rows()?),
@@ -602,7 +635,8 @@ impl Owner {
         let links_changed = self.links != links;
         self.links = links;
         let state = (frame.cursor, frame.modes);
-        if !links_changed
+        if !graphics_changed
+            && !links_changed
             && !prompts_changed
             && !frame.reset
             && frame.rows.is_empty()
@@ -731,6 +765,7 @@ mod tests {
         pty.wait()?;
         let directory = ServerPath(cwd.as_os_str().as_bytes().to_vec());
         Ok(Owner {
+            graphics: muxy_protocol::Graphics::default(),
             info: SessionInfo {
                 id: SessionId::from(NonZeroU64::MIN),
                 directory: directory.clone(),
@@ -753,6 +788,7 @@ mod tests {
             prompts: Vec::new(),
             frame_state: None,
             next_tick: None,
+            synchronized_since: None,
             output_state: OutputState::Closed,
             archive: Archive::memory(1024),
             next_checkpoint: None,
@@ -770,6 +806,39 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn synchronized_frames_wait_for_completion_and_recover_after_timeout() -> Result<(), Fault> {
+        let mut owner = owner()?;
+        let (sink, events) = mpsc::channel();
+        owner.attach(AttachmentId(1), ChannelId(1), owner.size, sink)?;
+        events.try_iter().for_each(drop);
+        owner.feed(b"\x1b[?2026hpartial")?;
+        owner.tick()?;
+        assert!(
+            !events
+                .try_iter()
+                .any(|event| matches!(event, AttachmentEvent::Frame(_)))
+        );
+        assert!(owner.output_pending);
+        owner.feed(b" complete\x1b[?2026l")?;
+        owner.tick()?;
+        assert!(
+            events
+                .try_iter()
+                .any(|event| matches!(event, AttachmentEvent::Frame(_)))
+        );
+        owner.feed(b"\x1b[?2026hstalled")?;
+        owner.synchronized_since = Some(Instant::now().checked_sub(SYNC_TIMEOUT).unwrap());
+        owner.tick()?;
+        assert!(!owner.terminal.synchronized_output()?);
+        assert!(
+            events
+                .try_iter()
+                .any(|event| matches!(event, AttachmentEvent::Frame(_)))
+        );
+        Ok(())
     }
 
     #[test]

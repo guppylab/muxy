@@ -362,6 +362,7 @@ mod tests {
 
     fn frame(seq: u64, index: u16) -> ScreenFrame {
         ScreenFrame {
+            graphics: None,
             seq,
             reset: false,
             rows: vec![Row {
@@ -369,6 +370,7 @@ mod tests {
                 runs: vec![],
             }],
             cursor: Cursor {
+                shape: muxy_protocol::CursorShape::default(),
                 row: 0,
                 col: 0,
                 visible: true,

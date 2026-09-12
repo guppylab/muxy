@@ -18,6 +18,7 @@ pub enum ExitReason {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AttachSnapshot {
+    pub graphics: crate::Graphics,
     /// Prompt starts in history-then-screen row coordinates.
     pub prompts: Vec<u16>,
     pub channel: ChannelId,
@@ -134,6 +135,7 @@ pub struct Modifiers {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SavedScreen {
+    pub graphics: crate::Graphics,
     pub size: Size,
     pub rows: Vec<Row>,
     pub cursor: Cursor,

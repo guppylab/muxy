@@ -7,6 +7,7 @@ use muxy_protocol::{
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunGrid {
+    pub graphics: muxy_protocol::Graphics,
     pub prompts: BTreeSet<usize>,
     pub prompt_state: ScreenPrompts,
     pub links: ScreenLinks,
@@ -23,6 +24,7 @@ pub struct RunGrid {
 impl RunGrid {
     pub fn from_snapshot(snapshot: &AttachSnapshot) -> Self {
         let mut grid = Self {
+            graphics: snapshot.graphics.clone(),
             prompts: snapshot.prompts.iter().copied().map(usize::from).collect(),
             prompt_state: ScreenPrompts::default(),
             links: ScreenLinks::default(),
@@ -40,6 +42,9 @@ impl RunGrid {
     }
 
     pub fn apply(&mut self, frame: &ScreenFrame) {
+        if let Some(graphics) = &frame.graphics {
+            self.graphics = graphics.clone();
+        }
         self.links.frame_seq = frame.seq;
         self.prompt_state.frame_seq = frame.seq;
         if frame.reset || self.prompt_state.seq > frame.seq {
@@ -66,6 +71,7 @@ impl RunGrid {
     }
 
     pub fn resize(&mut self, size: Size) {
+        self.graphics = muxy_protocol::Graphics::default();
         self.links.rows.clear();
         self.prompts.clear();
         self.prompt_state.pending = false;
@@ -81,6 +87,7 @@ impl RunGrid {
         let mut cursor = screen.cursor;
         cursor.visible = false;
         Self {
+            graphics: screen.graphics,
             prompts: BTreeSet::new(),
             prompt_state: ScreenPrompts::default(),
             links: ScreenLinks::default(),
@@ -100,6 +107,7 @@ impl RunGrid {
         self.prompt_state.pending = false;
         if let Some(screen) = page.screen {
             self.links.rows.clear();
+            self.graphics = screen.graphics;
             self.size = screen.size;
             self.rows = screen.rows.into_iter().map(|row| row.runs).collect();
             self.cursor = screen.cursor;
@@ -249,11 +257,13 @@ mod tests {
 
     fn snapshot() -> AttachSnapshot {
         AttachSnapshot {
+            graphics: muxy_protocol::Graphics::default(),
             prompts: Vec::new(),
             channel: ChannelId(1),
             size: Size { cols: 10, rows: 3 },
             rows: vec![row(0, "first"), row(2, "third")],
             cursor: Cursor {
+                shape: muxy_protocol::CursorShape::default(),
                 row: 2,
                 col: 5,
                 visible: true,
@@ -269,10 +279,12 @@ mod tests {
 
     fn frame(seq: u64, reset: bool, rows: Vec<Row>) -> ScreenFrame {
         ScreenFrame {
+            graphics: None,
             seq,
             reset,
             rows,
             cursor: Cursor {
+                shape: muxy_protocol::CursorShape::default(),
                 row: 0,
                 col: 1,
                 visible: false,
@@ -445,11 +457,13 @@ mod prompt_tests {
 
     fn grid() -> RunGrid {
         RunGrid::from_snapshot(&AttachSnapshot {
+            graphics: muxy_protocol::Graphics::default(),
             prompts: vec![0, 3],
             channel: ChannelId(1),
             size: Size { cols: 10, rows: 4 },
             rows: vec![],
             cursor: Cursor {
+                shape: muxy_protocol::CursorShape::default(),
                 row: 1,
                 col: 0,
                 visible: true,
@@ -512,10 +526,12 @@ mod prompt_tests {
     fn future_marks_wait_for_frames_and_reset_frames_cannot_reuse_old_marks() {
         let mut grid = grid();
         let frame = |seq, reset| ScreenFrame {
+            graphics: None,
             seq,
             reset,
             rows: vec![],
             cursor: Cursor {
+                shape: muxy_protocol::CursorShape::default(),
                 row: 1,
                 col: 0,
                 visible: true,

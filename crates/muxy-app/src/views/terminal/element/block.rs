@@ -3,7 +3,7 @@ use gpui::{Bounds, Hsla, Pixels, point, px};
 pub(super) fn quads(
     text: &str,
     bounds: Bounds<Pixels>,
-    mut color: Hsla,
+    color: Hsla,
     scale: f32,
 ) -> Option<impl Iterator<Item = (Bounds<Pixels>, Hsla)>> {
     let eighths: &[[u8; 4]] = match text {
@@ -15,7 +15,7 @@ pub(super) fn quads(
         "▅" => &[[0, 3, 8, 8]],
         "▆" => &[[0, 2, 8, 8]],
         "▇" => &[[0, 1, 8, 8]],
-        "█" | "░" | "▒" | "▓" => &[[0, 0, 8, 8]],
+        "█" => &[[0, 0, 8, 8]],
         "▉" => &[[0, 0, 7, 8]],
         "▊" => &[[0, 0, 6, 8]],
         "▋" => &[[0, 0, 5, 8]],
@@ -38,12 +38,6 @@ pub(super) fn quads(
         "▟" => &[[4, 0, 8, 4], [0, 4, 8, 8]],
         _ => return None,
     };
-    color.a *= match text {
-        "░" => 64.0 / 255.0,
-        "▒" => 128.0 / 255.0,
-        "▓" => 192.0 / 255.0,
-        _ => 1.0,
-    };
     Some(
         eighths
             .iter()
@@ -62,7 +56,9 @@ pub(super) fn quads(
                 };
                 let quad = Bounds::from_corners(point(x(left), y(top)), point(x(right), y(bottom)));
                 (quad.size.width > px(0.0) && quad.size.height > px(0.0)).then_some((quad, color))
-            }),
+            })
+            .collect::<Vec<_>>()
+            .into_iter(),
     )
 }
 
@@ -178,22 +174,6 @@ mod tests {
                     .filter(|bounds| bounds.contains(&point(px(x), px(y))))
                     .count();
                 assert_eq!(covering, usize::from(filled), "{text} at ({x}, {y})");
-            }
-        }
-    }
-
-    #[test]
-    fn shade_coverage_preserves_the_foreground_and_faint_alpha() {
-        let bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(8.0), px(16.0)));
-        for alpha in [1.0, 0.5] {
-            let mut foreground: Hsla = rgb(0x12_34_56).into();
-            foreground.a = alpha;
-            for (text, coverage) in [("█", 255.0), ("░", 64.0), ("▒", 128.0), ("▓", 192.0)]
-            {
-                let quads: Vec<_> = quads(text, bounds, foreground, 1.0).unwrap().collect();
-                let mut expected = foreground;
-                expected.a *= coverage / 255.0;
-                assert_eq!(quads, vec![(bounds, expected)]);
             }
         }
     }

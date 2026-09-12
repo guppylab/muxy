@@ -13,6 +13,9 @@ pub(super) fn merge(older: &mut ScreenFrame, newer: ScreenFrame) {
     older.seq = newer.seq;
     older.cursor = newer.cursor;
     older.modes = newer.modes;
+    if newer.graphics.is_some() {
+        older.graphics = newer.graphics;
+    }
 }
 
 #[cfg(test)]
@@ -23,6 +26,7 @@ mod tests {
 
     pub(super) fn frame(seq: u64, reset: bool, indexes: &[u16]) -> ScreenFrame {
         ScreenFrame {
+            graphics: None,
             seq,
             reset,
             rows: indexes
@@ -33,6 +37,7 @@ mod tests {
                 })
                 .collect(),
             cursor: Cursor {
+                shape: muxy_protocol::CursorShape::default(),
                 row: 0,
                 col: 0,
                 visible: true,
@@ -71,5 +76,23 @@ mod tests {
         assert_eq!(older, reset);
         merge(&mut older, frame(4, false, &[1]));
         assert_eq!(older, frame(4, true, &[0, 1]));
+    }
+    #[test]
+    fn image_snapshots_survive_text_deltas_and_explicit_deletion() {
+        let mut older = frame(1, false, &[]);
+        let graphics = muxy_protocol::Graphics {
+            cell: muxy_protocol::CellSize {
+                width: 16,
+                height: 32,
+            },
+            ..muxy_protocol::Graphics::default()
+        };
+        older.graphics = Some(graphics.clone());
+        merge(&mut older, frame(2, false, &[1]));
+        assert_eq!(older.graphics, Some(graphics));
+        let mut deletion = frame(3, false, &[]);
+        deletion.graphics = Some(muxy_protocol::Graphics::default());
+        merge(&mut older, deletion);
+        assert_eq!(older.graphics, Some(muxy_protocol::Graphics::default()));
     }
 }

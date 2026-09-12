@@ -115,6 +115,7 @@ impl Screen {
         Self {
             rows: vec![Vec::new(); usize::from(size.rows)],
             cursor: Cursor {
+                shape: muxy_protocol::CursorShape::default(),
                 row: 0,
                 col: 0,
                 visible: true,

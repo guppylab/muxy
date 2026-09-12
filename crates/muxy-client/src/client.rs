@@ -134,7 +134,7 @@ impl Client {
     pub fn read_server_settings(&self) -> Result<muxy_protocol::ServerSettingsDoc, ClientError> {
         match self.request(RequestBody::ReadServerSettings)? {
             ReplyBody::ServerSettings(settings) => Ok(settings),
-            other => Err(ClientError::UnexpectedReply(other)),
+            other => Err(ClientError::UnexpectedReply(Box::new(other))),
         }
     }
 
@@ -144,7 +144,7 @@ impl Client {
     ) -> Result<(), ClientError> {
         match self.request(RequestBody::WriteServerSettings(settings))? {
             ReplyBody::ServerSettingsWritten => Ok(()),
-            other => Err(ClientError::UnexpectedReply(other)),
+            other => Err(ClientError::UnexpectedReply(Box::new(other))),
         }
     }
 
@@ -157,21 +157,21 @@ impl Client {
         match self.request(RequestBody::StopServerIfIdle)? {
             ReplyBody::ServerStopping => Ok(true),
             ReplyBody::ServerBusy => Ok(false),
-            other => Err(ClientError::UnexpectedReply(other)),
+            other => Err(ClientError::UnexpectedReply(Box::new(other))),
         }
     }
 
     pub fn stop_server(&self) -> Result<(), ClientError> {
         match self.request(RequestBody::StopServer)? {
             ReplyBody::ServerStopping => Ok(()),
-            other => Err(ClientError::UnexpectedReply(other)),
+            other => Err(ClientError::UnexpectedReply(Box::new(other))),
         }
     }
 
     pub fn list_sessions(&self) -> Result<Vec<SessionInfo>, ClientError> {
         match self.request(RequestBody::ListSessions)? {
             ReplyBody::Sessions(sessions) => Ok(sessions),
-            other => Err(ClientError::UnexpectedReply(other)),
+            other => Err(ClientError::UnexpectedReply(Box::new(other))),
         }
     }
 
@@ -179,35 +179,35 @@ impl Client {
         let directory = ServerPath(directory.as_os_str().as_bytes().to_vec());
         match self.request(RequestBody::CreateSession { directory, size })? {
             ReplyBody::SessionCreated(info) => Ok(info),
-            other => Err(ClientError::UnexpectedReply(other)),
+            other => Err(ClientError::UnexpectedReply(Box::new(other))),
         }
     }
 
     pub fn end_session(&self, id: SessionId) -> Result<(), ClientError> {
         match self.request(RequestBody::EndSession(id))? {
             ReplyBody::SessionEnded => Ok(()),
-            other => Err(ClientError::UnexpectedReply(other)),
+            other => Err(ClientError::UnexpectedReply(Box::new(other))),
         }
     }
 
     pub fn read_saved_screen(&self, id: SessionId) -> Result<SavedScreen, ClientError> {
         match self.request(RequestBody::ReadSavedScreen(id))? {
             ReplyBody::SavedScreen(screen) => Ok(screen),
-            other => Err(ClientError::UnexpectedReply(other)),
+            other => Err(ClientError::UnexpectedReply(Box::new(other))),
         }
     }
 
     pub fn discard_session(&self, id: SessionId) -> Result<(), ClientError> {
         match self.request(RequestBody::DiscardSession(id))? {
             ReplyBody::SessionDiscarded => Ok(()),
-            other => Err(ClientError::UnexpectedReply(other)),
+            other => Err(ClientError::UnexpectedReply(Box::new(other))),
         }
     }
 
     pub fn attach(&self, id: SessionId, size: Size) -> Result<Attachment, ClientError> {
         let (snapshot, process) = match self.request(RequestBody::Attach { session: id, size })? {
             ReplyBody::Attached { snapshot, process } => (*snapshot, process),
-            other => return Err(ClientError::UnexpectedReply(other)),
+            other => return Err(ClientError::UnexpectedReply(Box::new(other))),
         };
         Ok(Attachment {
             channel: snapshot.channel,
@@ -247,14 +247,14 @@ impl Client {
     fn read_history(&self, request: RequestBody) -> Result<HistoryPage, ClientError> {
         match self.request(request)? {
             ReplyBody::HistoryPage(page) => Ok(page),
-            other => Err(ClientError::UnexpectedReply(other)),
+            other => Err(ClientError::UnexpectedReply(Box::new(other))),
         }
     }
 
     pub fn detach(&self, channel: ChannelId) -> Result<(), ClientError> {
         match self.request(RequestBody::Detach(channel))? {
             ReplyBody::Detached => Ok(()),
-            other => Err(ClientError::UnexpectedReply(other)),
+            other => Err(ClientError::UnexpectedReply(Box::new(other))),
         }
     }
 
@@ -274,14 +274,14 @@ impl Client {
             max_results,
         })? {
             ReplyBody::SearchPage(page) => Ok(page),
-            other => Err(ClientError::UnexpectedReply(other)),
+            other => Err(ClientError::UnexpectedReply(Box::new(other))),
         }
     }
 
     pub fn resize(&self, channel: ChannelId, size: Size) -> Result<(), ClientError> {
         match self.request(RequestBody::Resize { channel, size })? {
             ReplyBody::Resized => Ok(()),
-            other => Err(ClientError::UnexpectedReply(other)),
+            other => Err(ClientError::UnexpectedReply(Box::new(other))),
         }
     }
 
@@ -289,20 +289,29 @@ impl Client {
     pub fn set_terminal_colors(&self, colors: TerminalColors) -> Result<(), ClientError> {
         match self.request(RequestBody::SetTerminalColors(colors))? {
             ReplyBody::TerminalColorsSet => Ok(()),
-            other => Err(ClientError::UnexpectedReply(other)),
+            other => Err(ClientError::UnexpectedReply(Box::new(other))),
         }
     }
 
     pub fn ping(&self) -> Result<(), ClientError> {
         match self.request(RequestBody::Ping)? {
             ReplyBody::Pong => Ok(()),
-            other => Err(ClientError::UnexpectedReply(other)),
+            other => Err(ClientError::UnexpectedReply(Box::new(other))),
         }
     }
 
     pub fn send_input(&self, channel: ChannelId, bytes: &[u8]) -> Result<(), ClientError> {
         session_channel(channel)?;
         self.send(channel, &Message::Input(bytes.to_vec()))
+    }
+
+    pub fn send_cell_size(
+        &self,
+        channel: ChannelId,
+        cell: muxy_protocol::CellSize,
+    ) -> Result<(), ClientError> {
+        session_channel(channel)?;
+        self.send(channel, &Message::CellSize(cell))
     }
 
     pub fn send_mouse(&self, channel: ChannelId, event: MouseEvent) -> Result<(), ClientError> {

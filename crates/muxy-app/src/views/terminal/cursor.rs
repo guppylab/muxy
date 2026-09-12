@@ -85,12 +85,14 @@ mod tests {
         Attachment {
             channel: ChannelId(1),
             grid: RunGrid {
+                graphics: muxy_protocol::Graphics::default(),
                 prompts: std::collections::BTreeSet::default(),
                 prompt_state: muxy_client::ScreenPrompts::default(),
                 links: muxy_client::ScreenLinks::default(),
                 size: Size { cols: 20, rows: 3 },
                 rows: vec![vec![]; 3],
                 cursor: Cursor {
+                    shape: muxy_protocol::CursorShape::default(),
                     row: 0,
                     col: 0,
                     visible: true,
@@ -146,6 +148,7 @@ mod tests {
             let grid = pane.grid.as_ref().unwrap();
             pane.apply(
                 &ScreenFrame {
+                    graphics: None,
                     seq: 1,
                     reset: false,
                     rows: vec![],
@@ -166,6 +169,7 @@ mod tests {
             let grid = pane.grid.as_ref().unwrap();
             pane.apply(
                 &ScreenFrame {
+                    graphics: None,
                     seq: 2,
                     reset: false,
                     rows: vec![],

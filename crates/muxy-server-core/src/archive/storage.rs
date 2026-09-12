@@ -7,7 +7,7 @@ use muxy_protocol::{Run, SavedScreen};
 
 use super::{Record, SCREEN_LIMIT};
 
-const MAGIC: &[u8; 8] = b"MUXYSAV2";
+const MAGIC: &[u8; 8] = b"MUXYSAV3";
 const HEADER_LEN: u64 = 32;
 
 #[derive(Debug)]
@@ -19,6 +19,7 @@ pub(super) enum StoredRecord {
 #[derive(Debug)]
 pub(super) struct IndexedRecord {
     file: BufReader<File>,
+    legacy: bool,
     screen: SavedScreen,
     total: usize,
     generation: u64,
@@ -32,7 +33,7 @@ impl StoredRecord {
         let mut file = BufReader::new(File::open(path)?);
         let mut magic = [0; 8];
         file.read_exact(&mut magic)?;
-        if &magic != MAGIC {
+        if &magic != MAGIC && &magic != b"MUXYSAV2" {
             return super::read_record(path, legacy_budget).map(Self::Legacy);
         }
         let screen_len = read_u64(&mut file)?;
@@ -49,10 +50,16 @@ impl StoredRecord {
         }
         let mut bytes = vec![0; usize::try_from(screen_len).map_err(io::Error::other)?];
         file.read_exact(&mut bytes)?;
-        let screen = postcard::from_bytes::<SavedScreen>(&bytes).map_err(io::Error::other)?;
+        let screen = if &magic == b"MUXYSAV2" {
+            postcard::from_bytes::<super::legacy::Screen>(&bytes).map(Into::into)
+        } else {
+            postcard::from_bytes::<SavedScreen>(&bytes)
+        }
+        .map_err(io::Error::other)?;
         super::validate_screen(&screen)?;
         let mut record = IndexedRecord {
             file,
+            legacy: &magic == b"MUXYSAV2",
             screen,
             total: usize::try_from(total).map_err(io::Error::other)?,
             generation,
@@ -103,7 +110,13 @@ impl StoredRecord {
                 record.file.seek(SeekFrom::Start(start))?;
                 let mut bytes = vec![0; usize::try_from(len).map_err(io::Error::other)?];
                 record.file.read_exact(&mut bytes)?;
-                postcard::from_bytes(&bytes).map_err(io::Error::other)
+                if record.legacy {
+                    postcard::from_bytes::<Vec<super::legacy::Run>>(&bytes)
+                        .map(|runs| runs.into_iter().map(Into::into).collect())
+                } else {
+                    postcard::from_bytes(&bytes)
+                }
+                .map_err(io::Error::other)
             }
         }
     }

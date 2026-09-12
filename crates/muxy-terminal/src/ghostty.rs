@@ -6,7 +6,7 @@ use libghostty_vt::render::{
     CellIteration, CellIterator, Dirty, RenderState, RowIteration, RowIterator,
 };
 use libghostty_vt::screen::{CellContentTag, CellWide, Screen, TrackedGridRef};
-use libghostty_vt::style::{PaletteIndex, RgbColor, StyleColor, Underline};
+use libghostty_vt::style::{PaletteIndex, RgbColor, StyleColor, Underline as EngineUnderline};
 use libghostty_vt::terminal::{
     CompressionMode, Mode, Options, Point, PointCoordinate, PointSpace, ScrollViewport,
     Terminal as Engine,
@@ -25,6 +25,7 @@ type EngineResult<T> = Result<T, libghostty_vt::Error>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TerminalArchive {
+    pub graphics: crate::Graphics,
     pub size: Size,
     pub rows: Vec<Row>,
     pub cursor: Cursor,
@@ -53,6 +54,8 @@ pub struct Terminal {
     mouse_encoder: mouse::Encoder<'static>,
     mouse_event: mouse::Event<'static>,
     held_buttons: Vec<MouseButton>,
+    graphics_cache: crate::graphics::Cache,
+    cell: crate::CellSize,
 }
 
 impl Terminal {
@@ -67,6 +70,8 @@ impl Terminal {
         engine
             .set_default_cursor_blink(Some(true))
             .map_err(create)?;
+        crate::graphics::configure(&mut engine).map_err(create)?;
+        engine.resize(size.cols, size.rows, 8, 16).map_err(create)?;
         let pty_output = Rc::new(RefCell::new(Vec::new()));
         let sink = Rc::clone(&pty_output);
         engine
@@ -108,6 +113,8 @@ impl Terminal {
             },
             mouse_event: mouse::Event::new().map_err(create)?,
             held_buttons: Vec::new(),
+            graphics_cache: crate::graphics::Cache::default(),
+            cell: crate::CellSize::default(),
         })
     }
 
@@ -172,7 +179,12 @@ impl Terminal {
 
     pub fn resize(&mut self, size: Size) -> Result<(), TerminalError> {
         self.engine
-            .resize(size.cols, size.rows, 0, 0)
+            .resize(
+                size.cols,
+                size.rows,
+                u32::from(self.cell.width),
+                u32::from(self.cell.height),
+            )
             .map_err(|error| TerminalError::wrap(TerminalStep::Resize, error))?;
         self.redraw_all = true;
         self.size = size;
@@ -181,6 +193,37 @@ impl Terminal {
         self.history_generation = self.history_generation.wrapping_add(1);
         self.history_anchor = None;
         Ok(())
+    }
+
+    pub fn graphics(&mut self) -> Result<crate::Graphics, TerminalError> {
+        self.graphics_cache
+            .snapshot(&self.engine, self.cell)
+            .map_err(|error| TerminalError::wrap(TerminalStep::Render, error))
+    }
+
+    pub fn set_cell_size(&mut self, cell: crate::CellSize) -> Result<(), TerminalError> {
+        self.cell = cell;
+        self.engine
+            .resize(
+                self.size.cols,
+                self.size.rows,
+                u32::from(cell.width),
+                u32::from(cell.height),
+            )
+            .map_err(|error| TerminalError::wrap(TerminalStep::Resize, error))
+    }
+
+    pub fn synchronized_output(&self) -> Result<bool, TerminalError> {
+        self.engine
+            .mode(Mode::SYNC_OUTPUT)
+            .map_err(|error| TerminalError::wrap(TerminalStep::Mode, error))
+    }
+
+    pub fn end_synchronized_output(&mut self) -> Result<(), TerminalError> {
+        self.engine
+            .set_mode(Mode::SYNC_OUTPUT, false)
+            .map(|_| ())
+            .map_err(|error| TerminalError::wrap(TerminalStep::Mode, error))
     }
 
     pub fn cursor_blinking(&self) -> Result<bool, TerminalError> {
@@ -195,7 +238,18 @@ impl Terminal {
         let col = self.engine.cursor_x().map_err(query)?;
         let snapshot = self.render.update(&self.engine).map_err(query)?;
         let visible = snapshot.cursor_visible().map_err(query)?;
-        Ok(Cursor { row, col, visible })
+        let shape = match snapshot.cursor_visual_style().map_err(query)? {
+            libghostty_vt::render::CursorVisualStyle::Bar => crate::CursorShape::Bar,
+            libghostty_vt::render::CursorVisualStyle::Underline => crate::CursorShape::Underline,
+            libghostty_vt::render::CursorVisualStyle::BlockHollow => crate::CursorShape::Hollow,
+            _ => crate::CursorShape::Block,
+        };
+        Ok(Cursor {
+            shape,
+            row,
+            col,
+            visible,
+        })
     }
 
     pub fn modes(&self) -> Result<Modes, TerminalError> {
@@ -407,6 +461,7 @@ impl Terminal {
             })?,
         };
         Ok(TerminalArchive {
+            graphics: self.graphics()?,
             size: self.size,
             rows: self.screen()?,
             cursor: self.cursor()?,
@@ -632,7 +687,17 @@ fn cell_style(cell: &CellIteration<'static, '_>) -> EngineResult<Style> {
         bg,
         bold: style.bold,
         italic: style.italic,
-        underline: style.underline != Underline::None,
+        underline: match style.underline {
+            EngineUnderline::None => crate::Underline::None,
+            EngineUnderline::Double => crate::Underline::Double,
+            EngineUnderline::Curly => crate::Underline::Curly,
+            EngineUnderline::Dotted => crate::Underline::Dotted,
+            EngineUnderline::Dashed => crate::Underline::Dashed,
+            _ => crate::Underline::Single,
+        },
+        underline_color: color(style.underline_color),
+        invisible: style.invisible,
+        overline: style.overline,
         inverse: style.inverse,
         strikethrough: style.strikethrough,
         faint: style.faint,

@@ -14,7 +14,7 @@ mod settings;
 pub use appearance::Appearance;
 pub use chord::KeyChord;
 pub use error::{Error, Result};
-pub use ghostty::{CellHeight, TerminalSettings};
+pub use ghostty::{CellHeight, FontMap, FontOptions, TerminalSettings};
 pub use keymap::{Action, Keymap};
 pub use quick_terminal::QuickTerminalSettings;
 pub use settings::{

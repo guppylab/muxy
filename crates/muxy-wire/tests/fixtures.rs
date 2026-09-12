@@ -165,5 +165,6 @@ fn kind_name(kind: MessageKind) -> &'static str {
         MessageKind::Frame => "frame",
         MessageKind::Metadata => "metadata",
         MessageKind::Mouse => "mouse",
+        MessageKind::CellSize => "cell_size",
     }
 }

@@ -1,3 +1,4 @@
+mod legacy;
 mod storage;
 
 use storage::StoredRecord;
@@ -26,7 +27,7 @@ use crate::ServerError;
 use crate::search::Search;
 use crate::session::frames;
 
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 const SCREEN_LIMIT: u64 = 16 * 1024 * 1024 - 1024;
 type Completion = Sender<Result<(), String>>;
 type Queue = Arc<Mutex<BTreeMap<SessionId, Job>>>;
@@ -43,6 +44,7 @@ impl Record {
         Self {
             version: VERSION,
             screen: SavedScreen {
+                graphics: frames::graphics(terminal.graphics),
                 size: muxy_protocol::Size {
                     cols: terminal.size.cols,
                     rows: terminal.size.rows,
@@ -529,7 +531,24 @@ fn read_record(path: &Path, budget: u64) -> io::Result<Record> {
             "saved terminal record exceeds the size limit",
         ));
     }
-    let record: Record = postcard::from_bytes(&bytes).map_err(io::Error::other)?;
+    let (version, _) = postcard::take_from_bytes::<u32>(&bytes).map_err(io::Error::other)?;
+    let record = if version == 1 {
+        let old: legacy::Record = postcard::from_bytes(&bytes).map_err(io::Error::other)?;
+        if old.version != 1 {
+            return Err(io::Error::other("unsupported legacy terminal record"));
+        }
+        Record {
+            version: VERSION,
+            screen: old.screen.into(),
+            history: old
+                .history
+                .into_iter()
+                .map(|row| row.into_iter().map(Into::into).collect())
+                .collect(),
+        }
+    } else {
+        postcard::from_bytes::<Record>(&bytes).map_err(io::Error::other)?
+    };
     record.validate()?;
     Ok(record)
 }
@@ -610,6 +629,37 @@ mod tests {
         }
         terminal.feed(marker.as_bytes());
         Ok(terminal.archive()?)
+    }
+
+    #[test]
+    fn pre_render_upgrade_records_keep_screen_history_and_styles() -> TestResult {
+        let directory = Directory::new()?;
+        for (name, bytes) in [
+            (
+                "v1",
+                include_bytes!("../tests/fixtures/render-v1.postcard").as_slice(),
+            ),
+            (
+                "v2",
+                include_bytes!("../tests/fixtures/render-v2.postcard").as_slice(),
+            ),
+        ] {
+            let path = directory.0.join(name);
+            fs::write(&path, bytes)?;
+            let mut record = StoredRecord::open(&path, 65536)?;
+            assert_eq!(record.screen().rows[0].runs[0].text, "preserved");
+            assert_eq!(
+                record.screen().rows[0].runs[0].style.underline,
+                muxy_protocol::Underline::Single
+            );
+            assert_eq!(
+                record.screen().cursor.shape,
+                muxy_protocol::CursorShape::Block
+            );
+            assert_eq!(record.row(0)?[0].text, "preserved");
+            assert_eq!(record.total(), 1);
+        }
+        Ok(())
     }
 
     #[test]

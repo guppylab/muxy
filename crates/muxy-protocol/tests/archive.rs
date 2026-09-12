@@ -5,6 +5,7 @@ use muxy_protocol::{
 
 fn screen() -> SavedScreen {
     SavedScreen {
+        graphics: muxy_protocol::Graphics::default(),
         size: Size { cols: 4, rows: 1 },
         rows: vec![Row {
             index: 0,
@@ -15,6 +16,7 @@ fn screen() -> SavedScreen {
             }],
         }],
         cursor: Cursor {
+            shape: muxy_protocol::CursorShape::default(),
             row: 0,
             col: 3,
             visible: false,

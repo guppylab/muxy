@@ -21,7 +21,9 @@ pub use control::{
 pub use ids::{CONTROL, ChannelId, RequestId, SessionId};
 pub use message::{ChannelKind, Message};
 pub use path::ServerPath;
-pub use screen::{Color, Cursor, Modes, Row, Run, ScreenFrame, Size, Style};
+pub use screen::{
+    Color, Cursor, CursorShape, Modes, Row, Run, ScreenFrame, Size, Style, Underline,
+};
 pub use session::{
     AttachSnapshot, ExitReason, ForegroundProcess, HistoryCursor, HistoryPage, InputModes, LinkRow,
     LinkSpan, MetadataEvent, Modifiers, MouseAction, MouseButton, MouseEvent, SavedScreen,
@@ -32,3 +34,8 @@ pub use validate::{
     validate_search, validate_size, validate_versions,
 };
 pub use version::{SUPPORTED, V1, Version};
+
+mod graphics;
+pub use graphics::{
+    CellSize, GraphicImage, GraphicPlacement, Graphics, MAX_GRAPHICS_BYTES, MAX_GRAPHICS_PLACEMENTS,
+};

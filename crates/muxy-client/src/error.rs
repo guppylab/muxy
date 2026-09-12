@@ -13,7 +13,7 @@ pub enum ClientError {
     Protocol(String),
     Invalid(ErrorCode),
     Server(ErrorReply),
-    UnexpectedReply(ReplyBody),
+    UnexpectedReply(Box<ReplyBody>),
     Timeout,
     Disconnected,
 }

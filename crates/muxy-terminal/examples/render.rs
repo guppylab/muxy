@@ -140,7 +140,10 @@ fn style_label(style: Style) -> String {
     let flags = [
         (style.bold, "bold"),
         (style.italic, "italic"),
-        (style.underline, "underline"),
+        (
+            style.underline != muxy_terminal::Underline::None,
+            "underline",
+        ),
         (style.inverse, "inverse"),
         (style.strikethrough, "strikethrough"),
         (style.faint, "faint"),

@@ -1057,3 +1057,59 @@ fn incompatible_beta_hello_never_opens_a_request_channel() -> TestResult {
     assert_eq!(fixture.registry.list(), vec![session]);
     Ok(())
 }
+
+#[test]
+fn inline_graphics_and_cell_dimensions_survive_frames_and_reattach() -> TestResult {
+    let fixture = Fixture::new()?;
+    let mut first = fixture.client(true)?;
+    let info = fixture.create(&mut first)?;
+    let channel = first.attach(info.id)?.channel;
+    first.quiet()?;
+    let cell = muxy_protocol::CellSize {
+        width: 16,
+        height: 32,
+    };
+    first.send(channel, Message::CellSize(cell))?;
+    first.input(
+        channel,
+        b"printf '\\033[H\\033[6 q\\033_Ga=T,q=2,f=32,s=1,v=1,i=1,c=2,r=1;/wAA/w==\\033\\\\'\n",
+    )?;
+    let graphics = loop {
+        match first.receive()? {
+            (received, Message::Frame(frame)) if received == channel => {
+                first.ack(channel, frame.seq)?;
+                if let Some(graphics) = frame
+                    .graphics
+                    .filter(|graphics| !graphics.images.is_empty())
+                {
+                    assert_eq!(frame.cursor.shape, muxy_protocol::CursorShape::Bar);
+                    break graphics;
+                }
+            }
+            (_, Message::Metadata(_)) => {}
+            other => return Err(format!("unexpected graphics response: {other:?}").into()),
+        }
+    };
+    assert_eq!(graphics.cell, cell);
+    assert_eq!(graphics.images[0].rgba.as_ref(), &[255, 0, 0, 255]);
+    assert_eq!(graphics.placements[0].size, [32, 32]);
+    let mut second = fixture.client(true)?;
+    let snapshot = second.attach(info.id)?;
+    assert_eq!(snapshot.graphics, graphics);
+    first.input(channel, b"printf '\\033_Ga=d,d=A,q=2\\033\\\\'\n")?;
+    loop {
+        match first.receive()? {
+            (received, Message::Frame(frame)) if received == channel => {
+                first.ack(channel, frame.seq)?;
+                if frame.graphics.is_some_and(|graphics| {
+                    graphics.images.is_empty() && graphics.placements.is_empty()
+                }) {
+                    break;
+                }
+            }
+            (_, Message::Metadata(_)) => {}
+            other => return Err(format!("unexpected deletion response: {other:?}").into()),
+        }
+    }
+    Ok(())
+}

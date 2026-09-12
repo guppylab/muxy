@@ -14,4 +14,4 @@ workspace = true
 
 [dependencies]
 muxy-core = { path = "../muxy-core" }
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive", "rc"] }

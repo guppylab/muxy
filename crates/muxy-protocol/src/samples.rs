@@ -26,17 +26,14 @@ impl Message {
                 },
             }],
         }];
-        let cursor = Cursor {
-            row: 0,
-            col: 3,
-            visible: true,
-        };
+        let cursor = sample_cursor();
         let modes = Modes {
             application_cursor_keys: true,
             bracketed_paste: true,
         };
 
         let mut samples = vec![
+            Self::CellSize(crate::CellSize::default()),
             hello_sample(),
             Self::Request {
                 id: RequestId(1),
@@ -52,6 +49,7 @@ impl Message {
                 id: RequestId(2),
                 body: ReplyBody::Attached {
                     snapshot: Box::new(AttachSnapshot {
+                        graphics: crate::Graphics::default(),
                         prompts: vec![0],
                         channel,
                         size,
@@ -77,6 +75,7 @@ impl Message {
             }),
             Self::Input(b"pwd\r".to_vec()),
             Self::Frame(ScreenFrame {
+                graphics: None,
                 seq: 1,
                 reset: true,
                 rows,
@@ -286,5 +285,14 @@ fn hello_sample() -> Message {
     Message::Hello {
         versions: vec![V1],
         compatibility: crate::COMPATIBILITY,
+    }
+}
+
+fn sample_cursor() -> Cursor {
+    Cursor {
+        shape: crate::CursorShape::default(),
+        row: 0,
+        col: 3,
+        visible: true,
     }
 }

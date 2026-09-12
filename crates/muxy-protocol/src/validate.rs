@@ -59,6 +59,17 @@ impl Message {
             Self::Reply { body, .. } => validate_reply(body),
             Self::Input(input) => validate_input(input),
             Self::Mouse(event) => validate_mouse(event),
+            Self::CellSize(cell) => {
+                if (1..=4096).contains(&cell.width) && (1..=4096).contains(&cell.height) {
+                    Ok(())
+                } else {
+                    Err(ErrorCode::BadSize)
+                }
+            }
+            Self::Frame(frame) => frame
+                .graphics
+                .as_ref()
+                .map_or(Ok(()), crate::Graphics::validate),
             Self::Metadata(MetadataEvent::ScreenPrompts { rows, .. }) => {
                 validate_prompts(rows, usize::from(MAX_ROWS))
             }
@@ -69,7 +80,6 @@ impl Message {
             | Self::VersionUnsupported
             | Self::SessionEnded { .. }
             | Self::Fatal(_)
-            | Self::Frame(_)
             | Self::Metadata(
                 MetadataEvent::Title(_)
                 | MetadataEvent::ForegroundProcess { .. }
@@ -168,6 +178,7 @@ fn validate_reply(body: &ReplyBody) -> Result<(), ErrorCode> {
         }
         ReplyBody::SessionCreated(session) => validate_path(&session.directory),
         ReplyBody::Attached { snapshot, .. } => {
+            snapshot.graphics.validate()?;
             validate_size(snapshot.size)?;
             validate_path(&snapshot.directory)?;
             validate_history(
@@ -241,6 +252,7 @@ fn validate_history(
 }
 
 fn validate_saved_screen(screen: &SavedScreen) -> Result<(), ErrorCode> {
+    screen.graphics.validate()?;
     validate_size(screen.size)?;
     if screen.rows.len() != usize::from(screen.size.rows)
         || screen.cursor.row >= screen.size.rows
