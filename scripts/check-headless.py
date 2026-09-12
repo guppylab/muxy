@@ -71,7 +71,7 @@ def main():
         binary = ROOT / "target/release/muxy"
     run(sys.executable, ROOT / "scripts/audit-linux.py", binary, "--target", args.target)
     run(sys.executable, ROOT / "scripts/smoke-headless.py", binary)
-    run("cargo", "test", "--locked", "-p", "muxy-cli", "--test", "server", "--test", "commands",
+    run("cargo", "test", "--locked", "-p", "muxy-cli", "--test", "server", "--test", "commands", "--test", "tui",
         env={**os.environ, "MUXY_TEST_RUNTIME": str(binary)})
 
 

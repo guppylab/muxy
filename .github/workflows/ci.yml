@@ -55,7 +55,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config zsh fish binutils
+      - run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config zsh fish binutils vim-tiny less
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.92.0
@@ -88,7 +88,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config zsh fish binutils
+      - run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config zsh fish binutils vim-tiny less
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.92.0

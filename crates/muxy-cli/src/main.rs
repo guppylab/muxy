@@ -1,5 +1,11 @@
 //! Unified local command-line client and server composition; no desktop dependencies.
 mod args;
+mod input;
+mod render;
+mod state;
+mod terminal;
+mod tui;
+mod worker;
 
 use args::Command;
 use muxy_protocol::{
@@ -35,16 +41,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     match command {
         Command::Help => writeln!(
             io::stdout(),
-            "Muxy — local terminal sessions\n\nUsage: muxy [COMMAND]\n\n  server [--socket PATH --settings PATH --log PATH]\n  project list\n  project add <directory> [--name NAME]\n  --help | --version | --build-info\n\nInteractive mode is not yet available in this development build."
+            "Muxy — local terminal sessions\n\nUsage: muxy [COMMAND]\n\n  (no command)  Open the terminal client; Ctrl-B ? shows help\n  server [--socket PATH --settings PATH --log PATH]\n  project list\n  project add <directory> [--name NAME]\n  --help | --version | --build-info"
         )?,
         Command::Version => writeln!(io::stdout(), "muxy {}", env!("CARGO_PKG_VERSION"))?,
         Command::BuildInfo => {
             serde_json::to_writer(io::stdout().lock(), &muxy_protocol::BuildInfo::current())?;
         }
         Command::Server(arguments) => muxy_server::run(arguments)?,
-        Command::Interactive => {
-            return Err("interactive mode is not yet available in this development build".into());
-        }
+        Command::Interactive => tui::run().map_err(io::Error::other)?,
         Command::Projects => {
             for project in client()?.catalog()?.projects {
                 writeln!(

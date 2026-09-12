@@ -265,6 +265,7 @@ impl Registry {
             self.shell_integration.as_ref(),
             directory,
             session::pty_size(size),
+            (self.catalog.identity(), id),
         )
         .and_then(|pty| {
             session::start(

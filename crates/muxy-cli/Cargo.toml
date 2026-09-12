@@ -23,7 +23,13 @@ muxy-client = { path = "../muxy-client" }
 muxy-app-core = { path = "../muxy-app-core" }
 muxy-server = { path = "../muxy-server" }
 serde_json.workspace = true
+serde = { version = "1.0", features = ["derive"] }
+ratatui = { version = "=0.30.2", default-features = false, features = ["crossterm", "underline-color"] }
+signal-hook = "0.4"
 
 [dev-dependencies]
 muxy-transport = { path = "../muxy-transport" }
 muxy-wire = { path = "../muxy-wire" }
+muxy-pty = { path = "../muxy-pty" }
+muxy-terminal = { path = "../muxy-terminal" }
+tempfile = "3"

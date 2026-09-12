@@ -197,6 +197,10 @@ impl State {
 }
 
 impl Catalog {
+    pub(crate) fn identity(&self) -> ServerIdentity {
+        self.lock().server
+    }
+
     pub(crate) fn memory() -> Self {
         Self::from_state(
             State::fresh(&std::env::home_dir().unwrap_or_else(|| PathBuf::from("/"))),

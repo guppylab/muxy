@@ -24,6 +24,7 @@ pub(crate) fn spawn_shell(
     integration: Option<&crate::ShellIntegration>,
     directory: &Path,
     size: PtySize,
+    identity: (muxy_protocol::ServerIdentity, muxy_protocol::SessionId),
 ) -> Result<Pty, ServerError> {
     if !directory.is_dir() {
         return Err(ServerError::new(
@@ -35,7 +36,7 @@ pub(crate) fn spawn_shell(
         program: resolve_shell(settings),
         args: vec![OsString::from(LOGIN_FLAG)],
         cwd: directory.to_path_buf(),
-        env: environment(),
+        env: environment(identity),
         size,
     };
     request.env.retain(|(name, _)| name != "SHELL");
@@ -75,8 +76,16 @@ fn select_shell(configured: Option<PathBuf>, inherited: Option<OsString>, linux:
         .unwrap_or_else(|| PathBuf::from(if linux { "/bin/sh" } else { FALLBACK_SHELL }))
 }
 
-fn environment() -> Vec<(OsString, OsString)> {
+fn environment(
+    identity: (muxy_protocol::ServerIdentity, muxy_protocol::SessionId),
+) -> Vec<(OsString, OsString)> {
     let mut env: Vec<_> = env::vars_os().collect();
+    env.retain(|(name, _)| name != "MUXY_SERVER_ID" && name != "MUXY_SESSION_ID");
+    env.push(("MUXY_SERVER_ID".into(), identity.0.to_string().into()));
+    env.push((
+        "MUXY_SESSION_ID".into(),
+        identity.1.get().to_string().into(),
+    ));
     env.extend(
         TERMINAL_ENV
             .iter()

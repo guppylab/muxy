@@ -45,7 +45,7 @@ muxy-ui = ["muxy-core"]
 [workspace.metadata.architecture.allowed-dev-dependencies]
 muxy-app = ["muxy-wire"]
 muxy-client = ["muxy-server-core"]
-muxy-cli = ["muxy-transport", "muxy-wire"]
+muxy-cli = ["muxy-transport", "muxy-wire", "muxy-pty", "muxy-terminal"]
 
 [workspace.package]
 version = "2.0.0-beta-0"
