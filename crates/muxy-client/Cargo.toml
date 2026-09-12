@@ -14,10 +14,11 @@ workspace = true
 
 [dependencies]
 serde_json.workspace = true
-tempfile = "3"
+muxy-core = { path = "../muxy-core" }
 muxy-protocol = { path = "../muxy-protocol" }
 muxy-transport = { path = "../muxy-transport" }
 muxy-wire = { path = "../muxy-wire" }
 
 [dev-dependencies]
+tempfile = "3"
 muxy-server-core = { path = "../muxy-server-core" }

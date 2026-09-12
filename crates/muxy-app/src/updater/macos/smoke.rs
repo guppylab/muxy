@@ -70,6 +70,56 @@ fn output(path: &Path) -> Result<String> {
 
 #[test]
 #[ignore = "requires MUXY_TEST_SERVER, MUXY_TEST_SIGN_IDENTITY and MUXY_TEST_SIGN_TEAM; uses only temporary bundles"]
+fn another_profiles_server_retains_its_bundle_without_a_tui() -> Result<()> {
+    let identity = std::env::var("MUXY_TEST_SIGN_IDENTITY")?;
+    let binary = PathBuf::from(std::env::var("MUXY_TEST_SERVER")?);
+    let directory = tempfile::tempdir()?;
+    let bundle = directory.path().join("Muxy Beta.app");
+    signed_bundle(&bundle, &binary, &identity)?;
+    let installation = Installation {
+        bundle: bundle.clone(),
+        team: std::env::var("MUXY_TEST_SIGN_TEAM")?,
+    };
+    let first = directory.path().join("first");
+    let second = directory.path().join("second");
+    let mut server = start_server(&bundle, &first)?;
+    let mut other = start_server(&bundle, &second)?;
+    let client = connect(&first.join("server.sock"))?;
+    let other_client = connect(&second.join("server.sock"))?;
+    let info = client.server_info().clone();
+    assert_ne!(info.instance, other_client.server_info().instance);
+    drop(other_client);
+    let retired = replace_bundle(&installation, &info, &binary, &identity)?;
+    client.stop_server()?;
+    server.0.wait()?;
+    server = start_server(&bundle, &first)?;
+    let replacement = connect(&first.join("server.sock"))?;
+    installation.cleanup(&first.join("server.sock"))?;
+    assert!(retired.join("previous.app").exists());
+    assert!(other.0.try_wait()?.is_none());
+    connect(&second.join("server.sock"))?.stop_server()?;
+    other.0.wait()?;
+    installation.cleanup(&first.join("server.sock"))?;
+    assert!(!retired.exists());
+    replacement.stop_server()?;
+    server.0.wait()?;
+    Ok(())
+}
+
+fn start_server(bundle: &Path, profile: &Path) -> Result<Server> {
+    std::fs::create_dir_all(profile)?;
+    Ok(Server(
+        Command::new(bundle.join("Contents/MacOS/muxy-server"))
+            .env("MUXY_DIR", profile)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?,
+    ))
+}
+
+#[test]
+#[ignore = "requires MUXY_TEST_SERVER, MUXY_TEST_SIGN_IDENTITY and MUXY_TEST_SIGN_TEAM; uses only temporary bundles"]
 fn signed_bundle_updates_preserve_shell_and_retire_only_unused_bundles() -> Result<()> {
     let identity = std::env::var("MUXY_TEST_SIGN_IDENTITY")?;
     let team = std::env::var("MUXY_TEST_SIGN_TEAM")?;

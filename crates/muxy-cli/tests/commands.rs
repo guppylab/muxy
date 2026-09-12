@@ -37,7 +37,7 @@ fn linked_client_finds_its_sibling_server_and_reuses_a_server_when_the_sibling_i
     fs::create_dir(&package)?;
     let client = package.join("muxy");
     let server = package.join("muxy-server");
-    fs::copy(support::binary(), &client)?;
+    copy_executable(&support::binary(), &client)?;
     let link = profile.0.join("muxy");
     symlink(&client, &link)?;
     let invoke = || {
@@ -50,7 +50,7 @@ fn linked_client_finds_its_sibling_server_and_reuses_a_server_when_the_sibling_i
     let missing = invoke()?;
     assert!(!missing.status.success());
     assert!(String::from_utf8(missing.stderr)?.contains(&server.display().to_string()));
-    fs::copy(support::binary().with_file_name("muxy-server"), &server)?;
+    copy_executable(&support::binary().with_file_name("muxy-server"), &server)?;
     let launched = invoke()?;
     assert!(launched.status.success(), "{launched:?}");
     let first = Client::connect(&profile.socket())?;
@@ -62,6 +62,14 @@ fn linked_client_finds_its_sibling_server_and_reuses_a_server_when_the_sibling_i
         first.server_info(),
         Client::connect(&profile.socket())?.server_info()
     );
+    Ok(())
+}
+
+fn copy_executable(source: &std::path::Path, destination: &std::path::Path) -> Result {
+    // A separate process prevents concurrent test forks inheriting a writable
+    // destination descriptor and temporarily blocking Linux exec with ETXTBSY.
+    let output = Command::new("cp").args([source, destination]).output()?;
+    assert!(output.status.success(), "{output:?}");
     Ok(())
 }
 impl Drop for Profile {

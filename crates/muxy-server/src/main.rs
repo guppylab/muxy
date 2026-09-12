@@ -34,6 +34,13 @@ fn execute() -> io::Result<()> {
             io::stdout(),
             "Usage: muxy-server [--socket PATH --settings PATH --log PATH]\n       muxy-server --help | --version | --build-info"
         ),
-        _ => args::Args::parse(arguments).and_then(|args| run::run(&args)),
+        _ => {
+            let args = args::Args::parse(arguments)?;
+            let _lease = muxy_core::bundle::acquire_runtime(
+                &std::env::current_exe()?.canonicalize()?,
+                &serde_json::to_vec(&muxy_protocol::BuildInfo::current())?,
+            )?;
+            run::run(&args)
+        }
     }
 }

@@ -22,8 +22,9 @@ kept in [benchmarks.md](./benchmarks.md) and the reasoning in
 
 The server is a Rust process that owns projects, shared metadata, and terminal
 sessions with explicit project membership. Desktop and TUI clients keep their
-own layouts and workspaces. One `muxy` executable provides the CLI, TUI, and
-server runtime; the desktop bundles it. Each session runs
+own layouts and workspaces. The `muxy` CLI/TUI and `muxy-app` desktop use the
+same client library and protocol to connect to the separate `muxy-server`
+executable. The desktop bundles both executables. Each session runs
 on its own thread with a Ghostty terminal core, a PTY reader, and a
 byte-budgeted, compressed history. Every 16 ms it turns changed rows into a
 frame of style runs. Frames travel to the app as postcard messages with

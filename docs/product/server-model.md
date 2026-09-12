@@ -38,8 +38,9 @@ flowchart TB
 
 - A server runs as its own process, separate from the app, which is what lets
   sessions outlive the app.
-- The bundled and standalone `muxy` executable runs the server with
-  `muxy server`. Clients start it if needed. It keeps running until stopped or
+- The separate `muxy-server` executable is bundled with the desktop and
+  distributed with the `muxy` client. Clients start it if needed. It keeps
+  running until stopped or
   replaced for a pending update after all sessions end. Connections are local
   in this phase; a user may SSH to another machine and run `muxy` there.
 - Stopping or restarting a server ends every session it owns. Its settings

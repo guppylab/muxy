@@ -31,7 +31,7 @@ The technical design that implements this model is in
 | --- | --- |
 | Main app | The desktop client that stores workspaces and presentation state and directs work to the appropriate server. |
 | Server | A separate process that owns projects, their shared metadata, terminal sessions, and server settings. Clients own presentation. |
-| `muxy` executable | The bundled or standalone program providing command-line operations, a terminal client, and the `muxy server` runtime. |
+| `muxy` executable | The bundled or standalone command-line and terminal client. It connects to the separate `muxy-server` executable. |
 | Workspace | A reusable, app-level grouping used to filter top-level projects. Workspaces may overlap. |
 | Project | An independently identified server record pointing to one directory, with shared name, icon, and color. Each client keeps its own tab set for it. |
 | Project location | The combination of a server and directory. It is not a project's identity and does not need to be unique. |

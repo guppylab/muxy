@@ -33,8 +33,9 @@ The diagram expresses the product's server boundaries. This phase connects only
 to the server on the machine running the client; remote connections are deferred.
 The desktop and keyboard TUI are independent clients. They share server-owned
 projects, metadata, and sessions, while keeping separate layouts and workspaces.
-The desktop bundles the same `muxy` executable distributed for standalone use;
-`muxy server` runs separately so sessions outlive either client.
+The desktop bundles the same `muxy` client and `muxy-server` executables
+distributed together for standalone use. Both clients connect to the local
+server, starting it if needed. Sessions outlive either client.
 
 - The first version has exactly one server, the current device. Remote servers
   can be added in later versions; the model already allows several.

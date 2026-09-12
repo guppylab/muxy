@@ -3707,6 +3707,7 @@ dependencies = [
 name = "muxy-client"
 version = "2.0.0-beta-0"
 dependencies = [
+ "muxy-core",
  "muxy-protocol",
  "muxy-server-core",
  "muxy-transport",
@@ -3721,6 +3722,7 @@ version = "2.0.0-beta-0"
 dependencies = [
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

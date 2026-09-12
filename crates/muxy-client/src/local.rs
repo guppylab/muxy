@@ -1,9 +1,8 @@
 pub mod bundle;
 
 use crate::{Client, ClientError};
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io;
-use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -99,56 +98,12 @@ pub fn lock_startup(socket: &Path) -> io::Result<File> {
     try_lock(&socket.with_extension("update-lock"))
 }
 
-pub fn try_lock(path: &Path) -> io::Result<File> {
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .mode(0o600)
-        .open(path)?;
-    file.try_lock().map_err(|error| match error {
-        std::fs::TryLockError::WouldBlock => io::Error::new(
-            io::ErrorKind::WouldBlock,
-            "An installation or server startup is already in progress",
-        ),
-        std::fs::TryLockError::Error(error) => error,
-    })?;
-    Ok(file)
-}
+pub use muxy_core::file_lock::try_lock;
 
 pub fn read_build_info(executable: &Path) -> io::Result<muxy_protocol::BuildInfo> {
-    use std::io::{Read, Seek};
-    let mut output = tempfile::tempfile()?;
-    let mut child = Command::new(executable)
-        .arg("--build-info")
-        .stdin(Stdio::null())
-        .stdout(output.try_clone()?)
-        .stderr(Stdio::null())
-        .spawn()?;
-    let deadline = Instant::now() + Duration::from_secs(3);
-    loop {
-        if let Some(status) = child.try_wait()? {
-            if !status.success() {
-                return Err(io::Error::other("Server build metadata is unavailable"));
-            }
-            break;
-        }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "Server build metadata timed out",
-            ));
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
-    output.rewind()?;
-    let mut bytes = Vec::new();
-    output.take(4097).read_to_end(&mut bytes)?;
+    let bytes = muxy_core::executable::build_metadata(executable)?;
     let info: muxy_protocol::BuildInfo = serde_json::from_slice(&bytes)?;
-    if bytes.len() > 4096 || info.version.len() > 128 || info.compatibility == 0 {
+    if info.version.len() > 128 || info.compatibility == 0 {
         return Err(io::Error::other("Invalid server build metadata"));
     }
     Ok(info)

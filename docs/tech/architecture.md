@@ -12,7 +12,7 @@ flowchart LR
         GRID["Run grid per attached session"]
         CONN["Connection per server"]
     end
-    subgraph SERVER["muxy server process · Rust, one per profile"]
+    subgraph SERVER["muxy-server process · Rust, one per profile"]
         ACCEPT["Local Unix listener"]
         CATALOG["Projects and session membership"]
         CLIENT["Client connection<br/>reader · writer thread · outbox"]
@@ -35,8 +35,10 @@ flowchart LR
   visible rows as style runs plus whatever history window it has fetched.
 - The server owns the durable project catalog, shared metadata, Home, and
   explicit session membership. Clients own tabs, panes, order, and workspaces.
-- The desktop bundles the standalone `muxy` executable. Its server runtime
-  runs in a separate process; client libraries do not embed the server.
+- The desktop bundles separate `muxy` and `muxy-server` executables, also
+  distributed together for standalone use. Both clients use the shared client
+  library and protocol, connecting to the local server or starting it under
+  the shared startup lock. Neither client links the server implementation.
 - Both clients connect locally. Remote transport is outside this phase.
 
 ## Session thread
