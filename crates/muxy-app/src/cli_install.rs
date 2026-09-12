@@ -47,10 +47,12 @@ fn installation_message(result: io::Result<PathBuf>) -> (&'static str, String) {
 fn install() -> io::Result<PathBuf> {
     let executable = std::env::current_exe()?.canonicalize()?;
     let target = bundled_target(&executable)?;
-    if crate::server::read_build_info(&target)? != muxy_protocol::BuildInfo::current() {
-        return Err(io::Error::other(
-            "The installed app changed. Reopen it before installing the command line tool.",
-        ));
+    for executable in [&target, &target.with_file_name("muxy-server")] {
+        if crate::server::read_build_info(executable)? != muxy_protocol::BuildInfo::current() {
+            return Err(io::Error::other(
+                "The installed app changed. Reopen it before installing the command line tool.",
+            ));
+        }
     }
     let home =
         std::env::home_dir().ok_or_else(|| io::Error::other("Home directory unavailable"))?;

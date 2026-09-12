@@ -1,6 +1,11 @@
 import copy
 import importlib.util
+import json
+import os
 from pathlib import Path
+import subprocess
+import sys
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -18,13 +23,30 @@ AUDIT = module("audit-linux")
 
 
 class HeadlessTests(unittest.TestCase):
+    def test_zig_build_uses_baseline_cpu_and_preserves_other_arguments(self):
+        with tempfile.TemporaryDirectory(prefix="zig test ") as temporary:
+            zig = Path(temporary) / "real zig"
+            zig.write_text(f"#!{sys.executable}\nimport json, sys\nprint(json.dumps(sys.argv[1:]))\n")
+            zig.chmod(0o755)
+            for arguments, expected in [
+                (["version"], ["version"]),
+                (["build", "-Dother=true"], ["build", "-Dother=true"]),
+                (["build", "-Demit-lib-vt=true", "--prefix", "a path"],
+                 ["build", "-Demit-lib-vt=true", "--prefix", "a path", "-Dcpu=baseline"]),
+            ]:
+                output = subprocess.check_output(
+                    [ROOT / "scripts/zig/zig", *arguments],
+                    env={**os.environ, "MUXY_ZIG": str(zig)}, text=True,
+                )
+                self.assertEqual(json.loads(output), expected)
+
     def test_metadata_closure_includes_transitive_build_and_test_packages(self):
         def package(name, *dependencies):
             return {"id": name, "name": name, "dependencies": [{"name": dep} for dep in dependencies]}
-        metadata = {"workspace_members": ["muxy-cli", "runtime", "protocol", "test-helper", "unused"],
-                    "packages": [package("muxy-cli", "runtime"), package("runtime", "protocol", "test-helper"),
+        metadata = {"workspace_members": ["muxy-cli", "muxy-server", "runtime", "protocol", "test-helper", "unused"],
+                    "packages": [package("muxy-cli", "runtime"), package("muxy-server", "runtime"), package("runtime", "protocol", "test-helper"),
                                  package("protocol"), package("test-helper", "protocol"), package("unused")]}
-        self.assertEqual(HEADLESS.packages(metadata), ["muxy-cli", "protocol", "runtime", "test-helper"])
+        self.assertEqual(HEADLESS.packages(metadata), ["muxy-cli", "muxy-server", "protocol", "runtime", "test-helper"])
         bad = copy.deepcopy(metadata)
         bad["packages"][2]["dependencies"].append({"name": "gpui"})
         with self.assertRaisesRegex(ValueError, "desktop dependency"):

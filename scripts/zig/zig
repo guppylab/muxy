@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+: "${MUXY_ZIG:?Set MUXY_ZIG to the real Zig executable}"
+
+# The pinned VT build otherwise specializes Linux code to the build host CPU.
+if [ "${1:-}" = build ]; then
+    for argument in "$@"; do
+        if [ "$argument" = -Demit-lib-vt=true ]; then
+            exec "$MUXY_ZIG" "$@" -Dcpu=baseline
+        fi
+    done
+fi
+exec "$MUXY_ZIG" "$@"

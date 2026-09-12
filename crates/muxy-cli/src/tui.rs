@@ -39,7 +39,7 @@ pub(crate) fn run() -> Result {
     let viewport = host.terminal.size().map_err(|error| error.to_string())?;
     let worker = Worker::start(
         profile,
-        executable,
+        muxy_client::local::server_executable().map_err(|error| error.to_string())?,
         ratatui::layout::Rect::new(0, 0, viewport.width, viewport.height),
     )?;
     let result = events(&mut host, &worker);

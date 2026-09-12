@@ -12,6 +12,7 @@ import tempfile
 def main():
     root = Path(__file__).resolve().parent.parent
     binary = root / "target/debug/muxy"
+    server = binary.with_name("muxy-server")
     with tempfile.TemporaryDirectory(prefix="muxy-tui-desktop-", dir="/tmp") as temporary:
         profile = Path(temporary)
         home = profile / "home"
@@ -21,7 +22,7 @@ def main():
         wrapper = profile / "server-wrapper.sh"
         wrapper.write_text(
             '#!/bin/sh\nprintf "%s\\n" "$$" > "$MUXY_DIR/server.pid"\n'
-            f'exec {shlex.quote(str(binary))} "$@"\n'
+            f'exec {shlex.quote(str(server))} "$@"\n'
         )
         wrapper.chmod(0o700)
         env = {
@@ -50,7 +51,7 @@ def main():
                     ["ps", "-p", str(pid), "-o", "command="],
                     capture_output=True, text=True, check=False,
                 ).stdout
-                if str(binary) in command and str(profile) in command:
+                if str(server) in command and str(profile) in command:
                     try:
                         os.kill(pid, signal.SIGTERM)
                     except ProcessLookupError:

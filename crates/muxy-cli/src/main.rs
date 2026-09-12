@@ -1,4 +1,4 @@
-//! Unified local command-line client and server composition; no desktop dependencies.
+//! Local command-line and terminal client; the server runs as a separate executable.
 mod args;
 mod input;
 mod render;
@@ -13,7 +13,7 @@ use muxy_protocol::{
 };
 use std::io::{self, Write};
 use std::os::unix::ffi::OsStrExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
@@ -27,13 +27,8 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let mut arguments = std::env::args_os();
-    let executable = PathBuf::from(arguments.next().unwrap_or_default());
-    let command = args::parse(&executable, arguments.collect())?;
-    let _lease = if matches!(
-        command,
-        Command::Server(_) | Command::Projects | Command::AddProject { .. }
-    ) {
+    let command = args::parse(&std::env::args_os().skip(1).collect::<Vec<_>>())?;
+    let _lease = if matches!(command, Command::Projects | Command::AddProject { .. }) {
         muxy_client::local::bundle::acquire_runtime(&std::env::current_exe()?.canonicalize()?)?
     } else {
         None
@@ -41,13 +36,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     match command {
         Command::Help => writeln!(
             io::stdout(),
-            "Muxy — local terminal sessions\n\nUsage: muxy [COMMAND]\n\n  (no command)  Open the terminal client; Ctrl-B ? shows help\n  server [--socket PATH --settings PATH --log PATH]\n  project list\n  project add <directory> [--name NAME]\n  --help | --version | --build-info"
+            "Muxy — local terminal sessions\n\nUsage: muxy [COMMAND]\n\n  (no command)  Open the terminal client; Ctrl-B ? shows help\n  project list\n  project add <directory> [--name NAME]\n  --help | --version | --build-info"
         )?,
         Command::Version => writeln!(io::stdout(), "muxy {}", env!("CARGO_PKG_VERSION"))?,
         Command::BuildInfo => {
             serde_json::to_writer(io::stdout().lock(), &muxy_protocol::BuildInfo::current())?;
         }
-        Command::Server(arguments) => muxy_server::run(arguments)?,
         Command::Interactive => tui::run().map_err(io::Error::other)?,
         Command::Projects => {
             for project in client()?.catalog()?.projects {
@@ -69,7 +63,7 @@ fn client() -> Result<muxy_client::Client, Box<dyn std::error::Error>> {
     let socket = muxy_core::dirs::muxy_dir()?.join("server.sock");
     Ok(muxy_client::local::ensure_running(
         &socket,
-        &std::env::current_exe()?,
+        &muxy_client::local::server_executable()?,
     )?)
 }
 

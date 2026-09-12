@@ -1,6 +1,6 @@
 [package]
 name = "muxy-cli"
-description = "Unified Muxy command-line client and server"
+description = "Muxy command-line and terminal client"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -21,7 +21,6 @@ muxy-core = { path = "../muxy-core" }
 muxy-protocol = { path = "../muxy-protocol" }
 muxy-client = { path = "../muxy-client" }
 muxy-app-core = { path = "../muxy-app-core" }
-muxy-server = { path = "../muxy-server" }
 serde_json.workspace = true
 serde = { version = "1.0", features = ["derive"] }
 ratatui = { version = "=0.30.2", default-features = false, features = ["crossterm", "underline-color"] }

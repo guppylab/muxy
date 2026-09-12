@@ -1,5 +1,3 @@
-mod support;
-
 use std::error::Error;
 use std::fs;
 use std::io::{Read, Write};
@@ -49,9 +47,8 @@ impl Fixture {
     }
 
     fn command(&self) -> Command {
-        let mut command = Command::new(support::binary());
+        let mut command = Command::new(binary());
         command
-            .arg("server")
             .env("MUXY_DIR", &self.directory)
             .env("SHELL", "/bin/sh")
             .stdin(Stdio::null())
@@ -747,7 +744,7 @@ fn settings_persist_and_protocol_stop_gracefully_ends_sessions_before_restart() 
 #[test]
 fn build_info_has_no_server_or_storage_side_effects() -> TestResult {
     let fixture = Fixture::new()?;
-    let output = Command::new(support::binary())
+    let output = Command::new(binary())
         .env("MUXY_DIR", &fixture.directory)
         .arg("--build-info")
         .output()?;
@@ -762,7 +759,7 @@ fn build_info_has_no_server_or_storage_side_effects() -> TestResult {
 fn replacing_the_binary_and_reconnecting_preserves_the_shell_process() -> TestResult {
     let mut fixture = Fixture::new()?;
     let executable = fixture.directory.join("muxy-server");
-    fs::copy(support::binary(), &executable)?;
+    fs::copy(binary(), &executable)?;
     let mut command = Command::new(&executable);
     command
         .env("MUXY_DIR", &fixture.directory)
@@ -779,7 +776,7 @@ fn replacing_the_binary_and_reconnecting_preserves_the_shell_process() -> TestRe
     let pid = fs::read(fixture.directory.join("before.pid"))?;
     drop(client);
     fs::rename(&executable, fixture.directory.join("previous-server"))?;
-    fs::copy(support::binary(), &executable)?;
+    fs::copy(binary(), &executable)?;
     let mut client = Client::new(&fixture.socket())?;
     let channel = client.attach(session)?;
     client
@@ -811,4 +808,11 @@ fn idle_update_notifies_every_client_before_disconnecting() -> TestResult {
     observer.closed()?;
     assert!(fixture.finish()?.status.success());
     Ok(())
+}
+
+fn binary() -> PathBuf {
+    std::env::var_os("MUXY_TEST_SERVER").map_or_else(
+        || PathBuf::from(env!("CARGO_BIN_EXE_muxy-server")),
+        PathBuf::from,
+    )
 }

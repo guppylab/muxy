@@ -25,13 +25,17 @@ fn signed_bundle(path: &Path, server: &Path, identity: &str) -> Result<()> {
 </dict></plist>"#,
     )?;
     std::fs::copy("/usr/bin/true", binaries.join("muxy-app"))?;
-    std::fs::copy(server, binaries.join("muxy"))?;
-    for executable in [binaries.join("muxy-app"), binaries.join("muxy")] {
+    std::fs::copy(server, binaries.join("muxy-server"))?;
+    std::fs::copy(server.with_file_name("muxy"), binaries.join("muxy"))?;
+    for executable in [
+        binaries.join("muxy-app"),
+        binaries.join("muxy"),
+        binaries.join("muxy-server"),
+    ] {
         run(Command::new("/usr/bin/codesign")
             .args(["--force", "--timestamp=none", "--sign", identity])
             .arg(executable))?;
     }
-    std::fs::hard_link(binaries.join("muxy"), binaries.join("muxy-server"))?;
     run(Command::new("/usr/bin/codesign")
         .args(["--force", "--timestamp=none", "--sign", identity])
         .arg(path))?;
@@ -82,8 +86,7 @@ fn signed_bundle_updates_preserve_shell_and_retire_only_unused_bundles() -> Resu
     std::fs::create_dir(&data)?;
     std::fs::write(data.join("shell-env"), "PS1='lease-test> '\n")?;
     let socket = data.join("server.sock");
-    let child = Command::new(bundle.join("Contents/MacOS/muxy"))
-        .arg("server")
+    let child = Command::new(bundle.join("Contents/MacOS/muxy-server"))
         .env("MUXY_DIR", &data)
         .env("HOME", &data)
         .env("ENV", data.join("shell-env"))
@@ -137,8 +140,7 @@ fn signed_bundle_updates_preserve_shell_and_retire_only_unused_bundles() -> Resu
     client.end_session(session.id)?;
     assert!(client.stop_server_if_idle()?);
     server.0.wait()?;
-    server.0 = Command::new(bundle.join("Contents/MacOS/muxy"))
-        .arg("server")
+    server.0 = Command::new(bundle.join("Contents/MacOS/muxy-server"))
         .env("MUXY_DIR", &data)
         .env("HOME", &data)
         .env("ENV", data.join("shell-env"))
@@ -183,7 +185,7 @@ fn replace_bundle(
         installation: installation.clone(),
         staging: staging.clone(),
         build: Some(crate::server::read_build_info(
-            &candidate.join("Contents/MacOS/muxy"),
+            &candidate.join("Contents/MacOS/muxy-server"),
         )?),
     };
     assert!(update.compatible_with(server));

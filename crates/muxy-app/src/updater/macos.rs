@@ -88,7 +88,8 @@ impl Installation {
         let candidate = staging.path().join("Muxy Beta.app");
         run(Command::new("/usr/bin/ditto").arg(&source).arg(&candidate))?;
         self.verify_app(&candidate, &release.version)?;
-        let build = crate::server::read_build_info(&candidate.join("Contents/MacOS/muxy")).ok();
+        let build =
+            crate::server::read_build_info(&candidate.join("Contents/MacOS/muxy-server")).ok();
         if build
             .as_ref()
             .is_some_and(|info| info.version != release.version)
@@ -128,7 +129,8 @@ impl Installation {
         }
         let candidate = staging.join("Muxy Beta.app");
         self.verify_app(&candidate, &version)?;
-        let build = crate::server::read_build_info(&candidate.join("Contents/MacOS/muxy")).ok();
+        let build =
+            crate::server::read_build_info(&candidate.join("Contents/MacOS/muxy-server")).ok();
         if build.as_ref().is_some_and(|build| build.version != version) {
             return Err("Pending update version mismatch".into());
         }
@@ -237,6 +239,11 @@ impl Installation {
                 .arg(app.join("Contents/MacOS").join(binary))
                 .args(["-verify_arch", arch]))?;
         }
+        let server = crate::server::read_build_info(&app.join("Contents/MacOS/muxy-server"))?;
+        let client = crate::server::read_build_info(&app.join("Contents/MacOS/muxy"))?;
+        if client != server || server.version != version {
+            return Err("The bundled client and server do not match the release".into());
+        }
         Ok(())
     }
 }
@@ -268,7 +275,8 @@ impl PreparedUpdate {
         self.installation
             .verify_app(&self.installation.bundle, env!("CARGO_PKG_VERSION"))?;
         let build =
-            crate::server::read_build_info(&self.candidate().join("Contents/MacOS/muxy")).ok();
+            crate::server::read_build_info(&self.candidate().join("Contents/MacOS/muxy-server"))
+                .ok();
         if build != self.build {
             return Err("The staged update metadata changed. Check for updates again.".into());
         }

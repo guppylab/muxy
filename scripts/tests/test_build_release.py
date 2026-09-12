@@ -60,7 +60,7 @@ class BuildReleaseTests(unittest.TestCase):
         for target in TARGETS.values():
             binaries = self.root / "target" / target / "release"
             binaries.mkdir(parents=True)
-            for name in ("muxy-app", "muxy"):
+            for name in ("muxy-app", "muxy", "muxy-server"):
                 (binaries / name).write_text(f"#!{sys.executable}\nimport json\nprint(json.dumps({{'version': '{VERSION}', 'compatibility': {COMPATIBILITY}}}))\n")
                 (binaries / f"{name}.dSYM").mkdir()
         tools = self.root / "tools"
@@ -118,19 +118,19 @@ class BuildReleaseTests(unittest.TestCase):
                 self.assertEqual(conversion[0][1:4], ["--convert", "icns", "--output"])
                 self.assertTrue(conversion[0][4].endswith(f"/Contents/Resources/{icon}"))
 
-    def test_bundle_has_same_bytes_alias_and_builds_only_canonical_executables(self):
+    def test_bundle_builds_and_signs_three_separate_executables(self):
         result = self.build()
         self.assertEqual(result.returncode, 0, result.stderr)
         binaries = self.root / "target/beta" / VERSION / "arm64/Muxy Beta.app/Contents/MacOS"
         canonical, alias = binaries / "muxy", binaries / "muxy-server"
         self.assertEqual(canonical.read_bytes(), alias.read_bytes())
-        self.assertEqual(canonical.stat().st_ino, alias.stat().st_ino)
+        self.assertNotEqual(canonical.stat().st_ino, alias.stat().st_ino)
         build = self.calls("cargo")[0]
         self.assertIn("muxy-cli", build)
-        self.assertNotIn("muxy-server", build)
+        self.assertIn("muxy-server", build)
         signing = [call[-1] for call in self.calls("codesign") if "--sign" in call]
         self.assertEqual(sum(path.endswith("/muxy") for path in signing), 1)
-        self.assertFalse(any(path.endswith("/muxy-server") for path in signing))
+        self.assertEqual(sum(path.endswith("/muxy-server") for path in signing), 1)
 
     def test_non_beta_releases_are_rejected_before_packaging(self):
         for version in ("2.0.0", "2.0.0-alpha-1", "2.0.0-beta-0"):

@@ -112,7 +112,7 @@ def check_build(version, executable):
     metadata = json.loads(subprocess.check_output([str(executable), "--build-info"], timeout=5))
     from beta_compatibility import identifier
     if metadata != {"version": version, "compatibility": identifier()}:
-        raise ValueError("Packaged CLI build metadata does not match this release")
+        raise ValueError("Packaged executable build metadata does not match this release")
 
 
 def main():

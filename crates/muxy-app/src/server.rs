@@ -1,5 +1,5 @@
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -32,18 +32,7 @@ fn retryable_restart(error: &ClientError) -> bool {
         || matches!(error, ClientError::Io(error) if matches!(error.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused | io::ErrorKind::TimedOut))
 }
 
-pub(crate) fn server_executable() -> io::Result<PathBuf> {
-    if let Some(path) = std::env::var_os("MUXY_SERVER_BIN") {
-        if path.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "MUXY_SERVER_BIN must not be empty",
-            ));
-        }
-        return Ok(path.into());
-    }
-    Ok(std::env::current_exe()?.with_file_name("muxy"))
-}
+pub(crate) use muxy_client::local::server_executable;
 
 pub(crate) fn stop_server(client: &Client, socket: &Path) -> Result<(), ClientError> {
     use std::os::unix::fs::MetadataExt;

@@ -23,7 +23,7 @@ def smoke(binary):
         identity = None
         for restart in [False, True]:
             with (profile / "smoke.log").open("ab") as log:
-                server = subprocess.Popen([binary, "server"], env=env, stdout=log, stderr=log)
+                server = subprocess.Popen([binary.with_name("muxy-server")], env=env, stdout=log, stderr=log)
                 try:
                     deadline = time.monotonic() + 10
                     while not (profile / "sessions/catalog.json").exists():
@@ -56,4 +56,4 @@ def smoke(binary):
 
 
 if __name__ == "__main__":
-    smoke(str(Path(sys.argv[1]).resolve()))
+    smoke(Path(sys.argv[1]).resolve())

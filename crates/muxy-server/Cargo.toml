@@ -1,6 +1,6 @@
 [package]
 name = "muxy-server"
-description = "Reusable Muxy server runtime"
+description = "The Muxy server executable"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -22,3 +22,6 @@ muxy-transport = { path = "../muxy-transport" }
 serde = { version = "1", features = ["derive"] }
 signal-hook = "0.4"
 toml = "1.1"
+
+[dev-dependencies]
+muxy-wire = { path = "../muxy-wire" }

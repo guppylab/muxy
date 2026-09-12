@@ -5,10 +5,25 @@ use std::fs::{File, OpenOptions};
 use std::io;
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::process::CommandExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
+
+pub fn server_executable() -> io::Result<PathBuf> {
+    if let Some(path) = std::env::var_os("MUXY_SERVER_BIN") {
+        if path.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "MUXY_SERVER_BIN must not be empty",
+            ));
+        }
+        return Ok(path.into());
+    }
+    Ok(std::env::current_exe()?
+        .canonicalize()?
+        .with_file_name("muxy-server"))
+}
 
 pub fn ensure_running(socket: &Path, executable: &Path) -> Result<Client, ClientError> {
     let _startup = wait_for_startup_lock(socket)?;
@@ -19,7 +34,6 @@ pub fn ensure_running(socket: &Path, executable: &Path) -> Result<Client, Client
         Err(error) => return Err(error),
     }
     let mut child = Command::new(executable)
-        .arg("server")
         .arg("--socket")
         .arg(socket)
         .arg("--settings")
@@ -34,7 +48,7 @@ pub fn ensure_running(socket: &Path, executable: &Path) -> Result<Client, Client
         .map_err(|error| {
             io::Error::new(
                 error.kind(),
-                format!("could not launch {} server: {error}", executable.display()),
+                format!("could not launch server {}: {error}", executable.display()),
             )
         })?;
     thread::Builder::new()

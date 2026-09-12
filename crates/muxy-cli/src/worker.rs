@@ -391,6 +391,7 @@ impl Core {
             })?;
         }
         let viewport = *lock(&self.viewport);
+        self.create_pending(client, viewport)?;
         let state = self.store_mut()?.state.clone();
         let regions = crate::render::regions(&state, viewport);
         let desired: BTreeMap<_, _> = regions
@@ -439,6 +440,30 @@ impl Core {
         Ok(())
     }
 
+    fn create_pending(&mut self, client: &Client, viewport: Rect) -> Result {
+        let state = self.store_mut()?.state.clone();
+        let regions = crate::render::regions(&state, viewport);
+        for (project, layout) in state.projects {
+            for tab in layout.tabs {
+                for (id, mut pane) in tab.panes {
+                    if self.stop.load(Ordering::Acquire) {
+                        return Ok(());
+                    }
+                    if pane.creation.is_none() || pane.error.is_some() {
+                        continue;
+                    }
+                    let size = regions
+                        .iter()
+                        .find(|(pane, _)| *pane == id)
+                        .and_then(|(_, rect)| crate::render::terminal_size(*rect))
+                        .unwrap_or(Size { cols: 80, rows: 24 });
+                    self.create_pane(client, project, id, size, &mut pane)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn synchronize_pane(
         &mut self,
         client: &Client,
@@ -446,14 +471,10 @@ impl Core {
         id: PaneId,
         size: Size,
     ) -> Result {
-        let project = self.store_mut()?.state.active;
-        let Some(mut pane) = self.store_mut()?.state.pane_mut(id).cloned() else {
+        let Some(pane) = self.store_mut()?.state.pane_mut(id).cloned() else {
             return Ok(());
         };
-        if pane.error.is_some() {
-            return Ok(());
-        }
-        if !self.create_pane(client, project, id, size, &mut pane)? {
+        if pane.error.is_some() || pane.creation.is_some() {
             return Ok(());
         }
         let Some(session) = pane.session else {

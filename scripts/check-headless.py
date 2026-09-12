@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import shutil
 import subprocess
 import sys
 
@@ -15,7 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 def packages(metadata):
     workspace = set(metadata["workspace_members"])
     by_name = {p["name"]: p for p in metadata["packages"] if p["id"] in workspace}
-    pending = ["muxy-cli"]
+    pending = ["muxy-cli", "muxy-server"]
     selected = set()
     while pending:
         name = pending.pop()
@@ -57,9 +58,17 @@ def main():
     if not args.runtime_binary and glibc != "glibc 2.35":
         raise ValueError(f"Build in controlled glibc 2.35 userspace, found {glibc}")
     print(f"Native verification: {args.target}, {glibc}; packages: {', '.join(selected)}", flush=True)
+    zig = shutil.which("zig")
+    if not zig:
+        raise ValueError("Install Zig 0.15.2 before running headless verification")
+    os.environ["MUXY_ZIG"] = zig
+    os.environ["PATH"] = str(ROOT / "scripts/zig") + os.pathsep + os.environ["PATH"]
+    # Cargo cannot detect that a cached native Zig library targets another CPU.
+    run("cargo", "clean", "-p", "libghostty-vt-sys")
     package_args = [arg for name in selected for arg in ("-p", name)]
     run("cargo", "fmt", "--all", "--check")
     run("cargo", "clippy", "--locked", *package_args, "--all-targets", "--all-features", "--", "-D", "warnings")
+    run("cargo", "build", "--locked", "-p", "muxy-cli", "-p", "muxy-server")
     run("cargo", "test", "--locked", *package_args, "--all-features", "--no-fail-fast")
     run("cargo", "doc", "--locked", *package_args, "--no-deps", env={**os.environ, "RUSTDOCFLAGS": "-D warnings"})
     run("cargo", "test", "--locked", "-p", "muxy-server-core", "fish_marks_prompts_and_preserves_user_configuration",
@@ -67,12 +76,15 @@ def main():
     if args.runtime_binary:
         binary = args.runtime_binary.resolve()
     else:
-        run("cargo", "build", "--locked", "--release", "-p", "muxy-cli")
+        run("cargo", "build", "--locked", "--release", "-p", "muxy-cli", "-p", "muxy-server")
         binary = ROOT / "target/release/muxy"
-    run(sys.executable, ROOT / "scripts/audit-linux.py", binary, "--target", args.target)
+    for executable in [binary, binary.with_name("muxy-server")]:
+        run(sys.executable, ROOT / "scripts/audit-linux.py", executable, "--target", args.target)
     run(sys.executable, ROOT / "scripts/smoke-headless.py", binary)
-    run("cargo", "test", "--locked", "-p", "muxy-cli", "--test", "server", "--test", "commands", "--test", "tui",
+    run("cargo", "test", "--locked", "-p", "muxy-cli", "--test", "commands", "--test", "tui",
         env={**os.environ, "MUXY_TEST_RUNTIME": str(binary)})
+    run("cargo", "test", "--locked", "-p", "muxy-server", "--test", "lifecycle",
+        env={**os.environ, "MUXY_TEST_SERVER": str(binary.with_name("muxy-server"))})
 
 
 if __name__ == "__main__":

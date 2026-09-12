@@ -18,6 +18,7 @@ impl Profile {
     }
     fn run(&self, args: &[&str]) -> Result<Output> {
         Ok(Command::new(support::binary())
+            .env_remove("MUXY_SERVER_BIN")
             .env("MUXY_DIR", &self.0)
             .args(args)
             .output()?)
@@ -25,6 +26,43 @@ impl Profile {
     fn socket(&self) -> PathBuf {
         self.0.join("server.sock")
     }
+}
+
+#[test]
+fn linked_client_finds_its_sibling_server_and_reuses_a_server_when_the_sibling_is_missing() -> Result
+{
+    use std::os::unix::fs::symlink;
+    let profile = Profile::new()?;
+    let package = profile.0.join("installed pair");
+    fs::create_dir(&package)?;
+    let client = package.join("muxy");
+    let server = package.join("muxy-server");
+    fs::copy(support::binary(), &client)?;
+    let link = profile.0.join("muxy");
+    symlink(&client, &link)?;
+    let invoke = || {
+        Command::new(&link)
+            .env_remove("MUXY_SERVER_BIN")
+            .env("MUXY_DIR", &profile.0)
+            .args(["project", "list"])
+            .output()
+    };
+    let missing = invoke()?;
+    assert!(!missing.status.success());
+    assert!(String::from_utf8(missing.stderr)?.contains(&server.display().to_string()));
+    fs::copy(support::binary().with_file_name("muxy-server"), &server)?;
+    let launched = invoke()?;
+    assert!(launched.status.success(), "{launched:?}");
+    let first = Client::connect(&profile.socket())?;
+    fs::rename(&server, package.join("running-server"))?;
+    let reused = invoke()?;
+    assert!(reused.status.success(), "{reused:?}");
+    assert_eq!(launched.stdout, reused.stdout);
+    assert_eq!(
+        first.server_info(),
+        Client::connect(&profile.socket())?.server_info()
+    );
+    Ok(())
 }
 impl Drop for Profile {
     fn drop(&mut self) {
@@ -51,6 +89,7 @@ fn informational_commands_and_invalid_arguments_do_not_create_profile_data() -> 
     for args in [
         vec![],
         vec!["remote"],
+        vec!["server"],
         vec!["project", "add"],
         vec!["project", "add", "/tmp", "--name"],
     ] {
@@ -97,8 +136,11 @@ fn simultaneous_client_startup_reuses_one_server_instance() -> Result {
         let workers: Vec<_> = (0..4)
             .map(|_| {
                 scope.spawn(|| {
-                    muxy_client::local::ensure_running(&socket, &support::binary())
-                        .map(|client| client.server_info().instance)
+                    muxy_client::local::ensure_running(
+                        &socket,
+                        &support::binary().with_file_name("muxy-server"),
+                    )
+                    .map(|client| client.server_info().instance)
                 })
             })
             .collect();
@@ -117,10 +159,10 @@ fn simultaneous_client_startup_reuses_one_server_instance() -> Result {
 }
 
 #[test]
-fn legacy_alias_reports_identical_metadata_and_accepts_old_server_flags() -> Result {
+fn separate_server_reports_matching_metadata_and_accepts_server_flags() -> Result {
     let profile = Profile::new()?;
     let alias = profile.0.join("muxy-server");
-    fs::copy(support::binary(), &alias)?;
+    fs::copy(support::binary().with_file_name("muxy-server"), &alias)?;
     let canonical = profile.run(&["--build-info"])?;
     let old_name = Command::new(&alias).arg("--build-info").output()?;
     assert!(old_name.status.success());
@@ -130,10 +172,7 @@ fn legacy_alias_reports_identical_metadata_and_accepts_old_server_flags() -> Res
     while !profile.socket().exists() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(10));
     }
-    let explicit = Command::new(&alias)
-        .env("MUXY_DIR", &profile.0)
-        .arg("server")
-        .output()?;
+    let explicit = Command::new(&alias).env("MUXY_DIR", &profile.0).output()?;
     assert!(explicit.status.success(), "{explicit:?}");
     let result = Client::connect(&profile.socket());
     if let Ok(client) = &result {

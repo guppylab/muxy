@@ -82,14 +82,15 @@ pub(super) struct Proxy {
 impl Proxy {
     pub(super) fn new(fixture: &Fixture) -> Result<Self> {
         let actual = fixture.directory.path().join("actual.sock");
-        let server = fixture
-            .command()
-            .args(["server", "--socket"])
-            .arg(&actual)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()?;
+        let server =
+            std::process::Command::new(super::support::binary().with_file_name("muxy-server"))
+                .envs(fixture.environment())
+                .arg("--socket")
+                .arg(&actual)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()?;
         let deadline = Instant::now() + Duration::from_secs(10);
         while !actual.exists() {
             if Instant::now() >= deadline {

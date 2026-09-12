@@ -132,6 +132,42 @@ fn simultaneous_first_launch_creates_one_shell_and_concurrent_layout_edits_are_p
 }
 
 #[test]
+fn hidden_pending_creation_is_recovered_without_switching_tabs() -> Result {
+    let fixture = Fixture::new()?;
+    let mut first = Tui::start(&fixture, &[])?;
+    first.ready()?;
+    first.detach()?;
+    let mut state = fixture.state()?;
+    let project = state["active"].as_str().ok_or("active project")?.to_owned();
+    let tabs = state["projects"][&project]["tabs"]
+        .as_array_mut()
+        .ok_or("tabs")?;
+    let id = muxy_protocol::OperationId::new().to_string();
+    let directory = tabs[0]["panes"]
+        .as_object()
+        .ok_or("panes")?
+        .values()
+        .next()
+        .ok_or("pane")?["directory"]
+        .clone();
+    tabs.push(serde_json::json!({
+        "layout": {"Leaf": id}, "focus": id, "zoom": false,
+        "panes": {id.clone(): {"session": null, "creation": id, "directory": directory, "error": null}}
+    }));
+    std::fs::write(
+        fixture.directory.path().join("tui-state.json"),
+        serde_json::to_vec(&state)?,
+    )?;
+    let mut restored = Tui::start(&fixture, &[])?;
+    restored.ready()?;
+    restored.wait(|tui| Ok(!tui.tabs()?[1]["panes"][&id]["session"].is_null()))?;
+    assert_eq!(fixture.client()?.list_sessions()?.len(), 2);
+    assert_eq!(fixture.state()?["projects"][&project]["active"], 0);
+    restored.detach()?;
+    Ok(())
+}
+
+#[test]
 fn close_confirms_a_foreground_program_and_does_not_confirm_background_work() -> Result {
     let fixture = Fixture::new()?;
     let mut tui = Tui::start(&fixture, &[])?;

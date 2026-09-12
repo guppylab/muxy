@@ -36,6 +36,12 @@ impl Fixture {
 
     pub(super) fn environment(&self) -> Vec<(OsString, OsString)> {
         vec![
+            (
+                "MUXY_SERVER_BIN".into(),
+                super::support::binary()
+                    .with_file_name("muxy-server")
+                    .into(),
+            ),
             ("MUXY_DIR".into(), self.directory.path().as_os_str().into()),
             (
                 "HOME".into(),
