@@ -60,7 +60,7 @@ def main():
     package_args = [arg for name in selected for arg in ("-p", name)]
     run("cargo", "fmt", "--all", "--check")
     run("cargo", "clippy", "--locked", *package_args, "--all-targets", "--all-features", "--", "-D", "warnings")
-    run("cargo", "test", "--locked", *package_args, "--all-features")
+    run("cargo", "test", "--locked", *package_args, "--all-features", "--no-fail-fast")
     run("cargo", "doc", "--locked", *package_args, "--no-deps", env={**os.environ, "RUSTDOCFLAGS": "-D warnings"})
     run("cargo", "test", "--locked", "-p", "muxy-server-core", "fish_marks_prompts_and_preserves_user_configuration",
         "--", "--ignored", env={**os.environ, "MUXY_TEST_FISH": "/usr/bin/fish"})
