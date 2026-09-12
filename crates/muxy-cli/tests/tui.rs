@@ -109,9 +109,16 @@ fn simultaneous_first_launch_creates_one_shell_and_concurrent_layout_edits_are_p
                 .sum::<usize>()
                 == 3)
     })?;
-    first.wait(|_| {
+    first.wait(|tui| {
         second.pump()?;
-        Ok(fixture.client()?.list_sessions()?.len() == 3)
+        Ok(fixture.client()?.list_sessions()?.len() == 3
+            && tui.tabs()?.iter().all(|tab| {
+                tab["panes"].as_object().is_some_and(|panes| {
+                    panes
+                        .values()
+                        .all(|pane| !pane["session"].is_null() && pane["creation"].is_null())
+                })
+            }))
     })?;
     let layout = fixture.state()?;
     let mut third = Tui::start(&fixture, &[])?;

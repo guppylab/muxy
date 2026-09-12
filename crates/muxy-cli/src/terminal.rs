@@ -154,3 +154,28 @@ fn restore() {
     let _ = io::stdout().flush();
     let _ = terminal::disable_raw_mode();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn panic_restores_terminal_settings_and_output_modes() -> Result<(), Box<dyn std::error::Error>>
+    {
+        if std::env::var_os("MUXY_TEST_HOST_PANIC").is_some() {
+            let _host = Host::enter()?;
+            panic!("deliberate terminal cleanup test");
+        }
+        let output = std::process::Command::new("python3")
+            .args(["-c", include_str!("terminal/panic.py")])
+            .arg(std::env::current_exe()?)
+            .env("TERM", "xterm-256color")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
+}
