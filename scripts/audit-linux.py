@@ -21,7 +21,8 @@ def audit(header, segments, dynamic, versions, linked, target):
     if f"[Requesting program interpreter: {interpreter}]" not in segments:
         raise ValueError("Unexpected or missing glibc interpreter")
     libraries = set(re.findall(r"\(NEEDED\).*\[([^]]+)\]", dynamic))
-    if "libc.so.6" not in libraries or libraries - ALLOWED_LIBRARIES:
+    allowed = ALLOWED_LIBRARIES | {os.path.basename(interpreter)}
+    if "libc.so.6" not in libraries or libraries - allowed:
         raise ValueError(f"Unexpected ELF dependencies: {sorted(libraries)}")
     if re.search(r"\((?:RPATH|RUNPATH)\)", dynamic):
         raise ValueError("CLI must not contain a build-path RPATH/RUNPATH")

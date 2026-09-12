@@ -38,11 +38,15 @@ class HeadlessTests(unittest.TestCase):
         linked = "libc.so.6 => /lib/aarch64-linux-gnu/libc.so.6 (0x0)"
         good = [header, segments, dynamic, versions, linked, "aarch64-unknown-linux-gnu"]
         AUDIT.audit(*good)
+        loader = good.copy()
+        loader[2] += "0x1 (NEEDED) Shared library: [ld-linux-aarch64.so.1]\n"
+        AUDIT.audit(*loader)
         for index, value in [
             (0, header.replace("AArch64", "ARM")),
             (0, header.replace("ELF64", "ELF32")),
             (1, "[Requesting program interpreter: /tmp/loader]"),
             (2, dynamic + "0x1 (NEEDED) Shared library: [libghostty-vt.so]\n"),
+            (2, dynamic + "0x1 (NEEDED) Shared library: [ld-linux-x86-64.so.2]\n"),
             (2, dynamic + "0x2 (RUNPATH) Library runpath: [/build]"),
             (3, versions + "Name: GLIBC_2.36\n"),
             (3, versions + "Name: GLIBC_PRIVATE\n"),

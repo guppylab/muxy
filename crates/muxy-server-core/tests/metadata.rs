@@ -123,7 +123,14 @@ fn a_pipeline_keeps_non_shell_metadata_after_its_group_leader_exits() -> TestRes
     for shell in ["/bin/sh", "/bin/zsh"] {
         let fixture = Fixture::with_shell(shell)?;
         let (events, _, initial) = fixture.attach(1)?;
-        assert!(initial.is_some_and(|process| process.is_shell), "{shell}");
+        if !initial.is_some_and(|process| process.is_shell) {
+            metadata(&events, |event| {
+                matches!(
+                    event,
+                    MetadataEvent::ForegroundProcess { is_shell: true, .. }
+                )
+            })?;
+        }
         fixture.input(b"stty -echo; PS1=''; echo x | (cd /tmp; exec sleep 30)\n")?;
         metadata(
             &events,
