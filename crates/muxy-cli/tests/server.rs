@@ -634,6 +634,7 @@ fn shell_hooks_are_socket_relative_and_the_setting_controls_new_shells() -> Test
     let mut fixture = Fixture::new()?;
     let home = fixture.directory.join("home");
     fs::create_dir(&home)?;
+    fs::write(home.join(".zshenv"), "skip_global_compinit=1\n")?;
     fs::write(home.join(".zshrc"), "PS1='muxy-lifecycle> '\n")?;
     for enabled in [true, false] {
         fs::write(
