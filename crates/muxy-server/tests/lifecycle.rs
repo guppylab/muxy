@@ -765,7 +765,7 @@ fn build_info_has_no_server_or_storage_side_effects() -> TestResult {
 fn replacing_the_binary_and_reconnecting_preserves_the_shell_process() -> TestResult {
     let mut fixture = Fixture::new()?;
     let executable = fixture.directory.join("muxy-server");
-    fs::copy(binary(), &executable)?;
+    copy_executable(&binary(), &executable)?;
     let mut command = Command::new(&executable);
     command
         .env("MUXY_DIR", &fixture.directory)
@@ -782,7 +782,7 @@ fn replacing_the_binary_and_reconnecting_preserves_the_shell_process() -> TestRe
     let pid = fs::read(fixture.directory.join("before.pid"))?;
     drop(client);
     fs::rename(&executable, fixture.directory.join("previous-server"))?;
-    fs::copy(binary(), &executable)?;
+    copy_executable(&binary(), &executable)?;
     let mut client = Client::new(&fixture.socket())?;
     let channel = client.attach(session)?;
     client
@@ -813,6 +813,14 @@ fn idle_update_notifies_every_client_before_disconnecting() -> TestResult {
     assert_eq!(observer.receive()?, (CONTROL, Message::ServerRestarting));
     observer.closed()?;
     assert!(fixture.finish()?.status.success());
+    Ok(())
+}
+
+fn copy_executable(source: &Path, destination: &Path) -> TestResult {
+    // A separate process prevents concurrent test forks inheriting a writable
+    // descriptor and temporarily blocking Linux exec with ETXTBSY.
+    let output = Command::new("cp").args([source, destination]).output()?;
+    assert!(output.status.success(), "{output:?}");
     Ok(())
 }
 
