@@ -46,6 +46,7 @@ macro_rules! id {
 
 id!(ProjectId);
 id!(OperationId);
+id!(ClientId);
 id!(ServerIdentity);
 
 use crate::{ErrorCode, ServerPath, SessionId, SessionInfo};
@@ -192,6 +193,8 @@ pub enum SessionStatus {
 pub struct ProjectSession {
     pub info: SessionInfo,
     pub status: SessionStatus,
+    pub owner: Option<crate::SessionClient>,
+    pub attached: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

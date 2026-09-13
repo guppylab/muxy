@@ -75,7 +75,8 @@ impl Message {
             }
             Self::Metadata(MetadataEvent::Links { rows, .. }) => validate_links(rows),
             Self::Metadata(MetadataEvent::Directory(path)) => validate_path(path),
-            Self::CatalogChanged { .. }
+            Self::SessionsChanged { .. }
+            | Self::CatalogChanged { .. }
             | Self::ServerRestarting
             | Self::FrameAck { .. }
             | Self::VersionUnsupported
@@ -146,7 +147,8 @@ fn validate_request(body: &RequestBody) -> Result<(), ErrorCode> {
             validate_page_size(*max_rows)
         }
         RequestBody::SavedHistoryPage { max_rows, .. } => validate_page_size(*max_rows),
-        RequestBody::ReadCatalog { .. }
+        RequestBody::IdentifyClient(_)
+        | RequestBody::ReadCatalog { .. }
         | RequestBody::ListProjectSessions { .. }
         | RequestBody::CloseSession { .. }
         | RequestBody::CancelCreation(_)
@@ -226,6 +228,7 @@ fn validate_reply(body: &ReplyBody) -> Result<(), ErrorCode> {
         ReplyBody::SavedScreen(screen) => validate_saved_screen(screen),
         ReplyBody::ProjectMutated { .. }
         | ReplyBody::SessionReferencesSynced
+        | ReplyBody::ClientIdentified(_)
         | ReplyBody::SessionClosed
         | ReplyBody::CreationCancelled
         | ReplyBody::ServerSettingsWritten

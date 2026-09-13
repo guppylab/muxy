@@ -124,6 +124,7 @@ fn resize_server(
             server: muxy_protocol::ServerInfo::current(),
         },
     )?;
+    identify_desktop(&mut decoder, &mut encoder)?;
     let mut blocked = true;
     let mut observed = Vec::new();
     while let Ok((CONTROL, Message::Request { id, body })) = decoder.next() {
@@ -258,6 +259,7 @@ fn reconnect_server(listener: &UnixListener, started: &Sender<()>) -> TestResult
                 server: muxy_protocol::ServerInfo::current(),
             },
         )?;
+        identify_desktop(&mut decoder, &mut encoder)?;
         let (
             CONTROL,
             Message::Request {

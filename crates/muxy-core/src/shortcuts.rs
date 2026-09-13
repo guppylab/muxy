@@ -39,6 +39,8 @@ pub fn find(id: &str) -> Option<&'static Shortcut> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ShortcutId {
     NewTab,
+    ExistingTerminals,
+    DetachTerminal,
     CloseTab,
     SplitRight,
     SplitDown,
@@ -164,6 +166,18 @@ pub const ALL: &[Shortcut] = &[
         keys: &["cmd-t"],
         contexts: &[Some("WorkspaceTabs")],
         key_contexts: &[&[Some("WorkspaceTabs")]],
+    },
+    Shortcut {
+        id: "existing_terminals",
+        keys: &[],
+        contexts: &[Some("WorkspaceTabs")],
+        key_contexts: &[],
+    },
+    Shortcut {
+        id: "detach_terminal",
+        keys: &[],
+        contexts: &[Some("WorkspaceTabs")],
+        key_contexts: &[],
     },
     Shortcut {
         id: "close_tab",

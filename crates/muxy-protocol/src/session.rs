@@ -1,5 +1,35 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub enum ClientKind {
+    Desktop,
+    Tui,
+    #[default]
+    Cli,
+}
+
+impl std::fmt::Display for ClientKind {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Desktop => "Desktop",
+            Self::Tui => "TUI",
+            Self::Cli => "CLI",
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SessionClient {
+    pub id: crate::ClientId,
+    pub kind: ClientKind,
+}
+
+impl std::fmt::Display for SessionClient {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{} · {:.6}", self.kind, self.id.to_string())
+    }
+}
+
 use crate::{ChannelId, Cursor, Modes, Row, ServerPath, SessionId, Size};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

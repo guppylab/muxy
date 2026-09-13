@@ -192,9 +192,35 @@ fn draw_header(frame: &mut Frame<'_>, shared: &Shared, state: &State) {
             ));
         }
     }
+    let count = if shared.sessions_project == Some(state.active) {
+        shared.sessions.len()
+    } else {
+        0
+    };
+    let existing = match count {
+        0 => String::new(),
+        _ => format!(" [▤ {count}] ^B w "),
+    };
+    let indicator_width = u16::try_from(existing.chars().count())
+        .unwrap_or(u16::MAX)
+        .min(area.width / 2);
     frame.render_widget(
         Paragraph::new(Line::from(labels)),
-        Rect::new(area.x, area.y, area.width, 1),
+        Rect::new(
+            area.x,
+            area.y,
+            area.width.saturating_sub(indicator_width),
+            1,
+        ),
+    );
+    frame.render_widget(
+        Paragraph::new(existing).style(Style::new().fg(Color::Cyan)),
+        Rect::new(
+            area.right().saturating_sub(indicator_width),
+            area.y,
+            indicator_width,
+            1,
+        ),
     );
 }
 
@@ -315,18 +341,7 @@ fn draw_overlay(frame: &mut Frame<'_>, shared: &Shared, overlay: &Overlay) {
         ),
         Overlay::Sessions(index) => (
             "Existing terminals — arrows to choose, Enter to open",
-            shared
-                .sessions
-                .iter()
-                .map(|session| {
-                    format!(
-                        "{}  {:?}  {}",
-                        session.info.id.get(),
-                        session.status,
-                        clean(&String::from_utf8_lossy(&session.info.directory.0))
-                    )
-                })
-                .collect(),
+            session_lines(shared),
             Some(*index),
         ),
     };
@@ -365,6 +380,26 @@ fn draw_overlay(frame: &mut Frame<'_>, shared: &Shared, overlay: &Overlay) {
         })
         .collect();
     frame.render_widget(Paragraph::new(lines), inner);
+}
+
+fn session_lines(shared: &Shared) -> Vec<String> {
+    if shared.sessions.is_empty() {
+        return vec!["No other terminals in this project".into()];
+    }
+    shared
+        .sessions
+        .iter()
+        .map(|session| {
+            format!(
+                "{}  {}  {}",
+                session.info.id.get(),
+                session
+                    .owner
+                    .map_or_else(|| "No owner".to_owned(), |owner| format!("Owner: {owner}")),
+                clean(&String::from_utf8_lossy(&session.info.directory.0))
+            )
+        })
+        .collect()
 }
 
 #[cfg(test)]

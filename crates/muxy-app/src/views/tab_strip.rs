@@ -42,12 +42,19 @@ pub(crate) fn tab_strip(
         .filter(|tab| tab.zoomed.is_some() || tab.panes.len() > 1);
     let control_width = f32::from(model.metrics.control_medium() + model.metrics.spacing2());
     let zoom_width = zoom_tab.map_or(0.0, |_| control_width);
+    let existing_count = model.existing_terminal_count();
+    let existing_width = if existing_count == 0 {
+        0.0
+    } else {
+        control_width
+    };
     let leading = (153.0 - sidebar_width).max(0.0);
     let available = (f32::from(window.viewport_size().width)
         - sidebar_width
         - leading
         - 28.0
         - zoom_width
+        - existing_width
         - control_width)
         .max(0.0);
     let count = u16::try_from(model.state.current_project().tabs.len()).unwrap_or(u16::MAX);
@@ -104,9 +111,55 @@ pub(crate) fn tab_strip(
                 .child(cells),
         )
         .children(pinned_button)
+        .children(
+            (existing_count > 0).then(|| existing_terminals_button(existing_count, model, cx)),
+        )
         .children(zoom_tab.map(|tab| zoom_control(tab.zoomed.is_some(), model, cx)))
         .child(settings)
         .child(drag::track_pointer(targets, cx))
+        .into_any_element()
+}
+
+fn existing_terminals_button(
+    count: usize,
+    model: &AppModel,
+    cx: &mut Context<AppModel>,
+) -> AnyElement {
+    let theme = &model.theme;
+    let project = model.state.current_project().id;
+    let tooltip = if count == 1 {
+        "1 Existing Terminal".to_owned()
+    } else {
+        format!("{count} Existing Terminals")
+    };
+    let tooltip = model
+        .settings
+        .keymap
+        .chord(Action::ExistingTerminals)
+        .map_or_else(|| tooltip.clone(), |chord| format!("{tooltip} ({chord})"));
+    div()
+        .debug_selector(|| "existing-terminals-button".into())
+        .flex()
+        .flex_none()
+        .items_center()
+        .h_full()
+        .pr(model.metrics.spacing2())
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .child(
+            IconButton::new(
+                "existing-terminals",
+                Icon::TerminalStack,
+                model.metrics.scaled(14.0),
+                model.metrics.control_medium(),
+                theme.fg_muted,
+                theme.fg,
+            )
+            .tooltip(tooltip, theme.raised(), theme.fg, theme.border)
+            .on_click(cx.listener(move |model, _, window, cx| {
+                cx.stop_propagation();
+                model.open_session_picker(project, window, cx);
+            })),
+        )
         .into_any_element()
 }
 

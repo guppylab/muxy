@@ -182,6 +182,16 @@ impl Client {
         }
     }
 
+    pub fn identify(
+        &self,
+        kind: muxy_protocol::ClientKind,
+    ) -> Result<muxy_protocol::SessionClient, ClientError> {
+        match self.request(RequestBody::IdentifyClient(kind))? {
+            ReplyBody::ClientIdentified(client) => Ok(client),
+            body => Err(ClientError::UnexpectedReply(Box::new(body))),
+        }
+    }
+
     pub fn list_sessions(&self) -> Result<Vec<SessionInfo>, ClientError> {
         match self.request(RequestBody::ListSessions)? {
             ReplyBody::Sessions(sessions) => Ok(sessions),
@@ -270,7 +280,11 @@ impl Client {
     }
 
     pub fn attach(&self, id: SessionId, size: Size) -> Result<Attachment, ClientError> {
-        let (snapshot, process) = match self.request(RequestBody::Attach { session: id, size })? {
+        let reply = self.request(RequestBody::Attach { session: id, size });
+        if matches!(&reply, Err(ClientError::Timeout)) {
+            self.disconnect();
+        }
+        let (snapshot, process) = match reply? {
             ReplyBody::Attached { snapshot, process } => (*snapshot, process),
             other => return Err(ClientError::UnexpectedReply(Box::new(other))),
         };

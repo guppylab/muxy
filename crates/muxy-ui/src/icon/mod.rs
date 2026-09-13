@@ -54,6 +54,7 @@ pub enum Icon {
     Search,
     Settings,
     Terminal,
+    TerminalStack,
     Trash,
     X,
 }
@@ -102,6 +103,7 @@ impl Icon {
             Self::Rows => "rows-2",
             Self::Search => "search",
             Self::Settings => "settings",
+            Self::TerminalStack => "terminal-stack",
             Self::Terminal => "terminal",
             Self::Trash => "trash",
             Self::X => "x",
@@ -201,6 +203,7 @@ impl Icon {
             Self::Rows => "square.split.1x2",
             Self::Search => "magnifyingglass",
             Self::Settings => "gearshape",
+            Self::TerminalStack => "square.stack",
             Self::Terminal => "terminal",
             Self::Trash => "trash",
             Self::X => "xmark",

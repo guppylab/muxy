@@ -104,6 +104,7 @@ pub(super) struct Tui<'a> {
     pub screen: Terminal,
     pub raw: Vec<u8>,
     status: Option<ExitStatus>,
+    output_closed: bool,
 }
 
 impl<'a> Tui<'a> {
@@ -138,6 +139,7 @@ impl<'a> Tui<'a> {
             screen: Terminal::new(SIZE, 1024 * 1024)?,
             raw: Vec::new(),
             status: None,
+            output_closed: false,
         })
     }
 
@@ -147,13 +149,17 @@ impl<'a> Tui<'a> {
     }
 
     pub(super) fn pump(&mut self) -> Result {
-        if let Ok(PtyEvent::Output(bytes)) = self.events.recv_timeout(Duration::from_millis(20)) {
-            self.screen.feed(&bytes);
-            self.raw.extend(bytes);
-            let response = self.screen.take_pty_output();
-            if !response.is_empty() {
-                self.pty.write(&response)?;
+        match self.events.recv_timeout(Duration::from_millis(20)) {
+            Ok(PtyEvent::Output(bytes)) => {
+                self.screen.feed(&bytes);
+                self.raw.extend(bytes);
+                let response = self.screen.take_pty_output();
+                if !response.is_empty() {
+                    self.pty.write(&response)?;
+                }
             }
+            Ok(PtyEvent::Closed) => self.output_closed = true,
+            Err(_) => {}
         }
         Ok(())
     }
@@ -256,9 +262,10 @@ impl<'a> Tui<'a> {
         let deadline = Instant::now() + Duration::from_secs(10);
         while Instant::now() < deadline {
             self.pump()?;
-            if let Some(status) = self.pty.try_wait() {
-                self.status = Some(status);
-                self.pump()?;
+            self.status = self.status.or_else(|| self.pty.try_wait());
+            if self.output_closed
+                && let Some(status) = self.status
+            {
                 return Ok(status);
             }
         }

@@ -3,6 +3,8 @@ use std::fs;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 
+#[path = "client/attachment_timeout.rs"]
+mod attachment_timeout;
 #[path = "client/close.rs"]
 mod close;
 #[path = "client/colors.rs"]
@@ -11,6 +13,8 @@ mod colors;
 mod cursor;
 #[path = "client/links.rs"]
 mod links;
+#[path = "client/ownership.rs"]
+mod ownership;
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -113,6 +117,13 @@ exec /bin/sh -l
     }
 
     fn connect(&self) -> TestResult<Connection> {
+        self.connect_stream(|socket| Box::new(socket))
+    }
+
+    fn connect_stream(
+        &self,
+        stream: impl FnOnce(UnixStream) -> Box<dyn ByteStream>,
+    ) -> TestResult<Connection> {
         let (socket, server) = UnixStream::pair()?;
         let server: Box<dyn ByteStream> = Box::new(server);
         let cancellation = server.cancellation()?;
@@ -126,7 +137,7 @@ exec /bin/sh -l
         thread::spawn(move || {
             let _ = done.send(serve(server, registry, events));
         });
-        let client = Client::from_stream(Box::new(socket))?;
+        let client = Client::from_stream(stream(socket))?;
         let events = client.events().ok_or("events already taken")?;
         Ok(Connection {
             client,
@@ -163,7 +174,9 @@ impl Connection {
                     channel: received,
                     frame,
                 } if received == channel => return Ok(frame),
-                ClientEvent::Metadata { .. } | ClientEvent::CatalogChanged { .. } => {}
+                ClientEvent::Metadata { .. }
+                | ClientEvent::SessionsChanged { .. }
+                | ClientEvent::CatalogChanged { .. } => {}
                 other => return Err(format!("expected frame, got {other:?}").into()),
             }
         }
@@ -198,7 +211,11 @@ impl Connection {
                     attachment.grid.apply(&frame);
                     self.client.ack(channel, frame.seq)?;
                 }
-                Ok(ClientEvent::Metadata { .. } | ClientEvent::CatalogChanged { .. }) => {}
+                Ok(
+                    ClientEvent::Metadata { .. }
+                    | ClientEvent::SessionsChanged { .. }
+                    | ClientEvent::CatalogChanged { .. },
+                ) => {}
                 Err(RecvTimeoutError::Timeout) => return Ok(()),
                 other => return Err(format!("connection did not become quiet: {other:?}").into()),
             }
@@ -214,6 +231,7 @@ impl Connection {
                 } if ended == session => return Ok(reason),
                 ClientEvent::Frame { .. }
                 | ClientEvent::Metadata { .. }
+                | ClientEvent::SessionsChanged { .. }
                 | ClientEvent::CatalogChanged { .. } => {}
                 other => return Err(format!("expected session ended, got {other:?}").into()),
             }
@@ -256,7 +274,9 @@ fn metadata_crosses_the_connection_and_is_included_in_the_next_attachment() -> T
                     | MetadataEvent::ScreenPrompts { .. } => {}
                 }
             }
-            ClientEvent::Frame { .. } | ClientEvent::CatalogChanged { .. } => {}
+            ClientEvent::Frame { .. }
+            | ClientEvent::SessionsChanged { .. }
+            | ClientEvent::CatalogChanged { .. } => {}
             other => return Err(format!("unexpected event: {other:?}").into()),
         }
     }
@@ -423,6 +443,7 @@ fn server_exit_disconnects_the_client() -> TestResult {
             ClientEvent::ServerRestarting | ClientEvent::Disconnected => break,
             ClientEvent::Frame { .. }
             | ClientEvent::Metadata { .. }
+            | ClientEvent::SessionsChanged { .. }
             | ClientEvent::CatalogChanged { .. } => {}
             other @ ClientEvent::SessionEnded { .. } => {
                 return Err(format!("expected disconnect, got {other:?}").into());
@@ -725,7 +746,9 @@ fn wait_input_modes(
                 channel,
                 event: muxy_protocol::MetadataEvent::InputModes(modes),
             } if channel == expected => return Ok(modes),
-            ClientEvent::Metadata { .. } | ClientEvent::CatalogChanged { .. } => {}
+            ClientEvent::Metadata { .. }
+            | ClientEvent::SessionsChanged { .. }
+            | ClientEvent::CatalogChanged { .. } => {}
             ClientEvent::Frame { channel, frame } => connection.client.ack(channel, frame.seq)?,
             event => return Err(format!("expected input modes, got {event:?}").into()),
         }

@@ -25,6 +25,12 @@ TUI layout concurrently; layout changes need not appear live in another
 instance. Opening an existing session adds it to the client's layout; sessions
 from another client are discoverable within their project.
 
+Existing Terminals lists sessions in the selected project that this client is
+not attached to and shows their owner, or No owner. The desktop tabstrip provides
+a stack-icon button, hidden when none are available. Its keyboard shortcut is
+unassigned by default and can be configured in settings. The TUI shows availability
+beside its tabs and keeps its keyboard picker.
+
 On launch, desktop restores every project, its tabs, and window view state. It
 never creates a tab automatically. The TUI's first launch opens one shell in
 Home; later launches restore its saved project and layout.

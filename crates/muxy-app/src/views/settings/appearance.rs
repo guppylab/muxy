@@ -1,5 +1,7 @@
-use super::{Category, Change, PickerKind, SettingsView};
+use super::{Category, Change, PickerKind, SettingsEvent, SettingsView};
 use gpui::{AnyElement, Context};
+use muxy_settings::CloseBehavior;
+use muxy_ui::controls::{self, Choice};
 
 pub(super) fn rows(
     pane: &SettingsView,
@@ -7,6 +9,34 @@ pub(super) fn rows(
     cx: &mut Context<SettingsView>,
 ) -> Vec<AnyElement> {
     let mut rows = Vec::new();
+    if category == Category::General && pane.matches(category, "When closing tabs or panes") {
+        let selected = match pane.snapshot.settings.window.close_behavior {
+            CloseBehavior::CloseSession => "close",
+            CloseBehavior::Detach => "detach",
+        };
+        rows.push(pane.row(
+            "close-behavior",
+            "When closing tabs or panes",
+            controls::segmented(
+                pane.style(),
+                "close-behavior",
+                &[
+                    Choice::new("close", "Close sessions"),
+                    Choice::new("detach", "Detach"),
+                ],
+                selected,
+                cx.listener(|_, selected: &gpui::SharedString, _, cx| {
+                    cx.emit(SettingsEvent::Change(Change::CloseBehavior(
+                        if selected.as_ref() == "detach" {
+                            CloseBehavior::Detach
+                        } else {
+                            CloseBehavior::CloseSession
+                        },
+                    )));
+                }),
+            ),
+        ));
+    }
     let appearance = &pane.snapshot.settings.appearance;
     for (dark, label, value) in [
         (false, "Light theme", &appearance.light_theme),

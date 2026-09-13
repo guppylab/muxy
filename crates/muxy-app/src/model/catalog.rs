@@ -141,8 +141,12 @@ impl AppModel {
 }
 
 impl AppModel {
-    pub(crate) fn send_session_request(&mut self, work: Work, cx: &mut Context<Self>) {
-        self.send(work, cx);
+    pub(crate) fn session_listing_ready(&self) -> bool {
+        self.connection == ConnectionState::Ready
+    }
+
+    pub(crate) fn send_session_request(&mut self, work: Work, cx: &mut Context<Self>) -> bool {
+        self.send(work, cx)
     }
 
     pub(crate) fn open_existing_session(
@@ -151,6 +155,9 @@ impl AppModel {
         session: &muxy_protocol::ProjectSession,
         cx: &mut Context<Self>,
     ) {
+        if self.state.session_references().contains(&session.info.id) || session.attached {
+            return;
+        }
         if session.info.project != project {
             self.fail("Session belongs to a different project".into(), cx);
             return;

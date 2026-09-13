@@ -53,8 +53,6 @@ impl Boot {
 pub(crate) enum Work {
     ProjectSessions {
         project: muxy_protocol::ProjectId,
-        after: Option<SessionId>,
-        revision: Option<u64>,
     },
     ReadCatalog,
     CancelCreation(muxy_protocol::OperationId),
@@ -124,7 +122,6 @@ pub(crate) enum Work {
 pub(crate) enum Update {
     ProjectSessions {
         project: muxy_protocol::ProjectId,
-        after: Option<SessionId>,
         result: Result<muxy_protocol::ProjectSessions, ClientError>,
     },
     CreationCancelled {
@@ -160,6 +157,7 @@ pub(crate) enum Update {
     AttachFailed {
         pane: PaneId,
         session: Option<SessionId>,
+        created: bool,
         error: ClientError,
     },
     Saved {
@@ -291,6 +289,7 @@ fn connect(
     } else {
         crate::server::ensure_server_running(socket)?
     };
+    client.identify(muxy_protocol::ClientKind::Desktop)?;
     let events = client
         .events()
         .ok_or_else(|| std::io::Error::other("client events already taken"))?;
@@ -337,9 +336,8 @@ fn schedule(
 
 fn rejected(work: Work, error: ClientError) -> Update {
     match work {
-        Work::ProjectSessions { project, after, .. } => Update::ProjectSessions {
+        Work::ProjectSessions { project } => Update::ProjectSessions {
             project,
-            after,
             result: Err(error),
         },
         Work::CancelCreation(operation) => Update::CreationCancelled {
@@ -363,6 +361,7 @@ fn rejected(work: Work, error: ClientError) -> Update {
         Work::Attach { pane, session, .. } => Update::AttachFailed {
             pane,
             session,
+            created: false,
             error,
         },
         Work::ReadSaved { pane, .. } => Update::Saved {
@@ -400,15 +399,10 @@ fn rejected(work: Work, error: ClientError) -> Update {
 )]
 fn perform(work: Work, client: &Client) -> Option<Update> {
     let result = match work {
-        Work::ProjectSessions {
-            project,
-            after,
-            revision,
-        } => {
+        Work::ProjectSessions { project } => {
             return Some(Update::ProjectSessions {
                 project,
-                after,
-                result: client.project_sessions(project, after, revision),
+                result: client.available_project_sessions(project),
             });
         }
         Work::CancelCreation(operation) => {
@@ -623,6 +617,7 @@ fn attach(
             return Update::AttachFailed {
                 pane,
                 session: None,
+                created: false,
                 error,
             };
         }
@@ -637,6 +632,7 @@ fn attach(
         Err(error) => Update::AttachFailed {
             pane,
             session: Some(session),
+            created: existing.is_none(),
             error,
         },
     }

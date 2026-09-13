@@ -18,6 +18,6 @@ pub use ghostty::{CellHeight, FontMap, FontOptions, TerminalSettings};
 pub use keymap::{Action, Keymap};
 pub use quick_terminal::QuickTerminalSettings;
 pub use settings::{
-    ClipboardSettings, NewPaneDirectory, OpenerSettings, PaneSettings, ProjectSettings, Settings,
-    WindowSettings,
+    ClipboardSettings, CloseBehavior, NewPaneDirectory, OpenerSettings, PaneSettings,
+    ProjectSettings, Settings, WindowSettings,
 };

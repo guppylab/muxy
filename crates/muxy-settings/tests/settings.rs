@@ -11,6 +11,25 @@ use muxy_settings::{Action, CellHeight, KeyChord, Keymap, Settings, TerminalSett
 
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
+#[test]
+fn close_behavior_defaults_to_close_and_persists_without_changing_other_preferences() -> Result {
+    use muxy_settings::CloseBehavior;
+    let fixture = Fixture::new()?;
+    let path = fixture.write(
+        "settings.toml",
+        "[window]\nconfirm_running_process = false\n[keymap]\nnew_tab = 'cmd-n'\n",
+    )?;
+    let mut settings = Settings::load(&path)?;
+    assert_eq!(settings.window.close_behavior, CloseBehavior::CloseSession);
+    settings.window.close_behavior = CloseBehavior::Detach;
+    settings.save_window(&path)?;
+    assert_eq!(Settings::load(&path)?, settings);
+    settings.set_confirm_running_process(true, &path)?;
+    assert_eq!(Settings::load(&path)?, settings);
+    assert!(toml::from_str::<Settings>("[window]\nclose_behavior = 'invalid'").is_err());
+    Ok(())
+}
+
 struct Fixture(PathBuf);
 
 impl Fixture {
@@ -137,7 +156,10 @@ fn saving_close_confirmation_preserves_invalid_files_and_in_memory_preferences()
 fn every_default_binding_round_trips_and_resolves_both_directions() -> Result {
     let keymap = Keymap::default();
     for action in Action::ALL {
-        if action == Action::SelectCommandOutput {
+        if matches!(
+            action,
+            Action::SelectCommandOutput | Action::ExistingTerminals | Action::DetachTerminal
+        ) {
             assert!(keymap.chord(action).is_none());
             continue;
         }

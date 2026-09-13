@@ -57,10 +57,12 @@ struct CloseRequest {
     panes: Vec<PaneId>,
     checking: usize,
     whole_tab: bool,
+    behavior: muxy_settings::CloseBehavior,
 }
 
 pub(crate) struct AppModel {
     catalog: catalog::Synchronization,
+    pub(crate) existing_sessions: crate::views::session_picker::ExistingSessions,
     pub(crate) quick: quick_terminal::QuickTerminalRuntime,
     pub(crate) window: gpui::AnyWindowHandle,
     pub(crate) state: AppState,
@@ -95,6 +97,7 @@ pub(crate) struct AppModel {
     bounds_save: Option<Task<()>>,
     work: Worker,
     pending: HashSet<PaneId>,
+    detached_pending: HashSet<PaneId>,
     pending_close: Option<TabId>,
     close_request: Option<CloseRequest>,
     pub(crate) close_prompt: Option<Task<()>>,
@@ -244,6 +247,7 @@ impl AppModel {
         let theme_error = (!themes.errors.is_empty()).then(|| themes.errors.join("; "));
         let mut model = Self {
             catalog: catalog::Synchronization::default(),
+            existing_sessions: crate::views::session_picker::ExistingSessions::default(),
             quick: quick_terminal::QuickTerminalRuntime::new(&boot.settings.quick_terminal, cx),
             window: window.window_handle(),
             state: boot.state,
@@ -278,6 +282,7 @@ impl AppModel {
             bounds_save: None,
             work: boot.work,
             pending: HashSet::new(),
+            detached_pending: HashSet::new(),
             pending_close: None,
             close_request: None,
             close_prompt: None,
@@ -594,6 +599,43 @@ impl AppModel {
         }
     }
 
+    pub(crate) fn can_detach_terminal(&self, pane: PaneId) -> bool {
+        self.quitting == Quitting::Idle
+            && self.close_request.is_none()
+            && self.pending_close.is_none()
+            && self.close_prompt.is_none()
+            && self.pane_tab(pane).is_some()
+            && self.pane_session(pane).is_some()
+    }
+
+    pub(crate) fn detach_terminal(&mut self, pane: PaneId, cx: &mut Context<Self>) {
+        if !self.can_detach_terminal(pane) {
+            return;
+        }
+        let previous = self.state.clone();
+        if let Err(error) = self.state.detach_pane(pane) {
+            self.state = previous;
+            self.fail(error.to_string(), cx);
+            return;
+        }
+        if !self.save(cx) {
+            self.state = previous;
+            return;
+        }
+        if self.pending.contains(&pane) {
+            self.detached_pending.insert(pane);
+        }
+        if let Some(tab) = self.active_tab() {
+            self.navigation
+                .record((self.state.current_project().id, tab));
+        }
+        self.split_resize.end();
+        self.dismiss_overlay(cx);
+        self.focus_requested = true;
+        self.sync_visible(cx);
+        cx.notify();
+    }
+
     fn begin_close(&mut self, tab: TabId, pane: Option<PaneId>, cx: &mut Context<Self>) {
         if self.quitting != Quitting::Idle
             || self.close_request.is_some()
@@ -617,13 +659,15 @@ impl AppModel {
             panes,
             checking: 0,
             whole_tab: pane.is_none(),
+            behavior: self.settings.window.close_behavior,
         });
         self.check_next_close(cx);
     }
 
     fn check_next_close(&mut self, cx: &mut Context<Self>) {
         while let Some(request) = &self.close_request {
-            if !self.settings.window.confirm_running_process
+            if request.behavior == muxy_settings::CloseBehavior::Detach
+                || !self.settings.window.confirm_running_process
                 || request.checking == request.panes.len()
             {
                 self.close_confirmed(cx);
@@ -751,19 +795,34 @@ impl AppModel {
             .iter()
             .filter_map(|pane| self.pane_session(*pane))
             .collect();
-        let result = if request.whole_tab {
+        let detach = request.behavior == muxy_settings::CloseBehavior::Detach;
+        let result = if detach {
+            request
+                .panes
+                .iter()
+                .try_for_each(|pane| self.state.detach_pane(*pane))
+        } else if request.whole_tab {
             self.state.close_tab(project_id, request.tab)
         } else {
             self.state.close_pane(request.panes[0])
         };
         for session in closing {
-            if !self.state.session_references().contains(&session) {
+            if !detach && !self.state.session_references().contains(&session) {
                 self.state.queue_discard(session);
             }
         }
         if result.is_err() || !self.save(cx) {
             self.state = previous;
             return;
+        }
+        if detach {
+            self.detached_pending.extend(
+                request
+                    .panes
+                    .iter()
+                    .filter(|pane| self.pending.contains(pane))
+                    .copied(),
+            );
         }
         if let Some(tab) = self.active_tab() {
             self.navigation
@@ -791,6 +850,7 @@ impl AppModel {
             return;
         };
         self.generation = generation;
+        self.detached_pending.clear();
         self.connection = ConnectionState::Connecting;
         self.sync_preferences(cx);
         self.pending.clear();
@@ -990,6 +1050,7 @@ impl AppModel {
 
     fn sync_visible(&mut self, cx: &mut Context<Self>) {
         self.sync_references(cx);
+        self.refresh_existing_sessions(cx);
         let visible = self.attached_panes();
         let hidden: Vec<_> = self
             .grids
@@ -1320,6 +1381,7 @@ impl AppModel {
     fn receive_connected(&mut self, sessions: &[SessionInfo], cx: &mut Context<Self>) {
         self.connection = ConnectionState::Ready;
         self.references = None;
+        self.existing_sessions = crate::views::session_picker::ExistingSessions::default();
         self.sync_preferences(cx);
         self.error = None;
         if !self.send(Work::Colors(self.palette.terminal_colors()), cx) {
@@ -1342,11 +1404,9 @@ impl AppModel {
             return;
         }
         match update {
-            Update::ProjectSessions {
-                project,
-                after,
-                result,
-            } => self.receive_session_page(project, after, result, cx),
+            Update::ProjectSessions { project, result } => {
+                self.receive_session_page(project, result, cx);
+            }
             Update::CreationCancelled { operation, result } => {
                 self.receive_creation_cancelled(operation, result, cx);
             }
@@ -1387,8 +1447,9 @@ impl AppModel {
             Update::AttachFailed {
                 pane,
                 session,
+                created,
                 error,
-            } => self.receive_attach_failed(pane, session, &error, cx),
+            } => self.receive_attach_failed(pane, session, created, &error, cx),
             Update::Saved { pane, result } => self.receive_saved(pane, result, cx),
             Update::History {
                 pane,
@@ -1449,8 +1510,13 @@ impl AppModel {
     ) {
         self.pending.remove(&pane);
         self.initial_directories.remove(&pane);
+        let detached = self.detached_pending.remove(&pane);
+        if detached {
+            self.references = None;
+            self.sync_references(cx);
+        }
         if self.state.set_pane_session(pane, Some(session)).is_err() {
-            if created {
+            if created && !detached {
                 self.discard_created(session, cx);
             } else {
                 self.send(Work::Detach(attachment.channel), cx);
@@ -1475,10 +1541,16 @@ impl AppModel {
         &mut self,
         pane: PaneId,
         session: Option<SessionId>,
+        created: bool,
         error: &muxy_client::ClientError,
         cx: &mut Context<Self>,
     ) {
         self.pending.remove(&pane);
+        let detached = self.detached_pending.remove(&pane);
+        if detached {
+            self.references = None;
+            self.sync_references(cx);
+        }
         if self.is_quick_terminal(pane) && missing_session(error) {
             self.close_quick_terminal(cx);
             return;
@@ -1486,7 +1558,9 @@ impl AppModel {
         if let Some(session) = session {
             self.initial_directories.remove(&pane);
             if self.state.set_pane_session(pane, Some(session)).is_err() {
-                self.discard_created(session, cx);
+                if created && !detached {
+                    self.discard_created(session, cx);
+                }
                 return;
             }
             self.save(cx);
@@ -1579,6 +1653,10 @@ impl AppModel {
 
     fn receive_event(&mut self, event: ClientEvent, cx: &mut Context<Self>) {
         match event {
+            ClientEvent::SessionsChanged { revision } => {
+                self.existing_sessions.revision = self.existing_sessions.revision.max(revision);
+                self.refresh_existing_sessions(cx);
+            }
             ClientEvent::CatalogChanged { revision } => {
                 self.catalog.dirty = self.catalog.dirty.max(revision);
                 self.refresh_catalog(cx);
@@ -1692,6 +1770,8 @@ impl AppModel {
     fn disconnect(&mut self, cx: &mut Context<Self>) {
         self.connection = ConnectionState::Disconnected;
         self.references = None;
+        self.existing_sessions = crate::views::session_picker::ExistingSessions::default();
+        self.update_session_picker(cx);
         self.quick.closing = None;
         self.refresh_quick_terminal(cx);
         if self.server_preferences.busy || !self.server_preferences.pending.is_empty() {
@@ -1749,6 +1829,7 @@ mod tests {
     use muxy_protocol::ExitReason;
     mod clipboard;
     mod colors;
+    mod detach;
     mod find;
     mod links;
     mod mouse;
@@ -1756,6 +1837,7 @@ mod tests {
     mod projects;
     mod quick_terminal;
     mod scrollback;
+    mod session_ownership;
     mod sidebar;
     mod splits;
     mod tab_strip;
@@ -1896,6 +1978,7 @@ mod tests {
                     Update::AttachFailed {
                         pane,
                         session: Some(session),
+                        created: true,
                         error: missing_session_error(),
                     },
                 ),
@@ -1966,6 +2049,7 @@ mod tests {
                     Update::AttachFailed {
                         pane,
                         session: Some(session),
+                        created: true,
                         error: missing_session_error(),
                     },
                 ),

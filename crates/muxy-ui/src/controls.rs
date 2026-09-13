@@ -249,6 +249,10 @@ pub fn segmented(
                     "settings-segment-{id}-{}",
                     choice.value
                 )))
+                .debug_selector({
+                    let selector = format!("settings-segment-{id}-{}", choice.value);
+                    move || selector.clone()
+                })
                 .flex()
                 .flex_none()
                 .items_center()

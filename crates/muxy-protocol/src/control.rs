@@ -69,6 +69,7 @@ pub enum RequestBody {
         session: SessionId,
         operation: crate::OperationId,
     },
+    IdentifyClient(crate::ClientKind),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -109,6 +110,7 @@ pub enum ReplyBody {
     ServerBusy,
     SessionReferencesSynced,
     SessionClosed,
+    ClientIdentified(crate::SessionClient),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

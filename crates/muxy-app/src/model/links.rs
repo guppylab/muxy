@@ -87,7 +87,11 @@ impl AppModel {
         if pane.state != PaneState::Live {
             output = output.disabled();
         }
-        let items = vec![copy, paste, all, output];
+        let mut detach = Item::action("Detach Terminal", Command::DetachTerminal(id));
+        if !self.can_detach_terminal(id) {
+            detach = detach.disabled();
+        }
+        let items = vec![copy, paste, all, output, detach];
         let model = cx.entity().downgrade();
         let window = self.window;
         cx.defer(move |cx| {

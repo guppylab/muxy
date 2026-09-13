@@ -21,6 +21,8 @@ pub enum Action {
     Minimize,
 
     NewTab,
+    ExistingTerminals,
+    DetachTerminal,
     CloseTab,
     SplitRight,
     SplitDown,
@@ -59,7 +61,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Self; 46] = [
+    pub const ALL: [Self; 48] = [
         Self::OpenSettings,
         Self::NewHomeTab,
         Self::ToggleSidebar,
@@ -72,6 +74,8 @@ impl Action {
         Self::HideOthers,
         Self::Minimize,
         Self::NewTab,
+        Self::ExistingTerminals,
+        Self::DetachTerminal,
         Self::CloseTab,
         Self::SplitRight,
         Self::SplitDown,
@@ -122,6 +126,8 @@ impl Action {
             Self::HideOthers => "hide_others",
             Self::Minimize => "minimize",
             Self::NewTab => "new_tab",
+            Self::ExistingTerminals => "existing_terminals",
+            Self::DetachTerminal => "detach_terminal",
             Self::CloseTab => "close_tab",
             Self::SplitRight => "split_right",
             Self::SplitDown => "split_down",

@@ -64,6 +64,7 @@ pub(crate) enum Change {
     Sidebar(bool),
     StatusBar(bool),
     ConfirmProcess(bool),
+    CloseBehavior(muxy_settings::CloseBehavior),
     CopyOnSelect(bool),
     Directory(muxy_settings::NewPaneDirectory),
     Field(&'static str, String),

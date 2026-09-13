@@ -62,7 +62,6 @@ fn events(host: &mut Host, worker: &Worker) -> Result {
             if let Some(id) = shared.confirm.take() {
                 overlay = Overlay::Confirm(id);
             }
-            shared.session_picker = matches!(overlay, Overlay::Sessions(_));
             if let Some(result) = &shared.exit {
                 return result.clone();
             }
@@ -155,7 +154,6 @@ fn key_event(key: KeyEvent, worker: &Worker, prefix: &mut bool, overlay: &mut Ov
             }
             KeyCode::Char('w') => {
                 *overlay = Overlay::Sessions(0);
-                lock(&worker.shared).sessions.clear();
                 return worker.send(Action::ListSessions);
             }
             KeyCode::Char('?') => {

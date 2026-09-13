@@ -206,6 +206,8 @@ impl Catalog {
             .map(|entry| ProjectSession {
                 info: entry.info.clone(),
                 status: entry.status,
+                owner: None,
+                attached: false,
             })
             .collect();
         let next = entries

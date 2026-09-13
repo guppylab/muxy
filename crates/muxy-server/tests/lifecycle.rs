@@ -182,7 +182,13 @@ impl Client {
     fn receive(&self) -> TestResult<(ChannelId, Message)> {
         loop {
             let event = self.incoming.recv_timeout(TIMEOUT)??;
-            if !matches!(event, (_, Message::CatalogChanged { .. })) {
+            if !matches!(
+                event,
+                (
+                    _,
+                    Message::CatalogChanged { .. } | Message::SessionsChanged { .. }
+                )
+            ) {
                 return Ok(event);
             }
         }
@@ -204,7 +210,12 @@ impl Client {
                         seq: frame.seq,
                     },
                 )?,
-                (_, Message::Metadata(_) | Message::CatalogChanged { .. }) => {}
+                (
+                    _,
+                    Message::Metadata(_)
+                    | Message::CatalogChanged { .. }
+                    | Message::SessionsChanged { .. },
+                ) => {}
                 other => return Err(format!("unexpected reply: {other:?}").into()),
             }
         }
@@ -301,7 +312,7 @@ impl Client {
     fn closed(&self) -> TestResult {
         loop {
             match self.incoming.recv_timeout(TIMEOUT)? {
-                Ok((_, Message::CatalogChanged { .. })) => {}
+                Ok((_, Message::CatalogChanged { .. } | Message::SessionsChanged { .. })) => {}
                 Err(WireError::Closed) => return Ok(()),
                 other => return Err(format!("expected closed, got {other:?}").into()),
             }

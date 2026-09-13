@@ -43,6 +43,15 @@ fn fixture_path(message: &Message) -> PathBuf {
 
 fn project_fixture_name(message: &Message) -> Option<&'static str> {
     Some(match message {
+        Message::SessionsChanged { .. } => "sessions_changed",
+        Message::Request {
+            body: RequestBody::IdentifyClient(_),
+            ..
+        } => "identify_client",
+        Message::Reply {
+            body: ReplyBody::ClientIdentified(_),
+            ..
+        } => "client_identified",
         Message::Request {
             body: RequestBody::SyncSessionReferences { .. },
             ..
@@ -211,6 +220,7 @@ fn development_messages_share_one_version_and_reject_unknown_schemas() -> Result
 
 fn kind_name(kind: MessageKind) -> &'static str {
     match kind {
+        MessageKind::SessionsChanged => "sessions_changed",
         MessageKind::CatalogChanged => "catalog_changed",
         MessageKind::Hello => "hello",
         MessageKind::Request => "request",

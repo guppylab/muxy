@@ -95,6 +95,7 @@ fn walkthrough(cx: &mut TestAppContext) -> Result {
         2
     );
     shared_closes(cx, &view, &probe, channel, &session, &executable)?;
+    detach::verify_live_detach(cx, &view, &probe)?;
     view.update(cx, |model, _| {
         model.work.send((model.generation, Work::Stop))
     })?;
@@ -165,9 +166,7 @@ fn shared_closes(
     let project = view.read_with(cx, |model, _| model.state.home().id);
     let host_tab = view.read_with(cx, |model, _| model.state.home().tabs[0].id);
     let original = view.read_with(cx, |model, _| model.state.home().tabs[1].id);
-    view.update(cx, |model, cx| {
-        model.open_existing_session(project, session, cx);
-    });
+    add_duplicate_tab(cx, view, project, session);
     wait_live(cx, view)?;
     let duplicate = view.read_with(cx, |model, _| model.active_tab().expect("tab"));
     view.update(cx, |model, cx| model.close_tab(duplicate, cx));
@@ -251,4 +250,27 @@ fn shared_closes(
     report(
         "Duplicate desktop tabs and hidden desktop/TUI tabs preserve a shared session; final tab close ends it: PASS",
     )
+}
+
+fn add_duplicate_tab(
+    cx: &mut VisualTestContext,
+    view: &Entity<AppModel>,
+    project: ProjectId,
+    session: &muxy_protocol::ProjectSession,
+) {
+    view.update(cx, |model, cx| {
+        model.open_existing_session(project, session, cx);
+        assert_eq!(model.state.home().tabs.len(), 2);
+        model
+            .state
+            .open_terminal_tab(project)
+            .expect("duplicate tab");
+        let pane = model.state.window().active_pane.expect("duplicate pane");
+        model
+            .state
+            .set_pane_session(pane, Some(session.info.id))
+            .expect("duplicate session");
+        assert!(model.save(cx));
+        model.sync_visible(cx);
+    });
 }

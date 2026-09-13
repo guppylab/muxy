@@ -31,7 +31,10 @@ pub fn serve(
     let Some(version) = handshake::accept(&mut decoder, &mut encoder)? else {
         return Ok(());
     };
-    let outbox = Arc::new(Outbox::new(version));
+    let outbox = Arc::new(Outbox::new(
+        version,
+        Arc::clone(&registry.attachment_changes),
+    ));
     registry.register_connection(&outbox);
     let output = Arc::clone(&outbox);
     let cancel = Arc::clone(&cancellation);
@@ -50,12 +53,20 @@ pub fn serve(
         .name("connection-events".into())
         .spawn(move || {
             let mut revision = 0;
+            let mut sessions_revision = 0;
             while !output.is_closed() {
                 let current = catalog.catalog_revision();
                 if current > revision && output.catalog_watched() {
                     output
                         .push_control(muxy_protocol::Message::CatalogChanged { revision: current });
                     revision = current;
+                }
+                let current = catalog.sessions_revision();
+                if current > sessions_revision && output.catalog_watched() {
+                    output.push_control(muxy_protocol::Message::SessionsChanged {
+                        revision: current,
+                    });
+                    sessions_revision = current;
                 }
                 match events.recv_timeout(POLL) {
                     Ok(ServerEvent::SessionEnded { id, reason }) => {

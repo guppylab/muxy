@@ -8,6 +8,52 @@ use super::*;
 use crate::views::settings::{Change, SettingsEvent};
 use muxy_core::shortcuts::ShortcutSettings;
 
+#[gpui::test]
+fn close_behavior_control_saves_and_rejects_failed_writes(cx: &mut TestAppContext) {
+    use muxy_settings::CloseBehavior;
+    let (boot, _requests) = stub_boot(AppState::bootstrap().expect("state"));
+    let (view, cx) = settings_window(boot, cx);
+    cx.run_until_parked();
+    click_preference(cx, "settings-segment-close-behavior-detach");
+    view.update(cx, |model, cx| {
+        assert_eq!(model.settings.window.close_behavior, CloseBehavior::Detach);
+        let path = model.path.with_file_name("settings.toml");
+        assert_eq!(
+            muxy_settings::Settings::load(&path)
+                .expect("settings")
+                .window
+                .close_behavior,
+            CloseBehavior::Detach
+        );
+        let blocked = model.path.with_file_name("blocked");
+        std::fs::write(&blocked, "file").expect("blocked directory");
+        model.path = blocked.join("state.json");
+        model.change_preference(Change::CloseBehavior(CloseBehavior::CloseSession), cx);
+        assert_eq!(model.settings.window.close_behavior, CloseBehavior::Detach);
+        assert!(
+            settings_view(model)
+                .read(cx)
+                .errors
+                .contains_key("close-behavior")
+        );
+        model.path = path.with_file_name("state.json");
+    });
+    click_preference(cx, "settings-segment-close-behavior-close");
+    view.read_with(cx, |model, _| {
+        assert_eq!(
+            model.settings.window.close_behavior,
+            CloseBehavior::CloseSession
+        );
+        assert_eq!(
+            muxy_settings::Settings::load(&model.path.with_file_name("settings.toml"))
+                .expect("settings")
+                .window
+                .close_behavior,
+            CloseBehavior::CloseSession
+        );
+    });
+}
+
 fn settings_view(model: &AppModel) -> Entity<crate::views::settings::SettingsView> {
     model
         .settings_window
@@ -652,8 +698,14 @@ fn settings_controls_are_reachable_and_activated_with_the_keyboard(cx: &mut Test
     let (boot, _) = stub_boot(AppState::bootstrap().expect("state"));
     cx.update(|cx| crate::views::workspace::bind_keys(&boot.settings.keymap, cx));
     let (view, cx) = settings_window(boot, cx);
-    // Navbar: General, Quick Terminal, Appearance, Keyboard, Terminal, Server; then config and toggle.
-    cx.simulate_keystrokes("cmd-shift-e tab tab tab tab tab tab tab space");
+    cx.simulate_keystrokes("cmd-shift-e tab tab tab tab tab tab tab tab space");
+    view.read_with(cx, |model, _| {
+        assert_eq!(
+            model.settings.window.close_behavior,
+            muxy_settings::CloseBehavior::Detach
+        );
+    });
+    cx.simulate_keystrokes("tab space");
     view.read_with(cx, |model, _| {
         assert!(!model.settings.window.confirm_running_process);
     });
@@ -746,7 +798,7 @@ fn tabbing_reveals_fields_below_a_short_settings_viewport(cx: &mut TestAppContex
     cx.update(|cx| crate::views::workspace::bind_keys(&boot.settings.keymap, cx));
     let (_, cx) = settings_window(boot, cx);
     cx.simulate_resize(size(px(740.0), px(480.0)));
-    cx.simulate_keystrokes("cmd-shift-e tab tab tab tab tab tab tab tab tab");
+    cx.simulate_keystrokes("cmd-shift-e tab tab tab tab tab tab tab tab tab tab tab");
     let row = cx
         .debug_bounds("settings-field-height")
         .expect("height field");
@@ -770,7 +822,7 @@ fn category_disclosures_and_content_use_the_real_setting_sections(cx: &mut TestA
     view.read_with(cx, |model, cx| {
         assert_eq!(
             settings_view(model).read(cx).matching_setting_ids(),
-            vec!["confirm-process", "width", "height"]
+            vec!["close-behavior", "confirm-process", "width", "height"]
         );
     });
     click_preference(cx, "settings-subcategory-Themes");

@@ -13,7 +13,9 @@ fn wait_blinking(connection: &Connection, channel: ChannelId, expected: bool) ->
                 event: MetadataEvent::CursorBlinking(blinking),
             } if received == channel && blinking == expected => return Ok(()),
             ClientEvent::Frame { channel, frame } => connection.client.ack(channel, frame.seq)?,
-            ClientEvent::Metadata { .. } | ClientEvent::CatalogChanged { .. } => {}
+            ClientEvent::Metadata { .. }
+            | ClientEvent::SessionsChanged { .. }
+            | ClientEvent::CatalogChanged { .. } => {}
             other => return Err(format!("expected cursor metadata, got {other:?}").into()),
         }
     }

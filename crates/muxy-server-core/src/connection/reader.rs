@@ -170,6 +170,10 @@ impl Requests {
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "Keep request dispatch exhaustive in one place"
+)]
 fn ordered_request(
     body: RequestBody,
     id: RequestId,
@@ -179,6 +183,7 @@ fn ordered_request(
     last_channel: &AtomicU32,
 ) -> Result<Option<ReplyBody>, ServerError> {
     Ok(Some(match body {
+        RequestBody::IdentifyClient(kind) => ReplyBody::ClientIdentified(outbox.identify(kind)),
         RequestBody::ReadServerSettings => {
             ReplyBody::ServerSettings(registry.settings().document())
         }
@@ -234,6 +239,7 @@ fn ordered_request(
             Path::new(OsStr::from_bytes(&directory.0)),
             size,
             outbox.colors(),
+            Some(outbox),
         )?),
         RequestBody::EndSession(session) => {
             registry.end(session)?;
@@ -291,7 +297,7 @@ fn project_request(
             revision,
             sessions,
         } => {
-            registry.sync_references(outbox, owner, revision, sessions);
+            registry.sync_references(outbox, owner, revision, &sessions);
             ReplyBody::SessionReferencesSynced
         }
         RequestBody::CloseSession { session, operation } => {
@@ -318,7 +324,15 @@ fn project_request(
             project,
             after,
             revision,
-        } => ReplyBody::ProjectSessions(registry.list_project_sessions(project, after, revision)?),
+        } => {
+            outbox.watch_catalog();
+            ReplyBody::ProjectSessions(registry.project_sessions_for(
+                project,
+                after,
+                revision,
+                Some(outbox),
+            )?)
+        }
         _ => {
             return Err(ServerError::new(
                 ErrorCode::BadRequest,

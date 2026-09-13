@@ -242,6 +242,10 @@ impl AppModel {
                 settings.window.confirm_running_process = value;
                 settings.save_window(&path)?;
             }
+            Change::CloseBehavior(value) => {
+                settings.window.close_behavior = value;
+                settings.save_window(&path)?;
+            }
             Change::CopyOnSelect(value) => {
                 settings.clipboard.copy_on_select = value;
                 settings.save_clipboard(&path)?;
@@ -471,6 +475,7 @@ fn change_id(change: &Change) -> &str {
         Change::Sidebar(_) => "sidebar",
         Change::StatusBar(_) => "status-bar",
         Change::ConfirmProcess(_) => "confirm-process",
+        Change::CloseBehavior(_) => "close-behavior",
         Change::CopyOnSelect(_) => "copy-on-select",
         Change::Directory(_) => "directory",
         Change::Field(id, _) => id,

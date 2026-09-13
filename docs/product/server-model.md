@@ -24,6 +24,12 @@ does not end it. Any number of clients may attach simultaneously to receive
 output and send input; clients may display it in different layouts. Session
 size is shared; policy for conflicting client sizes is deferred.
 
+Each session keeps its attached clients in attachment order. The creating client
+attaches first. The earliest remaining client is the session owner; when it
+detaches, the next client becomes owner. A session with no attached clients has
+no owner. Open panes in inactive tabs remain attached. Ownership identifies a
+client and does not change project membership or session permissions.
+
 Attach supplies the current screen and a recent history window. Clients fetch
 older history in pages up to the retention limit, configured as a byte budget.
 The server reports rows retained and saves the last screen and retained history
@@ -36,12 +42,15 @@ unreachable, not necessarily ended.
 
 ## Closing panes
 
-Closing a terminal pane removes it from the client's layout immediately. Its
-session and saved content remain while another open pane in any connected
+By default, closing a terminal pane removes it from the client's layout immediately.
+Its session and saved content remain while another open pane in any connected
 client uses them, including inactive tabs. Closing the final connected pane
 ends the process and discards its saved content. If the server is unreachable,
 the close remains pending; on reconnection the server checks remaining
 references before deciding whether to end it.
+
+Desktop users can choose to detach when closing tabs or panes. Detached sessions
+keep running and can be reopened from Existing Terminals.
 
 Before ending a foreground program other than the shell, the user confirms
 once. Background jobs alone do not trigger confirmation. Ordinary shell jobs

@@ -73,6 +73,48 @@ impl Client {
         }
     }
 
+    pub fn available_project_sessions(
+        &self,
+        project: ProjectId,
+    ) -> Result<ProjectSessions, ClientError> {
+        for _ in 0..8 {
+            match self.available_sessions_snapshot(project) {
+                Err(ClientError::Server(error)) if error.code == ErrorCode::CatalogChanged => {}
+                result => return result,
+            }
+        }
+        Err(ClientError::Timeout)
+    }
+
+    fn available_sessions_snapshot(
+        &self,
+        project: ProjectId,
+    ) -> Result<ProjectSessions, ClientError> {
+        let mut result = self.project_sessions(project, None, None)?;
+        let available = |session: &muxy_protocol::ProjectSession| {
+            !session.attached
+                && matches!(
+                    session.status,
+                    muxy_protocol::SessionStatus::Live | muxy_protocol::SessionStatus::Starting
+                )
+        };
+        result.sessions.retain(available);
+        while let Some(after) = result.next {
+            let page = self.project_sessions(project, Some(after), Some(result.revision))?;
+            if page.next.is_some_and(|next| next <= after) {
+                return Err(ClientError::Protocol("invalid session pagination".into()));
+            }
+            result
+                .sessions
+                .extend(page.sessions.into_iter().filter(available));
+            if result.sessions.len() > 16_384 {
+                return Err(ClientError::Protocol("too many available terminals".into()));
+            }
+            result.next = page.next;
+        }
+        Ok(result)
+    }
+
     pub fn project_sessions(
         &self,
         project: ProjectId,

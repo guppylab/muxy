@@ -401,6 +401,12 @@ fn projects_existing_terminals_and_other_client_changes_share_sessions_without_s
     let remaining = client.list_sessions()?[0].id;
     client.end_session(remaining)?;
     tui.output("No tabs.")?;
+    tui.wait(|tui| {
+        Ok(tui.tabs()?.is_empty()
+            && fixture.state()?["discards"]
+                .as_array()
+                .is_some_and(Vec::is_empty))
+    })?;
     tui.detach()?;
     let state = fixture.state()?;
     let mut restored = Tui::start(&fixture, &[])?;
@@ -541,7 +547,7 @@ fn open_session_picker_refreshes_other_clients_creation_end_and_discard() -> Res
         &fixture.directory.path().join("home"),
         muxy_protocol::Size { cols: 80, rows: 24 },
     )?;
-    tui.output(&format!("{}  Live", session.id.get()))?;
+    tui.output(&format!("{}  Owner: CLI", session.id.get()))?;
     client.end_session(session.id)?;
     tui.wait(|tui| {
         Ok(!tui
@@ -575,11 +581,34 @@ fn duplicate_tabs_close_independently_and_the_final_tab_ends_the_session() -> Re
     let client = fixture.client()?;
     let original = client.list_sessions()?;
     assert_eq!(original.len(), 1);
-    tui.write(b"\x02w")?;
-    tui.output(&format!("{}  Live", original[0].id.get()))?;
-    tui.write(b"\r")?;
-    tui.wait(|tui| Ok(tui.tabs()?.len() == 2))?;
+    tui.detach()?;
+    let mut state = fixture.state()?;
+    let project = state["active"].as_str().ok_or("active project")?.to_owned();
+    let tabs = state["projects"][&project]["tabs"]
+        .as_array_mut()
+        .ok_or("tabs")?;
+    let pane = tabs[0]["panes"]
+        .as_object()
+        .ok_or("panes")?
+        .values()
+        .next()
+        .ok_or("pane")?
+        .clone();
+    let id = muxy_protocol::OperationId::new().to_string();
+    tabs.push(serde_json::json!({
+        "layout": {"Leaf": id}, "focus": id, "zoom": false,
+        "panes": {id.clone(): pane}
+    }));
+    std::fs::write(
+        fixture.directory.path().join("tui-state.json"),
+        serde_json::to_vec(&state)?,
+    )?;
+    let mut tui = Tui::start(&fixture, &[])?;
     tui.ready()?;
+    tui.wait(|tui| Ok(tui.tabs()?.len() == 2))?;
+    tui.write(b"\x02w")?;
+    tui.output("No other terminals in this project")?;
+    tui.write(b"\x1b")?;
     assert_eq!(client.list_sessions()?, original);
     tui.write(b"\x02x")?;
     tui.wait(|tui| Ok(tui.tabs()?.len() == 1))?;
@@ -643,5 +672,51 @@ fn shared_running_program_still_requires_confirmation_if_the_other_client_detach
     tui.write(b"y")?;
     tui.wait(|tui| Ok(tui.tabs()?.is_empty() && client.list_sessions()?.is_empty()))?;
     tui.detach()?;
+    Ok(())
+}
+
+#[test]
+fn existing_terminals_show_owners_and_exclude_all_sessions_open_in_this_tui() -> Result {
+    let fixture = Fixture::new()?;
+    let mut tui = Tui::start(&fixture, &[])?;
+    tui.ready()?;
+    let desktop = fixture.client()?;
+    let desktop_id = desktop.identify(muxy_protocol::ClientKind::Desktop)?;
+    let session = desktop.create_session(
+        &fixture.directory.path().join("home"),
+        muxy_protocol::Size { cols: 80, rows: 24 },
+    )?;
+    tui.write(b"\x02w")?;
+    tui.output("Owner: Desktop")?;
+    tui.output(&session.id.get().to_string())?;
+    tui.write(b"\r")?;
+    tui.wait(|tui| Ok(tui.tabs()?.len() == 2))?;
+    tui.ready()?;
+    let observer = fixture.client()?;
+    assert_eq!(
+        observer
+            .project_sessions(session.project, None, None)?
+            .sessions
+            .iter()
+            .find(|entry| entry.info.id == session.id)
+            .ok_or("session")?
+            .owner,
+        Some(desktop_id)
+    );
+    tui.write(b"\x02w")?;
+    tui.output("No other terminals in this project")?;
+    tui.write(b"\x1b")?;
+    desktop.disconnect();
+    tui.wait(|_| {
+        Ok(observer
+            .project_sessions(session.project, None, None)?
+            .sessions
+            .iter()
+            .find(|entry| entry.info.id == session.id)
+            .and_then(|entry| entry.owner)
+            .is_some_and(|owner| owner.kind == muxy_protocol::ClientKind::Tui))
+    })?;
+    tui.detach()?;
+    assert_eq!(observer.list_sessions()?.len(), 2);
     Ok(())
 }

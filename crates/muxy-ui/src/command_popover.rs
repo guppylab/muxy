@@ -840,9 +840,10 @@ impl CommandPopover {
     }
 
     pub fn set_items(&mut self, items: Vec<CommandPopoverItem>, cx: &mut Context<Self>) {
+        let changed = self.state.items() != items;
         self.state.set_items(items);
         self.confirmation_message = None;
-        if self.detail.is_none() {
+        if changed && self.detail.is_none() {
             self.scroll.reset(self.state.item_count());
             self.scroll_to_selection();
         }

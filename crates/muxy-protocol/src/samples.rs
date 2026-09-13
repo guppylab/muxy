@@ -323,6 +323,18 @@ fn project_samples() -> Vec<Message> {
     let operation = OperationId::from_u128(2);
     vec![
         Message::CatalogChanged { revision: 1 },
+        Message::SessionsChanged { revision: 2 },
+        Message::Request {
+            id: RequestId(5),
+            body: RequestBody::IdentifyClient(crate::ClientKind::Desktop),
+        },
+        Message::Reply {
+            id: RequestId(5),
+            body: ReplyBody::ClientIdentified(crate::SessionClient {
+                id: crate::ClientId::from_u128(4),
+                kind: crate::ClientKind::Desktop,
+            }),
+        },
         Message::Request {
             id: RequestId(1),
             body: RequestBody::ReadCatalog {
@@ -377,7 +389,12 @@ fn project_samples() -> Vec<Message> {
                         project: project.id,
                         directory: project.directory,
                     },
-                    status: SessionStatus::Ended,
+                    status: SessionStatus::Live,
+                    owner: Some(crate::SessionClient {
+                        id: crate::ClientId::from_u128(4),
+                        kind: crate::ClientKind::Desktop,
+                    }),
+                    attached: true,
                 }],
                 next: None,
             }),

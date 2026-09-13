@@ -1,21 +1,34 @@
+use std::collections::HashMap;
+
 use super::overlays::Overlay;
 use crate::{boot::Work, model::AppModel};
 use gpui::{AppContext, Context, Focusable, Window};
 use muxy_app_core::ProjectId;
-use muxy_protocol::{ProjectSession, ProjectSessions, SessionId, SessionStatus};
+use muxy_protocol::{ProjectSession, ProjectSessions, SessionId};
 use muxy_ui::command_popover::{
-    CommandPopover, CommandPopoverAction, CommandPopoverConfig, CommandPopoverDensity,
-    CommandPopoverEvent, CommandPopoverItem, CommandPopoverPresentation, CommandPopoverRow,
+    CommandPopover, CommandPopoverConfig, CommandPopoverDensity, CommandPopoverEvent,
+    CommandPopoverItem, CommandPopoverLeading, CommandPopoverPresentation, CommandPopoverRow,
     CommandPopoverStatus, CommandPopoverTab,
 };
+use muxy_ui::icon::Icon;
+
+#[derive(Default)]
+pub(crate) struct ExistingSessions {
+    pub(crate) revision: u64,
+    projects: HashMap<ProjectId, Listing>,
+}
+
+#[derive(Default)]
+struct Listing {
+    entries: Vec<ProjectSession>,
+    revision: Option<u64>,
+    pending: bool,
+    error: Option<String>,
+}
 
 pub(crate) struct SessionPicker {
     pub(crate) project: ProjectId,
     pub(crate) picker: gpui::Entity<CommandPopover>,
-    entries: Vec<ProjectSession>,
-    after: Option<SessionId>,
-    revision: Option<u64>,
-    next: Option<SessionId>,
 }
 
 impl AppModel {
@@ -32,7 +45,7 @@ impl AppModel {
                     presentation: CommandPopoverPresentation::Modal,
                     density: CommandPopoverDensity::Comfortable,
                     tabs: vec![CommandPopoverTab::new("sessions", "Existing Terminals")],
-                    placeholder: "Filter this page…".into(),
+                    placeholder: "Filter terminals or owners…".into(),
                     footer_actions: Vec::new(),
                     footer_hints: Vec::new(),
                     width: Some(640.0),
@@ -53,142 +66,141 @@ impl AppModel {
                     model.choose_existing_session(selection.id.as_ref(), cx);
                 }
                 CommandPopoverEvent::Dismissed => model.dismiss_overlay(cx),
-                CommandPopoverEvent::QueryChanged { query, .. } => model.filter_sessions(query, cx),
-                CommandPopoverEvent::FooterAction(action) if action == "next" => {
-                    model.next_session_page(cx);
-                }
+                CommandPopoverEvent::QueryChanged { .. } => model.update_session_picker(cx),
                 _ => {}
             }));
-        self.overlay = Some(Overlay::Sessions(SessionPicker {
-            project,
-            picker,
-            entries: Vec::new(),
-            after: None,
-            revision: None,
-            next: None,
-        }));
+        self.overlay = Some(Overlay::Sessions(SessionPicker { project, picker }));
         self.refresh_session_picker(cx);
     }
 
-    pub(crate) fn refresh_session_picker(&mut self, cx: &mut Context<Self>) {
-        if let Some(Overlay::Sessions(picker)) = &mut self.overlay {
-            picker.after = None;
-            let project = picker.project;
-            self.request_session_page(project, None, None, cx);
-        }
+    pub(crate) fn existing_terminal_count(&self) -> usize {
+        self.available_sessions(self.state.current_project().id)
+            .len()
     }
 
-    fn next_session_page(&mut self, cx: &mut Context<Self>) {
-        if let Some(Overlay::Sessions(picker)) = &mut self.overlay
-            && let Some(after) = picker.next
+    fn available_sessions(&self, project: ProjectId) -> Vec<&ProjectSession> {
+        let references = self.state.session_references();
+        self.existing_sessions
+            .projects
+            .get(&project)
+            .into_iter()
+            .flat_map(|listing| &listing.entries)
+            .filter(|session| !references.contains(&session.info.id) && !session.attached)
+            .collect()
+    }
+
+    pub(crate) fn refresh_existing_sessions(&mut self, cx: &mut Context<Self>) {
+        if !self.session_listing_ready() {
+            return;
+        }
+        let project = self.state.current_project().id;
+        self.request_sessions(project, cx);
+        if let Some(Overlay::Sessions(picker)) = &self.overlay {
+            self.request_sessions(picker.project, cx);
+        }
+        self.update_session_picker(cx);
+    }
+
+    pub(crate) fn refresh_session_picker(&mut self, cx: &mut Context<Self>) {
+        if let Some(Overlay::Sessions(picker)) = &self.overlay {
+            self.existing_sessions
+                .projects
+                .entry(picker.project)
+                .or_default()
+                .revision = None;
+        }
+        self.refresh_existing_sessions(cx);
+    }
+
+    fn request_sessions(&mut self, project: ProjectId, cx: &mut Context<Self>) {
+        let listing = self.existing_sessions.projects.entry(project).or_default();
+        if listing.pending
+            || listing
+                .revision
+                .is_some_and(|revision| revision >= self.existing_sessions.revision)
         {
-            let project = picker.project;
-            let revision = picker.revision;
-            picker.after = Some(after);
-            self.request_session_page(project, Some(after), revision, cx);
+            return;
+        }
+        if self.send_session_request(Work::ProjectSessions { project }, cx) {
+            let listing = self.existing_sessions.projects.entry(project).or_default();
+            listing.pending = true;
+            listing.error = None;
         }
     }
 
     pub(crate) fn receive_session_page(
         &mut self,
         project: ProjectId,
-        after: Option<SessionId>,
         result: Result<ProjectSessions, muxy_client::ClientError>,
         cx: &mut Context<Self>,
     ) {
-        let Some(Overlay::Sessions(picker)) = &mut self.overlay else {
-            return;
-        };
-        if picker.project != project || picker.after != after {
-            return;
-        }
+        let listing = self.existing_sessions.projects.entry(project).or_default();
+        listing.pending = false;
         match result {
             Ok(page) => {
-                picker.entries = page
-                    .sessions
-                    .into_iter()
-                    .filter(|session| {
-                        matches!(
-                            session.status,
-                            SessionStatus::Live | SessionStatus::Starting
-                        )
-                    })
-                    .collect();
-                picker.next = page.next;
-                picker.revision = Some(page.revision);
-                let actions = if picker.next.is_some() {
-                    vec![CommandPopoverAction::new("next", "Next Page")]
-                } else {
-                    Vec::new()
-                };
-                picker
-                    .picker
-                    .update(cx, |picker, cx| picker.set_footer_actions(actions, cx));
-                self.filter_sessions("", cx);
+                listing.entries = page.sessions;
+                listing.revision = Some(page.revision);
+                listing.error = None;
             }
-            Err(muxy_client::ClientError::Server(error))
-                if error.code == muxy_protocol::ErrorCode::CatalogChanged =>
-            {
-                picker.after = None;
-                self.request_session_page(project, None, None, cx);
+            Err(error) => {
+                listing.entries.clear();
+                listing.revision = Some(self.existing_sessions.revision);
+                listing.error = Some(error.to_string());
             }
-            Err(error) => picker.picker.update(cx, |picker, cx| {
-                picker.set_status(CommandPopoverStatus::Error(error.to_string().into()), cx);
-            }),
         }
+        self.refresh_existing_sessions(cx);
+        cx.notify();
     }
 
-    fn request_session_page(
-        &mut self,
-        project: ProjectId,
-        after: Option<SessionId>,
-        revision: Option<u64>,
-        cx: &mut Context<Self>,
-    ) {
-        self.send_session_request(
-            Work::ProjectSessions {
-                project,
-                after,
-                revision,
-            },
-            cx,
-        );
-    }
-
-    fn filter_sessions(&self, query: &str, cx: &mut Context<Self>) {
+    pub(crate) fn update_session_picker(&self, cx: &mut Context<Self>) {
         let Some(Overlay::Sessions(picker)) = &self.overlay else {
             return;
         };
-        let query = query.to_lowercase();
-        let items: Vec<_> = picker
-            .entries
-            .iter()
+        let query = picker.picker.read(cx).query().to_lowercase();
+        let available = self.available_sessions(picker.project);
+        let count = available.len();
+        let items: Vec<_> = available
+            .into_iter()
             .filter_map(|session| {
-                let status = match session.status {
-                    SessionStatus::Live => "Running",
-                    SessionStatus::Starting => "Starting",
-                    SessionStatus::Ended => "Ended",
-                    SessionStatus::Unavailable => "Output unavailable",
-                };
-                let label = format!(
-                    "{} · {status} · {}",
-                    session.info.id.get(),
-                    String::from_utf8_lossy(&session.info.directory.0)
-                );
-                label.to_lowercase().contains(&query).then(|| {
-                    CommandPopoverItem::Row(CommandPopoverRow::new(
-                        session.info.id.get().to_string(),
-                        label,
-                    ))
-                })
+                let owner = session
+                    .owner
+                    .map_or_else(|| "No owner".to_owned(), |owner| format!("Owner: {owner}"));
+                let directory = String::from_utf8_lossy(&session.info.directory.0);
+                let title = format!("Terminal {}", session.info.id.get());
+                if !format!("{title} {directory} {owner}")
+                    .to_lowercase()
+                    .contains(&query)
+                {
+                    return None;
+                }
+                let mut row = CommandPopoverRow::new(session.info.id.get().to_string(), title);
+                row.subtitle = Some(directory.into_owned().into());
+                row.leading = Some(CommandPopoverLeading::Icon(Icon::Terminal));
+                row.trailing = Some(owner.into());
+                Some(CommandPopoverItem::Row(row))
             })
             .collect();
-        let status = if items.is_empty() {
-            CommandPopoverStatus::Empty("No terminals on this page".into())
+        let listing = self.existing_sessions.projects.get(&picker.project);
+        let status = if !self.session_listing_ready() {
+            CommandPopoverStatus::Error("Reconnect to see existing terminals".into())
+        } else if let Some(error) = listing.and_then(|listing| listing.error.as_ref()) {
+            CommandPopoverStatus::Error(error.clone().into())
+        } else if listing.is_none_or(|listing| listing.revision.is_none() && listing.pending) {
+            CommandPopoverStatus::Loading("Loading terminals…".into())
+        } else if items.is_empty() {
+            CommandPopoverStatus::Empty(
+                if query.is_empty() {
+                    "No other terminals in this project"
+                } else {
+                    "No matching terminals"
+                }
+                .into(),
+            )
         } else {
             CommandPopoverStatus::Ready
         };
         picker.picker.update(cx, |picker, cx| {
+            picker.set_header_detail(Some(format!("{count} available")), cx);
             picker.set_items(items, cx);
             picker.set_status(status, cx);
         });
@@ -198,16 +210,20 @@ impl AppModel {
         let Some(Overlay::Sessions(picker)) = &self.overlay else {
             return;
         };
+        let project = picker.project;
         let Some(session) = id
             .parse()
             .ok()
             .and_then(SessionId::new)
-            .and_then(|id| picker.entries.iter().find(|entry| entry.info.id == id))
+            .and_then(|id| {
+                self.available_sessions(project)
+                    .into_iter()
+                    .find(|entry| entry.info.id == id)
+            })
             .cloned()
         else {
             return;
         };
-        let project = picker.project;
         self.open_existing_session(project, &session, cx);
     }
 }

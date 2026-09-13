@@ -437,6 +437,12 @@ impl AppState {
         self.remove_pane(pane)
     }
 
+    pub fn detach_pane(&mut self, pane: PaneId) -> Result<(), AppError> {
+        self.pane_tab_mut(pane)?;
+        self.starting_directories.remove(&pane);
+        self.remove_pane(pane)
+    }
+
     pub fn close_session_panes(&mut self, session: SessionId) -> Result<(), AppError> {
         let panes: Vec<_> = self.projects.iter().flat_map(|project| &project.tabs)
             .flat_map(|tab| &tab.panes)

@@ -86,6 +86,7 @@ fn fake_server(
             server: muxy_protocol::ServerInfo::current(),
         },
     )?;
+    identify_desktop(&mut decoder, &mut encoder)?;
     let (
         CONTROL,
         Message::Request {
@@ -294,3 +295,31 @@ fn a_full_event_buffer_preserves_the_only_disconnect_after_history_completion() 
 }
 
 mod resize;
+
+fn identify_desktop<R: std::io::Read, W: std::io::Write>(
+    decoder: &mut Decoder<R>,
+    encoder: &mut Encoder<W>,
+) -> TestResult {
+    let (
+        CONTROL,
+        Message::Request {
+            id,
+            body: RequestBody::IdentifyClient(kind),
+        },
+    ) = decoder.next()?
+    else {
+        return Err("expected client identity".into());
+    };
+    assert_eq!(kind, muxy_protocol::ClientKind::Desktop);
+    encoder.send(
+        CONTROL,
+        &Message::Reply {
+            id,
+            body: ReplyBody::ClientIdentified(muxy_protocol::SessionClient {
+                kind,
+                ..Default::default()
+            }),
+        },
+    )?;
+    Ok(())
+}

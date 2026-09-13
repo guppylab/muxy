@@ -31,6 +31,7 @@ pub(crate) fn register_shortcuts(registry: &mut muxy_ui::shortcuts::Registry<'_>
 pub(crate) enum Command {
     Dismiss,
     ExistingSessions(muxy_app_core::ProjectId),
+    DetachTerminal(muxy_app_core::PaneId),
     TerminalCopy(muxy_app_core::PaneId),
     TerminalPaste(muxy_app_core::PaneId),
     TerminalSelectAll(muxy_app_core::PaneId),
@@ -145,6 +146,7 @@ impl AppModel {
                 self.open_session_picker(project, window, cx);
                 return;
             }
+            Command::DetachTerminal(pane) => self.detach_terminal(pane, cx),
             Command::TerminalCopy(id)
             | Command::TerminalPaste(id)
             | Command::TerminalSelectAll(id)

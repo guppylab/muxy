@@ -231,6 +231,9 @@ impl Core {
 
     fn connected(&mut self, client: &Client, requests: &Receiver<Action>) -> Result<bool> {
         self.references = None;
+        client
+            .identify(muxy_protocol::ClientKind::Tui)
+            .map_err(|error| error.to_string())?;
         let mut catalog = client.catalog().map_err(|error| error.to_string())?;
         if self.store.is_none() {
             self.store = Some(Store::load(&self.profile, &catalog)?);
@@ -263,10 +266,7 @@ impl Core {
                         self.store_mut()?.change(|state| state.reconcile(&next))?;
                         catalog = next;
                         self.publish(&catalog);
-                        let picker = lock(&self.shared).session_picker;
-                        if picker && let Err(error) = self.list_sessions(client, &catalog) {
-                            self.message(&error);
-                        }
+                        lock(&self.shared).sessions_dirty = true;
                     }
                     Err(error) => self.message(&error.to_string()),
                 }
@@ -275,6 +275,15 @@ impl Core {
                 if self.store_mut()?.ready().is_err() {
                     return Err(error);
                 }
+                self.message(&error);
+            }
+            let sessions_dirty = {
+                let project = self.store_mut()?.state.active;
+                let mut shared = lock(&self.shared);
+                std::mem::take(&mut shared.sessions_dirty)
+                    || shared.sessions_project != Some(project)
+            };
+            if sessions_dirty && let Err(error) = self.list_sessions(client, &catalog) {
                 self.message(&error);
             }
             match requests.recv_timeout(Duration::from_millis(100)) {
@@ -341,6 +350,9 @@ impl Core {
                     state.new_pane(split, directory, None)?;
                 }
                 Action::Existing(session) => {
+                    if state.session_references().contains(&session.info.id) {
+                        return Ok(());
+                    }
                     if !matches!(
                         session.status,
                         muxy_protocol::SessionStatus::Live | muxy_protocol::SessionStatus::Starting
@@ -646,30 +658,22 @@ impl Core {
             .ok_or("TUI state is not ready")?
             .state
             .active;
-        let mut sessions = Vec::new();
-        let mut after = None;
-        let mut revision = None;
-        loop {
-            let page = client
-                .project_sessions(project, after, revision)
-                .map_err(|error| error.to_string())?;
-            revision = Some(page.revision);
-            sessions.extend(page.sessions.into_iter().filter(|session| {
-                Some(session.info.id) != hosting_session(catalog.server)
-                    && matches!(
-                        session.status,
-                        muxy_protocol::SessionStatus::Live | muxy_protocol::SessionStatus::Starting
-                    )
-            }));
-            if sessions.len() > 4096 {
-                return Err("Too many terminals for the picker".into());
-            }
-            after = page.next;
-            if after.is_none() {
-                break;
-            }
-        }
-        lock(&self.shared).sessions = sessions;
+        let references = self
+            .store
+            .as_ref()
+            .ok_or("TUI state is not ready")?
+            .state
+            .session_references();
+        let mut page = client
+            .available_project_sessions(project)
+            .map_err(|error| error.to_string())?;
+        page.sessions.retain(|session| {
+            Some(session.info.id) != hosting_session(catalog.server)
+                && !references.contains(&session.info.id)
+        });
+        let mut shared = lock(&self.shared);
+        shared.sessions = page.sessions;
+        shared.sessions_project = Some(project);
         Ok(())
     }
 
@@ -701,6 +705,21 @@ impl Core {
         let ended = shared.ended.clone();
         if let Some(state) = &mut shared.state {
             state.close_sessions(&ended);
+        }
+        let references = shared
+            .state
+            .as_ref()
+            .map(crate::state::State::session_references)
+            .unwrap_or_default();
+        shared
+            .sessions
+            .retain(|session| !references.contains(&session.info.id));
+        if shared
+            .state
+            .as_ref()
+            .is_none_or(|state| shared.sessions_project != Some(state.active))
+        {
+            shared.sessions.clear();
         }
         shared.catalog = Some(catalog.clone());
     }

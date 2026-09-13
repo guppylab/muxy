@@ -36,6 +36,15 @@ impl Delivery {
             *previous = event;
             return Ok(Vec::new());
         }
+        if let ClientEvent::SessionsChanged { revision } = &event
+            && let Some(ClientEvent::SessionsChanged { revision: previous }) = self
+                .deferred
+                .iter_mut()
+                .find(|previous| matches!(previous, ClientEvent::SessionsChanged { .. }))
+        {
+            *previous = (*previous).max(*revision);
+            return Ok(Vec::new());
+        }
         if let ClientEvent::CatalogChanged { revision } = &event
             && let Some(ClientEvent::CatalogChanged { revision: previous }) = self
                 .deferred
@@ -120,7 +129,8 @@ impl Delivery {
                 ClientEvent::Frame { channel, .. } | ClientEvent::Metadata { channel, .. } => {
                     channel.0 <= self.installed_through
                 }
-                ClientEvent::CatalogChanged { .. }
+                ClientEvent::SessionsChanged { .. }
+                | ClientEvent::CatalogChanged { .. }
                 | ClientEvent::SessionEnded { .. }
                 | ClientEvent::ServerRestarting
                 | ClientEvent::Disconnected => false,

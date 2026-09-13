@@ -74,7 +74,9 @@ fn exited_content_is_read_without_attachment_and_discard_is_idempotent() -> Test
                 break;
             }
             ClientEvent::Frame { channel, frame } => client.ack(channel, frame.seq)?,
-            ClientEvent::Metadata { .. } | ClientEvent::CatalogChanged { .. } => {}
+            ClientEvent::Metadata { .. }
+            | ClientEvent::SessionsChanged { .. }
+            | ClientEvent::CatalogChanged { .. } => {}
             ClientEvent::ServerRestarting | ClientEvent::Disconnected => {
                 return Err("client disconnected".into());
             }
@@ -143,7 +145,9 @@ fn saved_history_pages_remain_readable_after_the_server_reopens_its_archive() ->
             loop {
                 match events.recv_timeout(Duration::from_secs(5))? {
                     ClientEvent::Frame { channel, frame } => client.ack(channel, frame.seq)?,
-                    ClientEvent::Metadata { .. } | ClientEvent::CatalogChanged { .. } => {}
+                    ClientEvent::Metadata { .. }
+                    | ClientEvent::SessionsChanged { .. }
+                    | ClientEvent::CatalogChanged { .. } => {}
                     ClientEvent::SessionEnded {
                         session: id,
                         reason,

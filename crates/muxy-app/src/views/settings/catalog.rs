@@ -45,9 +45,16 @@ pub(super) const SETTINGS: &[Setting] = &[
         section: "Appearance",
     },
     Setting {
+        id: "close-behavior",
+        label: "When closing tabs or panes",
+        description: "Close sessions unused by other panes, or detach to keep them running and reopen them from Existing Terminals.",
+        category: Category::General,
+        section: "Closing terminals",
+    },
+    Setting {
         id: "confirm-process",
         label: "Confirm before closing a running process",
-        description: "Ask before closing a terminal that is running a command other than its shell.",
+        description: "Ask before ending a running command. Detaching never requires confirmation.",
         category: Category::General,
         section: "Closing terminals",
     },

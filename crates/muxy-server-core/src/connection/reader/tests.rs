@@ -21,7 +21,10 @@ impl Connection {
             },
             events,
         ));
-        let outbox = Arc::new(Outbox::new(muxy_protocol::V1));
+        let outbox = Arc::new(Outbox::new(
+            muxy_protocol::V1,
+            Arc::clone(&registry.attachment_changes),
+        ));
         let output = Arc::clone(&outbox);
         let (sender, replies) = mpsc::channel();
         let pump = thread::spawn(move || {

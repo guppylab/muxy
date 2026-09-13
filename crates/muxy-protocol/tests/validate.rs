@@ -293,6 +293,14 @@ fn samples_cover_every_message_variant_once_and_use_the_right_channel() {
     for message in Message::samples() {
         let (name, channel) = match &message {
             Message::Request {
+                body: RequestBody::IdentifyClient(_),
+                ..
+            } => ("IdentifyClient", ChannelKind::Control),
+            Message::Reply {
+                body: ReplyBody::ClientIdentified(_),
+                ..
+            } => ("ClientIdentified", ChannelKind::Control),
+            Message::Request {
                 body: RequestBody::ReadCatalog { .. },
                 ..
             } => ("ReadCatalog", ChannelKind::Control),
@@ -325,6 +333,7 @@ fn samples_cover_every_message_variant_once_and_use_the_right_channel() {
                 ..
             } => ("CreationCancelled", ChannelKind::Control),
 
+            Message::SessionsChanged { .. } => ("SessionsChanged", ChannelKind::Control),
             Message::CatalogChanged { .. } => ("CatalogChanged", ChannelKind::Control),
             Message::Request {
                 body: RequestBody::SyncSessionReferences { .. },
@@ -452,6 +461,9 @@ fn samples_cover_every_message_variant_once_and_use_the_right_channel() {
         seen,
         BTreeSet::from([
             "CatalogChanged",
+            "SessionsChanged",
+            "IdentifyClient",
+            "ClientIdentified",
             "SyncSessionReferences",
             "CloseSession",
             "SessionReferencesSynced",

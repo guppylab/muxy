@@ -20,6 +20,8 @@ actions!(
         CheckForUpdates,
         InstallCommandLineTool,
         NewTab,
+        ExistingTerminals,
+        DetachTerminal,
         NewHomeTab,
         CloseTab,
         SplitRight,
@@ -84,6 +86,8 @@ fn workspace_bindings(keymap: &impl muxy_core::shortcuts::ShortcutSettings) -> V
     registry.register(ShortcutId::HideOthers, &HideOthers);
     registry.register(ShortcutId::Minimize, &Minimize);
     registry.register(ShortcutId::NewTab, &NewTab);
+    registry.register(ShortcutId::ExistingTerminals, &ExistingTerminals);
+    registry.register(ShortcutId::DetachTerminal, &DetachTerminal);
     registry.register(ShortcutId::CloseTab, &CloseTab);
     registry.register(ShortcutId::SplitRight, &SplitRight);
     registry.register(ShortcutId::SplitDown, &SplitDown);
@@ -134,6 +138,30 @@ fn workspace_bindings(keymap: &impl muxy_core::shortcuts::ShortcutSettings) -> V
 }
 
 impl AppModel {
+    fn detach_active_terminal(
+        &mut self,
+        _: &DetachTerminal,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.overlay.is_none()
+            && let Some(pane) = self.active_pane()
+        {
+            self.detach_terminal(pane, cx);
+        }
+    }
+
+    fn existing_terminals(
+        &mut self,
+        _: &ExistingTerminals,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.close_prompt.is_none() {
+            self.open_session_picker(self.state.current_project().id, window, cx);
+        }
+    }
+
     fn find_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.overlay.is_some() {
             return;
@@ -216,6 +244,8 @@ fn action_handlers(cx: &mut Context<AppModel>) -> gpui::Div {
             cx.listener(|model, _, _, cx| model.navigate(true, cx)),
         )
         .on_action(cx.listener(|model, _: &NewTab, _, cx| model.new_tab(cx)))
+        .on_action(cx.listener(AppModel::detach_active_terminal))
+        .on_action(cx.listener(AppModel::existing_terminals))
         .on_action(
             cx.listener(|model, _: &SplitRight, _, cx| model.split_pane(Direction::Right, cx)),
         )

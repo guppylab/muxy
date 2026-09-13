@@ -13,6 +13,9 @@ pub enum ChannelKind {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Message {
+    SessionsChanged {
+        revision: u64,
+    },
     CatalogChanged {
         revision: u64,
     },
@@ -53,7 +56,8 @@ pub enum Message {
 impl Message {
     pub fn channel_kind(&self) -> ChannelKind {
         match self {
-            Self::CatalogChanged { .. }
+            Self::SessionsChanged { .. }
+            | Self::CatalogChanged { .. }
             | Self::Hello { .. }
             | Self::Request { .. }
             | Self::FrameAck { .. }

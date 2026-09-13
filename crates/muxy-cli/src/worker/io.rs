@@ -66,7 +66,8 @@ pub(crate) struct Shared {
     pub state: Option<State>,
     pub catalog: Option<CatalogPage>,
     pub sessions: Vec<ProjectSession>,
-    pub session_picker: bool,
+    pub sessions_dirty: bool,
+    pub sessions_project: Option<muxy_protocol::ProjectId>,
     pub views: BTreeMap<PaneId, View>,
     pub message: String,
     pub refresh: bool,
@@ -138,6 +139,8 @@ impl Shared {
     pub(crate) fn disconnected(&mut self) {
         self.client = None;
         self.sessions.clear();
+        self.sessions_project = None;
+        self.sessions_dirty = true;
         self.focus = None;
         self.pending.clear();
         self.last_channel = 0;
@@ -198,6 +201,7 @@ pub(super) fn reader(client: Client, shared: Arc<Mutex<Shared>>) -> Result<JoinH
                         }
                     }
                     ClientEvent::CatalogChanged { .. } => state.refresh = true,
+                    ClientEvent::SessionsChanged { .. } => state.sessions_dirty = true,
                     ClientEvent::SessionEnded { session, .. } => {
                         state.session_ended(session);
                         state.refresh = true;

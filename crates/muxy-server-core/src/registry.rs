@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::{Duration, Instant};
@@ -38,6 +39,7 @@ pub struct Registry {
     catalog: Arc<crate::catalog::Catalog>,
     operations: Mutex<()>,
     connections: Mutex<Vec<Weak<crate::connection::Outbox>>>,
+    pub(crate) attachment_changes: Arc<AtomicU64>,
     settings: Mutex<ServerSettings>,
     settings_write: Mutex<()>,
     persist: crate::settings::Persistence,
@@ -54,6 +56,7 @@ impl Registry {
             catalog: Arc::new(crate::catalog::Catalog::memory()),
             operations: Mutex::new(()),
             connections: Mutex::default(),
+            attachment_changes: Arc::default(),
             archive: Archive::memory(settings.history_budget_bytes),
             settings: Mutex::new(settings),
             settings_write: Mutex::new(()),
@@ -111,7 +114,59 @@ impl Registry {
         after: Option<SessionId>,
         revision: Option<u64>,
     ) -> Result<muxy_protocol::ProjectSessions, ServerError> {
-        self.catalog.list_project(project, after, revision)
+        self.project_sessions_for(project, after, revision, None)
+    }
+
+    pub(crate) fn sessions_revision(&self) -> u64 {
+        self.catalog_revision()
+            .saturating_add(self.attachment_changes.load(Ordering::Acquire))
+    }
+
+    pub(crate) fn project_sessions_for(
+        &self,
+        project: muxy_protocol::ProjectId,
+        after: Option<SessionId>,
+        revision: Option<u64>,
+        requester: Option<&crate::connection::Outbox>,
+    ) -> Result<muxy_protocol::ProjectSessions, ServerError> {
+        let _operation = self.session_operation();
+        let current = self.sessions_revision();
+        let changed = || {
+            ServerError::new(
+                ErrorCode::CatalogChanged,
+                "sessions changed; restart the page fetch",
+            )
+        };
+        if revision.is_some_and(|revision| revision != current) {
+            return Err(changed());
+        }
+        let mut page = self.catalog.list_project(project, after, None)?;
+        let connections: Vec<_> = self
+            .connections
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .filter_map(Weak::upgrade)
+            .collect();
+        for session in &mut page.sessions {
+            if matches!(
+                session.status,
+                muxy_protocol::SessionStatus::Live | muxy_protocol::SessionStatus::Starting
+            ) {
+                session.owner = connections
+                    .iter()
+                    .filter_map(|connection| connection.participation(session.info.id))
+                    .min_by_key(|(order, _)| *order)
+                    .map(|(_, client)| client);
+                session.attached = requester
+                    .is_some_and(|connection| connection.participation(session.info.id).is_some());
+            }
+        }
+        if current != self.sessions_revision() {
+            return Err(changed());
+        }
+        page.revision = current;
+        Ok(page)
     }
 
     pub fn mutate_project(
@@ -216,7 +271,7 @@ impl Registry {
         directory: &Path,
         size: Size,
     ) -> Result<SessionInfo, ServerError> {
-        self.create_with_colors(project, operation, directory, size, None)
+        self.create_with_colors(project, operation, directory, size, None, None)
     }
 
     pub(crate) fn create_with_colors(
@@ -226,6 +281,7 @@ impl Registry {
         directory: &Path,
         size: Size,
         colors: Option<TerminalColors>,
+        requester: Option<&crate::connection::Outbox>,
     ) -> Result<SessionInfo, ServerError> {
         let _operation = self
             .operations
@@ -236,6 +292,7 @@ impl Registry {
             .catalog
             .creation(operation, project, &directory_bytes)?
         {
+            self.attach_creator(info.id, requester);
             return Ok(info);
         }
         validate_size(size).map_err(|code| {
@@ -322,7 +379,16 @@ impl Registry {
             return Err(error);
         }
         log::info!("session created: {}", id.get());
+        self.attach_creator(id, requester);
         Ok(info)
+    }
+
+    fn attach_creator(&self, id: SessionId, requester: Option<&crate::connection::Outbox>) {
+        if let Some(requester) = requester
+            && self.handle(id).is_some()
+        {
+            requester.created_session(id);
+        }
     }
 
     fn reserve_start(&self) -> Result<SessionId, ServerError> {
@@ -395,7 +461,7 @@ impl Registry {
         requester: &crate::connection::Outbox,
         owner: Option<muxy_protocol::OperationId>,
         revision: u64,
-        sessions: Vec<SessionId>,
+        sessions: &[SessionId],
     ) {
         let _operation = self.session_operation();
         let connections: Vec<_> = self
@@ -415,17 +481,19 @@ impl Registry {
             })
             .or_else(|| requester.reference_state())
             .unwrap_or_default();
-        if owner.is_none() || references.owner != owner || revision >= references.revision {
-            references.update(owner, revision, sessions);
+        let accepted =
+            owner.is_none() || references.owner != owner || revision >= references.revision;
+        if accepted {
+            references.update(owner, revision, sessions.to_vec());
         }
-        requester.set_references(references.clone());
+        requester.set_references(references.clone(), Some(sessions), accepted);
         if let Some(owner) = owner {
             for connection in connections {
                 if connection
                     .reference_state()
                     .is_some_and(|state| state.owner == Some(owner))
                 {
-                    connection.set_references(references.clone());
+                    connection.set_references(references.clone(), None, false);
                 }
             }
         }

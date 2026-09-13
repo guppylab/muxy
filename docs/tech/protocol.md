@@ -53,7 +53,8 @@ share a supported contract. Any other traffic before hello is fatal.
 | Open-pane references, conditional close, and their replies | client, server | control |
 | List, create, and end session, and their replies | client, server | control |
 | Project catalog pages, field mutations, deletion, and their replies | client, server | control |
-| Catalog revision invalidation | server | control |
+| Catalog and session-list revision invalidations | server | control |
+| Identify client and its reply | client, server | control |
 | Read saved terminal content, discard session and saved content, and their replies | client, server | control |
 | History page and search, and their replies | client, server | control |
 | Set terminal colors and its reply | client, server | control |
@@ -86,6 +87,13 @@ project and a durable client operation token; retrying returns the same result,
 including an ended result. Live-session lists remain live-only; project-filtered
 lists distinguish live sessions from retained ended content. Membership and
 lifecycle changes also advance the catalog revision.
+
+Each connection represents a client instance independently of its saved layout
+and can identify itself as desktop, TUI, or CLI. Session listings expose the
+current owner and whether the requesting client is attached. Attachment changes
+invalidate session listings without writing attachment state to storage. Repeated
+attachments and reference updates preserve a client's position; disconnecting
+removes it from the attachment order.
 
 Startup leaves an incompatible running server and its sessions intact; see
 [beta compatibility](#beta-update-compatibility).

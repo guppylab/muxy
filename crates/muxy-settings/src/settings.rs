@@ -44,6 +44,15 @@ pub struct ProjectSettings {
 pub struct WindowSettings {
     pub default_size: [f32; 2],
     pub confirm_running_process: bool,
+    pub close_behavior: CloseBehavior,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CloseBehavior {
+    #[default]
+    CloseSession,
+    Detach,
 }
 
 impl Default for WindowSettings {
@@ -51,6 +60,7 @@ impl Default for WindowSettings {
         Self {
             default_size: [1200.0, 800.0],
             confirm_running_process: true,
+            close_behavior: CloseBehavior::CloseSession,
         }
     }
 }
