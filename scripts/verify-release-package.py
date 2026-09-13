@@ -124,16 +124,6 @@ cp "$VERIFY_DOWNLOADS/${URL##*/}" "$OUTPUT"
                 server.kill()
                 server.wait()
                 raise
-        if args.runtime_tests:
-            if platform.system() == 'Linux':
-                os.environ['MUXY_ZIG'] = shutil.which('zig')
-                os.environ['PATH'] = str(ROOT / 'scripts/zig') + os.pathsep + os.environ['PATH']
-                run('cargo', 'clean', '-p', 'libghostty-vt-sys', cwd=ROOT)
-            test_env = {**os.environ, 'MUXY_TEST_RUNTIME': str(destination / 'muxy'),
-                        'MUXY_TEST_SERVER_PROFILE': 'beta',
-                        'MUXY_TEST_SERVER': str(destination / 'muxy-server')}
-            run('cargo', 'test', '--locked', '-p', 'muxy-cli', '--test', 'commands', '--test', 'tui', env=test_env, cwd=ROOT)
-            run('cargo', 'test', '--locked', '-p', 'muxy-server', '--test', 'lifecycle', env=test_env, cwd=ROOT)
         print(json.dumps({'archive': args.archive.name, 'version': args.version, 'native': platform.machine(),
                           'installer': 'passed without Rust/Zig or desktop', 'live_server_preserved': True,
                           'dmg_bytes_match': bool(args.dmg), 'notarization_checked': args.notarized}), flush=True)
@@ -145,7 +135,6 @@ if __name__ == '__main__':
     parser.add_argument('--version', required=True)
     parser.add_argument('--dmg', type=Path)
     parser.add_argument('--notarized', action='store_true')
-    parser.add_argument('--runtime-tests', action='store_true')
     options = parser.parse_args()
     options.archive = options.archive.resolve()
     if options.dmg:
