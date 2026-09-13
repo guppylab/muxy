@@ -495,7 +495,7 @@ struct MuxyRemoteServerRoutingTests {
         #expect(call?.rows == 24)
     }
 
-    @Test("takeOverPane acknowledges before starting replay")
+    @Test("takeOverPane acknowledges before preparing the terminal")
     func takeOverPaneAcknowledgesFirst() {
         let (server, delegate) = makeServer()
         let clientID = authedClient(on: server)

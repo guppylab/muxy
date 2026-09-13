@@ -386,16 +386,11 @@ final class RemoteServerDelegate: MuxyRemoteServerDelegate {
         guard PaneOwnershipStore.shared.isOwnedBy(clientID: clientID, paneID: paneID) else {
             return
         }
-        guard isAlternateScreen(paneID: paneID) else { return }
         ensureTerminalView(paneID: paneID)?.scrollTerminal(
             deltaX: deltaX,
             deltaY: deltaY,
             precise: precise
         )
-    }
-
-    private func isAlternateScreen(paneID: UUID) -> Bool {
-        getTerminalContent(paneID: paneID)?.altScreen ?? false
     }
 
     func resizeTerminal(paneID: UUID, cols: UInt32, rows: UInt32, clientID: UUID) {
@@ -450,13 +445,6 @@ final class RemoteServerDelegate: MuxyRemoteServerDelegate {
 
     func takeOverPane(paneID: UUID, clientID: UUID, cols: UInt32, rows: UInt32) {
         guard ensureTerminalView(paneID: paneID) != nil else { return }
-        if let replay = RemoteTerminalStreamer.shared.scrollbackData(for: paneID), !replay.isEmpty {
-            for chunk in replay.chunks(ofByteCount: 262_144) {
-                let dto = TerminalOutputEventDTO(paneID: paneID, bytes: chunk)
-                let event = MuxyEvent(event: .terminalOutput, data: .terminalOutput(dto))
-                server?.send(event, to: clientID)
-            }
-        }
         let snapshotBytes = buildTerminalSnapshot(paneID: paneID)
         PaneOwnershipStore.shared.assign(paneID: paneID, to: clientID)
         if let bytes = snapshotBytes, !bytes.isEmpty {
@@ -1132,19 +1120,5 @@ final class RemoteServerDelegate: MuxyRemoteServerDelegate {
               let worktree = worktreeStore.worktree(projectID: projectID, worktreeID: worktreeID)
         else { return nil }
         return worktree
-    }
-}
-
-private extension Data {
-    func chunks(ofByteCount chunkSize: Int) -> [Data] {
-        guard chunkSize > 0 else { return [self] }
-        var chunks: [Data] = []
-        var start = startIndex
-        while start < endIndex {
-            let end = index(start, offsetBy: chunkSize, limitedBy: endIndex) ?? endIndex
-            chunks.append(self[start ..< end])
-            start = end
-        }
-        return chunks
     }
 }

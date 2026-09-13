@@ -271,14 +271,6 @@ enum SettingsJSONStore {
             if applyEditorSetting(key: key, value: value) {
                 continue
             }
-            if key == MobileServerService.scrollbackCapKey {
-                if let cap = value as? Int {
-                    MobileServerService.shared.scrollbackCapMB = cap
-                } else if value is NSNull {
-                    MobileServerService.shared.scrollbackCapMB = MobileServerService.defaultScrollbackCapMB
-                }
-                continue
-            }
             if value is NSNull {
                 UserDefaults.standard.removeObject(forKey: key)
             } else {
@@ -384,11 +376,6 @@ enum SettingsJSONStore {
         switch key {
         case MobileServerService.portKey:
             guard let port = UInt16(exactly: value), MobileServerService.isValid(port: port) else {
-                throw SettingsJSONError.invalidValue(key)
-            }
-        case MobileServerService.scrollbackCapKey:
-            guard (MobileServerService.minScrollbackCapMB ... MobileServerService.maxScrollbackCapMB).contains(value)
-            else {
                 throw SettingsJSONError.invalidValue(key)
             }
         case QuickTerminalSizePreferences.widthKey:

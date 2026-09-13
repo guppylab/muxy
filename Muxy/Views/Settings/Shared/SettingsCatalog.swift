@@ -749,15 +749,6 @@ enum SettingsCatalog {
             defaultValue: MobileServerService.defaultPort
         ),
         SettingsCatalogItem(
-            key: MobileServerService.scrollbackCapKey,
-            title: "Scrollback Buffer Cap",
-            description: "Scrollback history kept per terminal, in MB, for replay to mobile devices.",
-            category: .mobile,
-            section: "Mobile",
-            defaultValue: MobileServerService.defaultScrollbackCapMB,
-            aliases: ["scrollback", "buffer", "history", "terminal history"]
-        ),
-        SettingsCatalogItem(
             key: "mobile.pairing",
             title: "Pair Mobile Device",
             description: "Shows the QR code used to pair a mobile device.",
