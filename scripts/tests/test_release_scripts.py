@@ -75,6 +75,14 @@ elif name == "gh":
         sys.exit("unexpected gh arguments: " + repr(args))
 elif name == "xcrun":
     if args[:2] == ["notarytool", "submit"]:
+        submits = sum(json.loads(line)[:3] == ["xcrun", "notarytool", "submit"]
+                      for line in Path(os.environ["TOOL_LOG"]).read_text().splitlines())
+        if submits <= int(os.environ.get("NOTARY_NETWORK_FAILURES", "0")):
+            print("NSURLErrorDomain Code=-1009: no network route", file=sys.stderr)
+            sys.exit(7)
+        if os.environ.get("NOTARY_AUTH_FAILURE"):
+            print("Invalid credentials", file=sys.stderr)
+            sys.exit(9)
         print(json.dumps({"id": "test-submission", "status": os.environ.get("NOTARY_STATUS", "Accepted")}))
         sys.exit(int(os.environ.get("NOTARY_EXIT", "0")))
     elif args[:2] == ["notarytool", "log"]:
@@ -85,6 +93,8 @@ elif name == "codesign":
     sys.exit(int(os.environ.get("CODESIGN_EXIT", "0")))
 elif name == "spctl":
     sys.exit(int(os.environ.get("SPCTL_EXIT", "0")))
+elif name == "sleep":
+    pass
 else:
     sys.exit("unexpected tool: " + name)
 '''
@@ -97,7 +107,7 @@ class ReleaseScriptTests(unittest.TestCase):
         self.directory = Path(self.temp.name)
         self.tools = self.directory / "tools"
         self.tools.mkdir()
-        for name in ("git", "gh", "xcrun", "spctl", "codesign"):
+        for name in ("git", "gh", "xcrun", "spctl", "codesign", "sleep"):
             tool = self.tools / name
             tool.write_text(f"#!{sys.executable}\n" + FAKE_TOOL)
             tool.chmod(0o755)
@@ -339,6 +349,32 @@ class ReleaseScriptTests(unittest.TestCase):
         self.env["NOTARY_EXIT"] = "1"
         self.assertNotEqual(self.notarize().returncode, 0)
         self.assertEqual(self.calls("spctl"), [])
+
+    def test_notarization_recovers_from_a_network_error(self):
+        self.env["NOTARY_NETWORK_FAILURES"] = "1"
+        result = self.notarize()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(sum(call[1:3] == ["notarytool", "submit"] for call in self.calls("xcrun")), 2)
+        self.assertEqual(self.calls("sleep"), [["sleep", "5"]])
+        self.assertEqual(len(self.calls("spctl")), 1)
+
+    def test_notarization_network_retries_are_bounded(self):
+        self.env["NOTARY_NETWORK_FAILURES"] = "3"
+        result = self.notarize()
+        self.assertEqual(result.returncode, 7, result.stderr)
+        self.assertEqual([call[1:3] for call in self.calls("xcrun")], [["notarytool", "submit"]] * 3)
+        self.assertEqual(len(self.calls("sleep")), 2)
+        self.assertEqual(self.calls("spctl"), [])
+        self.assertNotIn("JSONDecodeError", result.stderr)
+
+    def test_notarization_auth_failure_is_not_retried(self):
+        self.env["NOTARY_AUTH_FAILURE"] = "1"
+        result = self.notarize()
+        self.assertEqual(result.returncode, 9, result.stderr)
+        self.assertEqual([call[1:3] for call in self.calls("xcrun")], [["notarytool", "submit"]])
+        self.assertEqual(self.calls("sleep"), [])
+        self.assertEqual(self.calls("spctl"), [])
+        self.assertNotIn("JSONDecodeError", result.stderr)
 
     def test_gatekeeper_failure_fails_notarization_step(self):
         self.env["SPCTL_EXIT"] = "1"

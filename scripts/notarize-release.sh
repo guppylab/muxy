@@ -16,11 +16,20 @@ esac
 TEMP="$(mktemp -d)"
 trap 'rm -rf "$TEMP"' EXIT
 CREDENTIALS=(--apple-id "$APPLE_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID")
-STATUS=0
-xcrun notarytool submit "$1" "${CREDENTIALS[@]}" --wait --timeout 30m \
-    --output-format json > "$TEMP/submission.json" || STATUS=$?
-cat "$TEMP/submission.json"
-SUBMISSION_ID="$(python3 -c 'import json, sys; print(json.load(sys.stdin).get("id", ""))' < "$TEMP/submission.json")"
+for ATTEMPT in 1 2 3; do
+    STATUS=0
+    xcrun notarytool submit "$1" "${CREDENTIALS[@]}" --wait --timeout 30m \
+        --output-format json > "$TEMP/submission.json" 2> "$TEMP/submission.error" || STATUS=$?
+    cat "$TEMP/submission.json"
+    cat "$TEMP/submission.error" >&2
+    if [[ "$STATUS" -eq 0 || "$ATTEMPT" -eq 3 ]] || ! grep -q NSURLErrorDomain "$TEMP/submission.error"; then
+        break
+    fi
+    echo "Notarization network error; retrying in 5 seconds ($ATTEMPT/3)" >&2
+    sleep 5
+done
+SUBMISSION_ID="$(python3 -c 'import json, sys; print(json.load(sys.stdin).get("id", ""))' \
+    < "$TEMP/submission.json" 2>/dev/null || true)"
 if [[ -n "$SUBMISSION_ID" ]]; then
     xcrun notarytool log "$SUBMISSION_ID" "${CREDENTIALS[@]}" || true
 fi
