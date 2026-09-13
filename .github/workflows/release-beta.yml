@@ -76,7 +76,8 @@ jobs:
           version: 0.15.2
       - uses: Swatinem/rust-cache@v2
         with:
-          key: beta-${{ matrix.target }}
+          cache-on-failure: true
+          key: beta-${{ matrix.target }}-baseline
       - name: Stamp the build version without committing a bump
         run: python3 scripts/beta_release.py stamp "$VERSION"
       - name: Import signing certificate
@@ -109,7 +110,7 @@ jobs:
             exit 1
           fi
           echo "name=$IDENTITY" >> "$GITHUB_OUTPUT"
-      - name: Build, bundle app and server, and sign
+      - name: Build and sign desktop and standalone client/server pair
         env:
           SIGN_IDENTITY: ${{ steps.identity.outputs.name }}
         run: bash scripts/build-release.sh --arch "$ARCH" --version "$VERSION" --sign-identity "$SIGN_IDENTITY"
@@ -119,18 +120,34 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: bash scripts/notarize-release.sh "target/beta/$VERSION/$ARCH/Muxy-$VERSION-$ARCH.dmg"
-      - name: Upload notarized DMG
+      - name: Notarize standalone ZIP and verify extracted executables
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: bash scripts/notarize-release.sh "target/beta/$VERSION/$ARCH/muxy-$VERSION-macos-$ARCH.zip"
+      - name: Verify packaged pair, desktop bytes and standalone installation
+        run: >-
+          python3 scripts/verify-release-package.py
+          "target/beta/$VERSION/$ARCH/muxy-$VERSION-macos-$ARCH.zip"
+          --version "$VERSION" --dmg "target/beta/$VERSION/$ARCH/Muxy-$VERSION-$ARCH.dmg"
+          --notarized --runtime-tests
+      - name: Upload notarized desktop and standalone archives
         uses: actions/upload-artifact@v4
         with:
-          name: beta-dmg-${{ matrix.arch }}
-          path: target/beta/${{ env.VERSION }}/${{ matrix.arch }}/*.dmg
+          name: beta-distribution-macos-${{ matrix.arch }}
+          path: |
+            target/beta/${{ env.VERSION }}/${{ matrix.arch }}/*.dmg
+            target/beta/${{ env.VERSION }}/${{ matrix.arch }}/muxy-*-macos-*.zip
           if-no-files-found: error
           retention-days: 7
       - name: Upload app and server debug symbols
         uses: actions/upload-artifact@v4
         with:
           name: beta-symbols-${{ matrix.arch }}
-          path: target/beta/${{ env.VERSION }}/${{ matrix.arch }}/*-symbols.zip
+          path: |
+            target/beta/${{ env.VERSION }}/${{ matrix.arch }}/*-symbols.zip
+            target/beta/${{ env.VERSION }}/${{ matrix.arch }}/*-dependencies.txt
           if-no-files-found: error
           retention-days: 30
       - name: Remove signing keychain
@@ -142,11 +159,106 @@ jobs:
           fi
           rm -f "$RUNNER_TEMP/muxy-beta-certificate.p12"
 
+  build-linux:
+    needs: [checks, validate]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+          - arch: arm64
+            target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config zsh fish binutils vim-tiny less
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.92.0
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: beta-${{ matrix.target }}-glibc-2.35-baseline
+      - run: python3 scripts/beta_release.py stamp "$VERSION"
+      - name: Build and audit the native glibc 2.35 pair
+        run: bash scripts/build-cli-linux.sh "$ARCH" "$VERSION"
+      - name: Verify packaged pair and standalone installation
+        run: >-
+          python3 scripts/verify-release-package.py
+          "target/beta/$VERSION/linux-$ARCH/muxy-$VERSION-linux-$ARCH.tar.gz"
+          --version "$VERSION" --runtime-tests
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beta-distribution-linux-${{ matrix.arch }}
+          path: target/beta/${{ env.VERSION }}/linux-${{ matrix.arch }}/muxy-*-linux-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beta-symbols-linux-${{ matrix.arch }}
+          path: |
+            target/beta/${{ env.VERSION }}/linux-${{ matrix.arch }}/*-symbols.tar.gz
+            target/beta/${{ env.VERSION }}/linux-${{ matrix.arch }}/*-audit.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  verify-linux-newer:
+    needs: [validate, build-linux]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config zsh fish binutils vim-tiny less
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.92.0
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: beta-newer-${{ matrix.arch }}-baseline
+      - run: python3 scripts/beta_release.py stamp "$VERSION"
+      - uses: actions/download-artifact@v4
+        with:
+          name: beta-distribution-linux-${{ matrix.arch }}
+          path: artifacts
+      - name: Verify the exact floor-built archive on newer userspace
+        run: >-
+          python3 scripts/verify-release-package.py
+          "artifacts/muxy-$VERSION-linux-$ARCH.tar.gz" --version "$VERSION" --runtime-tests
+
   release:
     concurrency:
       group: muxy-beta-2.x-feed
       cancel-in-progress: false
-    needs: [validate, build]
+    needs: [validate, build, build-linux, verify-linux-newer]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -158,9 +270,11 @@ jobs:
           fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
-          pattern: beta-dmg-*
+          pattern: beta-distribution-*
           merge-multiple: true
           path: artifacts
+      - name: Include the exact installer from this commit
+        run: cp scripts/install-muxy.sh artifacts/install-muxy.sh
       - name: Publish beta prerelease
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

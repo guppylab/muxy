@@ -29,14 +29,20 @@ flowchart LR
     REMOTEN -.-> ROLE
 ```
 
-The diagram expresses a product boundary, not a process or network design.
+The diagram expresses the product's server boundaries. This phase connects only
+to the server on the machine running the client; remote connections are deferred.
+The desktop and keyboard TUI are independent clients. They share server-owned
+projects, metadata, and sessions, while keeping separate layouts and workspaces.
+The desktop bundles the same `muxy` client and `muxy-server` executables
+distributed together for standalone use. Both clients connect to the local
+server, starting it if needed. Sessions outlive either client.
 
 - The first version has exactly one server, the current device. Remote servers
   can be added in later versions; the model already allows several.
 - The main app may organize projects from the current device and several remote
   servers at the same time.
-- A project record selects the server that handles work for its directory
-  through its `server_id`.
+- A project belongs to the server identified by its `server_id`; the client
+  caches its descriptor for presentation.
 - A server-bound pane inherits that route through its tab and project.
 - A worktree project uses its parent project's server while supplying its own
   directory.
@@ -55,7 +61,8 @@ loaded and is not in a failed state. App-only panes in its tabs work normally.
 The bottom status bar shows disconnection and an action to connect; healthy
 connections need no indicator.
 Terminal panes keep their last available content visible. Disconnection does
-not mean that the session has ended.
+not mean that the session has ended. Existing project edits and closes remain
+available while disconnected and are replayed in order on reconnection.
 
 ### Ended and unreferenced sessions
 
@@ -63,11 +70,15 @@ A terminal pane whose session has ended stays open with its saved screen and
 retained history, marked as exited. It accepts no terminal input, but its
 content remains available for scrolling, search, selection, and copy. Relaunch
 preserves these panes; if saved content is unavailable, the pane explains why.
-Closing the pane removes it immediately, ends its session, and discards its
-saved content. If the server is unreachable, termination stays pending until
-reconnection, including after an app restart. Closing the last pane closes the
-tab. Sessions that no pane references are listed so the user can attach one to
-a new pane or end it.
+Closing a pane removes it immediately. Its session and saved content remain
+while another open pane in any connected client uses them, including inactive
+tabs. Closing the final connected pane ends the session and discards its saved
+content. If the server is unreachable, the close stays pending until
+reconnection, when the server checks the remaining references. Closing the last
+pane closes the
+tab. Existing sessions are discoverable within their owning project, including
+ones opened by another client. They enter a layout only when the user opens them.
+An ended or discarded session is never automatically restarted.
 
 Quitting the app leaves sessions running. End All Sessions and Quit ends all
 live sessions on the current-device server and clears terminal panes and their

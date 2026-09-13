@@ -64,6 +64,7 @@ fn mixed_restore_preserves_every_tab_and_its_selection() -> TestResult {
     let plan = restore::plan(
         &state,
         &[SessionInfo {
+            project: state.home().id,
             id: live,
             directory: ServerPath(b"/tmp".to_vec()),
         }],
@@ -86,6 +87,7 @@ fn mixed_restore_preserves_every_tab_and_its_selection() -> TestResult {
 fn empty_restore_does_not_create_a_tab_or_adopt_an_unreferenced_session() -> TestResult {
     let state = AppState::bootstrap()?;
     let live = SessionInfo {
+        project: state.home().id,
         id: SessionId::new(1).ok_or("zero ID")?,
         directory: ServerPath(b"/tmp".to_vec()),
     };
@@ -140,6 +142,7 @@ fn restore_covers_hidden_projects_without_creating_tabs_for_empty_projects() -> 
     let plan = restore::plan(
         &loaded,
         &[SessionInfo {
+            project: loaded.projects()[1].id,
             id: live,
             directory: ServerPath(b"/tmp".to_vec()),
         }],

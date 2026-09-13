@@ -15,3 +15,5 @@ workspace = true
 [dependencies]
 muxy-core = { path = "../muxy-core" }
 serde = { version = "1", features = ["derive", "rc"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+unicode-segmentation = "1"

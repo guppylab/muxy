@@ -1,16 +1,19 @@
 import json
 import os
 import plistlib
+import re
 import shutil
 import struct
 import subprocess
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 VERSION = "2.0.0-beta-1234"
+COMPATIBILITY = int(re.search(r"pub const COMPATIBILITY: u[0-9]+ = ([0-9]+)", (ROOT / "crates/muxy-protocol/src/build.rs").read_text())[1])
 TARGETS = {"arm64": "aarch64-apple-darwin", "x86_64": "x86_64-apple-darwin"}
 
 FAKE_TOOL = r'''
@@ -48,7 +51,7 @@ class BuildReleaseTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         for relative in (
-            "scripts/build-release.sh", "scripts/beta_release.py", "scripts/beta_compatibility.py",
+            "scripts/build-release.sh", "scripts/beta_release.py", "scripts/beta_compatibility.py", "scripts/zig/zig",
             "crates/muxy-protocol/src/build.rs", "LICENSE",
             "packaging/macos/AppIcon.png", "packaging/macos/AppIconBeta.png",
         ):
@@ -58,14 +61,14 @@ class BuildReleaseTests(unittest.TestCase):
         for target in TARGETS.values():
             binaries = self.root / "target" / target / "release"
             binaries.mkdir(parents=True)
-            for name in ("muxy-app", "muxy-server"):
-                (binaries / name).write_text(f"#!{sys.executable}\nimport json\nprint(json.dumps({{'version': '{VERSION}', 'compatibility': 1}}))\n")
+            for name in ("muxy-app", "muxy", "muxy-server"):
+                (binaries / name).write_text(f"#!{sys.executable}\nimport json\nprint(json.dumps({{'version': '{VERSION}', 'compatibility': {COMPATIBILITY}}}))\n")
                 (binaries / f"{name}.dSYM").mkdir()
         tools = self.root / "tools"
         tools.mkdir()
         for name in (
             "uname", "cargo", "lipo", "otool", "ditto", "strip", "plutil",
-            "sips", "iconutil", "codesign", "hdiutil",
+            "sips", "iconutil", "codesign", "hdiutil", "zig",
         ):
             tool = tools / name
             tool.write_text(f"#!{sys.executable}\n" + FAKE_TOOL)
@@ -115,6 +118,30 @@ class BuildReleaseTests(unittest.TestCase):
                 self.assertEqual(len(conversion), 1)
                 self.assertEqual(conversion[0][1:4], ["--convert", "icns", "--output"])
                 self.assertTrue(conversion[0][4].endswith(f"/Contents/Resources/{icon}"))
+
+    def test_bundle_builds_and_signs_three_separate_executables(self):
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        binaries = self.root / "target/beta" / VERSION / "arm64/Muxy Beta.app/Contents/MacOS"
+        canonical, alias = binaries / "muxy", binaries / "muxy-server"
+        self.assertEqual(canonical.read_bytes(), alias.read_bytes())
+        self.assertNotEqual(canonical.stat().st_ino, alias.stat().st_ino)
+        build = next(call for call in self.calls("cargo") if call[1] == "build")
+        self.assertIn("muxy-cli", build)
+        self.assertIn("muxy-server", build)
+        signing = [call[-1] for call in self.calls("codesign") if "--sign" in call]
+        self.assertEqual(sum(path.endswith("/muxy") for path in signing), 1)
+        self.assertEqual(sum(path.endswith("/muxy-server") for path in signing), 1)
+
+    def test_standalone_zip_contains_exact_bundle_executable_bytes(self):
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = self.root / "target/beta" / VERSION / "arm64"
+        with zipfile.ZipFile(output / f"muxy-{VERSION}-macos-arm64.zip") as archive:
+            self.assertEqual(set(archive.namelist()), {"muxy", "muxy-server", "LICENSE"})
+            for name in ("muxy", "muxy-server"):
+                self.assertEqual(archive.read(name), (output / "Muxy Beta.app/Contents/MacOS" / name).read_bytes())
+        self.assertNotEqual(self.build().returncode, 0)
 
     def test_non_beta_releases_are_rejected_before_packaging(self):
         for version in ("2.0.0", "2.0.0-alpha-1", "2.0.0-beta-0"):

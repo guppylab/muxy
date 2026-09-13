@@ -214,6 +214,7 @@ fn closing_one_pane_discards_only_its_session_and_last_closes_tab(cx: &mut TestA
         attach_panes(model, &panes, cx);
         let _ = requests.try_iter().collect::<Vec<_>>();
         model.close_pane(panes[1], cx);
+        acknowledge_close(model, cx);
         assert_eq!(model.state.home().tabs[0].panes.len(), 2);
         assert_eq!(model.active_pane(), Some(panes[2]));
         assert_eq!(
@@ -223,7 +224,7 @@ fn closing_one_pane_discards_only_its_session_and_last_closes_tab(cx: &mut TestA
         let discarded: Vec<_> = requests
             .try_iter()
             .filter_map(|(_, work)| match work {
-                Work::Discard(session) => Some(session),
+                Work::Discard(session, _) => Some(session),
                 _ => None,
             })
             .collect();
@@ -231,8 +232,10 @@ fn closing_one_pane_discards_only_its_session_and_last_closes_tab(cx: &mut TestA
         let loaded = store::load(&model.path).expect("saved");
         assert_eq!(loaded.home().tabs[0].layout.leaves(), [panes[0], panes[2]]);
         model.close_pane(panes[2], cx);
+        acknowledge_close(model, cx);
         assert_eq!(model.active_pane(), Some(panes[0]));
         model.close_pane(panes[0], cx);
+        acknowledge_close(model, cx);
         assert!(model.state.home().tabs.is_empty());
         assert!(model.grids.is_empty());
     });
@@ -297,6 +300,7 @@ fn shortcuts_split_focus_zoom_and_close_the_expected_pane(cx: &mut TestAppContex
     let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
     view.update(cx, |model, cx| {
         model.receive((1, Update::Connected(vec![])), cx);
+        acknowledge_catalog(model, cx);
     });
     cx.simulate_keystrokes("cmd-t");
     let first = view.read_with(cx, |model, _| model.active_pane().expect("first"));
@@ -346,10 +350,14 @@ fn shortcuts_split_focus_zoom_and_close_the_expected_pane(cx: &mut TestAppContex
         attach_panes(model, &[first, second, third], cx);
     });
     cx.simulate_keystrokes("cmd-w");
+    view.update(cx, acknowledge_close);
+    cx.run_until_parked();
     view.read_with(cx, |model, _| {
         assert_eq!(model.visible_panes(), [first, second]);
     });
     cx.simulate_keystrokes("cmd-shift-w");
+    view.update(cx, acknowledge_close);
+    cx.run_until_parked();
     view.read_with(cx, |model, _| assert!(model.state.home().tabs.is_empty()));
 }
 
@@ -554,7 +562,7 @@ fn divider_drag_persists_ratios_and_click_focus_routes_input(cx: &mut TestAppCon
 }
 
 #[gpui::test]
-#[ignore = "requires a built muxy-server, top, vim, and a fresh MUXY_DIR under /tmp/muxy-phase23-"]
+#[ignore = "requires a built muxy CLI, top, vim, and a fresh MUXY_DIR under /tmp/muxy-phase23-"]
 fn phase23_split_walkthrough(cx: &mut TestAppContext) {
     let result = run_split_walkthrough(cx);
     assert!(result.is_ok(), "{result:?}");

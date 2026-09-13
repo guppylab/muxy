@@ -149,6 +149,7 @@ pub enum ShortcutId {
     FocusSettingsNavbar,
     NextSettingsControl,
     PreviousSettingsControl,
+    InstallCommandLineTool,
 }
 
 impl ShortcutId {
@@ -1114,5 +1115,11 @@ pub const ALL: &[Shortcut] = &[
         keys: &["shift-tab"],
         contexts: &[Some("SettingsWindow")],
         key_contexts: &[&[Some("SettingsWindow")]],
+    },
+    Shortcut {
+        id: "install_command_line_tool",
+        keys: &[],
+        contexts: &[None],
+        key_contexts: &[],
     },
 ];

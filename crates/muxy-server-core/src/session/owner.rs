@@ -767,6 +767,7 @@ mod tests {
         Ok(Owner {
             graphics: muxy_protocol::Graphics::default(),
             info: SessionInfo {
+                project: muxy_protocol::ProjectId::from_u128(1),
                 id: SessionId::from(NonZeroU64::MIN),
                 directory: directory.clone(),
             },

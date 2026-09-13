@@ -7,8 +7,21 @@ use crate::{
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum RequestBody {
+    CancelCreation(crate::OperationId),
     ListSessions,
+    ReadCatalog {
+        after: Option<crate::ProjectId>,
+        revision: Option<u64>,
+    },
+    MutateProject(crate::ProjectIntent),
+    ListProjectSessions {
+        project: crate::ProjectId,
+        after: Option<SessionId>,
+        revision: Option<u64>,
+    },
     CreateSession {
+        project: crate::ProjectId,
+        operation: crate::OperationId,
         directory: ServerPath,
         size: Size,
     },
@@ -47,6 +60,15 @@ pub enum RequestBody {
     WriteServerSettings(ServerSettingsDoc),
     StopServer,
     StopServerIfIdle,
+    SyncSessionReferences {
+        owner: Option<crate::OperationId>,
+        revision: u64,
+        sessions: Vec<SessionId>,
+    },
+    CloseSession {
+        session: SessionId,
+        operation: crate::OperationId,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -60,6 +82,11 @@ pub struct TerminalColors {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ReplyBody {
     Sessions(Vec<SessionInfo>),
+    Catalog(crate::CatalogPage),
+    ProjectMutated {
+        revision: u64,
+    },
+    ProjectSessions(crate::ProjectSessions),
     SessionCreated(SessionInfo),
     SessionEnded,
     Detached,
@@ -68,6 +95,7 @@ pub enum ReplyBody {
     Error(ErrorReply),
     SavedScreen(SavedScreen),
     SessionDiscarded,
+    CreationCancelled,
     Attached {
         snapshot: Box<AttachSnapshot>,
         process: Option<ForegroundProcess>,
@@ -79,6 +107,8 @@ pub enum ReplyBody {
     ServerSettingsWritten,
     ServerStopping,
     ServerBusy,
+    SessionReferencesSynced,
+    SessionClosed,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -89,6 +119,8 @@ pub struct ErrorReply {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ErrorCode {
+    UnknownProject,
+    CatalogChanged,
     UnknownSession,
     UnknownChannel,
     BadSize,
@@ -98,6 +130,7 @@ pub enum ErrorCode {
     SavedContentUnavailable,
     StaleHistoryCursor,
     HistoryUnavailable,
+    PersistenceFailed,
 }
 
 /// Server-owned configuration, independent of its storage format.

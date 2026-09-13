@@ -369,3 +369,19 @@ fn cancellation_wakes_a_blocked_writer_after_peer_write_shutdown() -> TestResult
     assert!(result?.is_err());
     Ok(())
 }
+
+#[test]
+fn pathname_limit_matches_the_native_unix_socket_address() -> TestResult {
+    use std::os::unix::ffi::OsStrExt;
+    let path = SocketPath::new()?;
+    let limit = if cfg!(target_os = "linux") { 108 } else { 104 };
+    let prefix = path.directory.as_os_str().as_bytes().len() + 1;
+    let maximum = path.directory.join("s".repeat(limit - 1 - prefix));
+    let listener = UnixSocketListener::bind(&maximum)?;
+    let _client = connect(&maximum)?;
+    let _server = listener.accept()?;
+    let oversized = path.directory.join("s".repeat(limit - prefix));
+    assert!(UnixSocketListener::bind(&oversized).is_err());
+    assert!(!oversized.exists());
+    Ok(())
+}

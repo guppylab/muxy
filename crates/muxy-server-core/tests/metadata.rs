@@ -123,7 +123,14 @@ fn a_pipeline_keeps_non_shell_metadata_after_its_group_leader_exits() -> TestRes
     for shell in ["/bin/sh", "/bin/zsh"] {
         let fixture = Fixture::with_shell(shell)?;
         let (events, _, initial) = fixture.attach(1)?;
-        assert!(initial.is_some_and(|process| process.is_shell), "{shell}");
+        if !initial.is_some_and(|process| process.is_shell) {
+            metadata(&events, |event| {
+                matches!(
+                    event,
+                    MetadataEvent::ForegroundProcess { is_shell: true, .. }
+                )
+            })?;
+        }
         fixture.input(b"stty -echo; PS1=''; echo x | (cd /tmp; exec sleep 30)\n")?;
         metadata(
             &events,
@@ -216,4 +223,49 @@ fn terminal_directory_and_bell_events_are_delivered_without_replaying_bells_on_a
             .all(|event| !matches!(event, AttachmentEvent::Metadata(MetadataEvent::Bell)))
     );
     Ok(())
+}
+
+#[test]
+fn background_work_alone_keeps_shell_foreground_metadata() -> TestResult {
+    for shell in ["/bin/sh", "/bin/zsh"] {
+        let fixture = Fixture::with_shell(shell)?;
+        let (events, _, _) = fixture.attach(1)?;
+        fixture.input(b"sleep 2 &\ncd /tmp\n")?;
+        metadata(
+            &events,
+            |event| matches!(event, MetadataEvent::Directory(path) if path.0.ends_with(b"/tmp")),
+        )?;
+        let (_, _, process) = fixture.attach(2)?;
+        assert!(process.is_some_and(|process| process.is_shell), "{shell}");
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_cwd_preserves_non_utf8_filesystem_bytes() -> TestResult {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+    let mut name = format!("muxy-cwd-{}-", std::process::id()).into_bytes();
+    name.push(0xff);
+    let directory = std::env::temp_dir().join(OsString::from_vec(name));
+    std::fs::create_dir(&directory)?;
+    let result = (|| -> TestResult {
+        let fixture = Fixture::new()?;
+        let (events, _, _) = fixture.attach(1)?;
+        let expected = directory.as_os_str().as_bytes();
+        let mut input = b"cd '".to_vec();
+        input.extend(expected);
+        input.extend(b"'\n");
+        fixture.input(&input)?;
+        metadata(
+            &events,
+            |event| matches!(event, MetadataEvent::Directory(path) if path.0 == expected),
+        )?;
+        let (_, snapshot, _) = fixture.attach(2)?;
+        assert_eq!(snapshot.directory.0, expected);
+        Ok(())
+    })();
+    std::fs::remove_dir(directory)?;
+    result
 }

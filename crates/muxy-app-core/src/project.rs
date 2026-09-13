@@ -69,6 +69,7 @@ pub struct Project {
     pub icon: Option<String>,
     pub color: Color,
     pub server_id: ServerId,
+    #[serde(with = "crate::catalog::directory")]
     pub directory: PathBuf,
     pub kind: Option<ProjectKind>,
     pub parent_id: Option<ProjectId>,
@@ -131,8 +132,4 @@ pub(crate) fn validate_icon(icon: Option<&str>) -> Result<(), AppError> {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProjectKind {
-    Worktree,
-}
+pub use muxy_protocol::ProjectKind;

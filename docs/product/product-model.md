@@ -14,25 +14,25 @@ flowchart TB
     TAB["Tab"]
     PANE["Pane"]
 
-    SERVER -->|"hosts"| PROJECT
+    SERVER -->|"owns"| PROJECT
     WORKSPACE -.->|"groups, filter only"| PROJECT
     PROJECT -->|"parent of"| WORKTREE
-    PROJECT -->|"owns"| TAB
-    WORKTREE -->|"owns"| TAB
+    PROJECT -->|"client tab set"| TAB
+    WORKTREE -->|"client tab set"| TAB
     TAB -->|"contains"| PANE
 ```
 
 The cardinalities are intentional:
 
-- Every project selects exactly one server; a server may have no projects.
+- Every project belongs to exactly one server; each server has a Home project.
 - A workspace may contain any number of ordinary top-level projects, and an
   ordinary top-level project may belong to any number of workspaces.
 - A project may have any number of child projects. Git worktrees are the first
   defined child-project type.
-- Every project, whether root or worktree, may have any number of tabs.
+- Each client keeps its own tabs and pane layouts for each project.
 - Every tab contains at least one pane, and every pane belongs to exactly one
   tab.
-- A server-bound pane references one session owned by the project's server.
+- A terminal pane references one session explicitly owned by its project.
   Sessions are defined in the [server model](./server-model.md).
 
 ## Invariants
@@ -41,8 +41,7 @@ The cardinalities are intentional:
 - A project with `type = worktree` cannot be a parent. Nesting depth is one.
 - A worktree project has the same `server_id` as its parent.
 - A tab always has at least one pane.
-- The Home project always exists, is on the current-device server, cannot be
-  deleted, and cannot have child projects.
+- Each server has one Home project. It cannot be deleted or have child projects.
 - Workspaces contain only ordinary top-level projects. Neither worktree
   projects nor the Home project belong to a workspace.
 
@@ -53,16 +52,17 @@ describe its location, but do not define its identity.
 
 | Project information | Purpose |
 | --- | --- |
-| Generated ID | Stable identity inside the app |
-| Name, icon, and color | User-controlled presentation |
+| Generated ID | Stable server-owned identity |
+| Name, icon, and color | Shared server metadata, editable by clients |
 | Server and directory | The location where project work happens |
 | Nullable `type` | Optional specialized behavior; `worktree` is the currently defined value |
 | Nullable `parent_id` | Generic relationship to another project |
-| Workspace memberships | Optional organization for top-level projects |
-| Tab and pane state | The project's independent working state |
+| Workspace memberships | Client-owned organization for top-level projects |
+| Tab and pane state | Each client's independent working state for the project |
 
 A new project's name defaults to its directory name, its color is assigned
-automatically, and its icon is an optional emoji. All three remain editable.
+automatically, and its icon is an optional emoji. Editing these fields in one
+client updates the project for every client.
 
 ```mermaid
 flowchart LR
@@ -78,24 +78,24 @@ case:
 
 - the underlying files and Git state are naturally shared because the location
   is shared;
-- display name, icon, color, workspace memberships, tabs, pane layouts, and
-  other app-owned state remain independent;
+- each project has independent name, icon, and color shared across its clients;
+- each client keeps independent workspace memberships, tabs, and pane layouts;
 - neither project is treated as an alias or canonical copy of the other;
 - each may register the same Git worktree as its own worktree project, and
   those worktree projects also remain independent.
 
 ## Home project
 
-One top-level project, Home, always exists. It is located on the current-device
-server and points at the operating system's home directory. It cannot be
-deleted and cannot have worktree children. In every other respect it is an
-ordinary project: it owns tabs, its server-bound panes depend on its server,
-and app-only panes such as web views can be opened in it at any time. There is
-therefore never a state with zero projects.
+Each server has one top-level Home project pointing at that server user's home
+directory. It owns Quick Terminal and other ad-hoc sessions. It cannot be
+deleted or have worktree children. Clients keep their own Home tabs and panes,
+including app-only panes. A remote server never reuses the local Home identity
+or path. There is therefore never a server with zero projects.
 
 ## Workspaces and project discovery
 
-Workspaces are overlapping collections, not ownership boundaries.
+Workspaces are client-owned overlapping collections and may group projects
+from several servers. Memberships are not shared with other clients.
 
 - The default sidebar view is **All projects**, containing only projects whose
   `parent_id` is empty.
@@ -163,7 +163,9 @@ see the app model for how panes behave in that case.
 
 ## Deletion
 
-- Deleting a project never deletes its directory from disk.
+- Deleting a project removes it from the server and every client and ends all
+  its terminal sessions, including those displayed elsewhere. Confirmation
+  explains this impact. Its directory and files remain untouched.
 - Deleting a worktree project prompts the user to either also delete the
   worktree path and Git worktree, or leave them orphaned on disk.
 - Deleting a top-level project deletes its child projects and all of their
@@ -173,14 +175,15 @@ see the app model for how panes behave in that case.
 
 ## Tabs and panes
 
-A tab belongs directly to one project and owns one or more panes. The owner may
-be a top-level project or a worktree project. A tab has no title of its own; it
+A tab belongs to one client's view of a project and owns one or more panes.
+The project may be a top-level project or a worktree project. A tab has no title of its own; it
 displays the title of the window-focused pane when it contains that pane,
 otherwise its first pane.
 
 Panes are arranged by splitting an existing pane horizontally or vertically, at
 any depth, and the arrangement is saved with the tab. A project may have no
-tabs; the app never creates one on its own.
+tabs; the desktop never creates one on its own. The TUI's first launch opens
+one shell in Home and thereafter restores its own project and layout.
 
 Panes are typed. A pane type is either **app-only** or **server-bound**:
 
@@ -211,13 +214,16 @@ focus is window state, not tab state, even when several tab layouts are visible.
 A new terminal pane starts in the owning project's directory or, when a
 setting says so, in the current directory of the pane it was split from.
 Changing a terminal's current directory affects that terminal process only; it
-does not change the pane's owning project. Closing a terminal pane ends its
-session; if a process other than the shell is running in the foreground, the
-user confirms once first. When a session's process exits, or the app finds on
+does not change the session's explicit project membership. Closing a terminal
+pane detaches it. The session ends only when no other open pane in a connected
+client uses it, including inactive tabs. Before ending a foreground program
+other than the shell, the user confirms once first. Background jobs alone
+do not trigger confirmation. Ordinary shell jobs follow normal terminal exit
+behavior; independently detached work is not targeted. When a session's process exits, or the app finds on
 reconnect that the session no longer exists, its pane stays open, marked as
 exited, with its last saved screen and retained history. This content remains
 available for scrolling, search, selection, and copy, including after relaunch.
-Closing the pane discards its saved content.
+Closing the final connected pane also discards the session’s saved content.
 Closing the last pane in a tab closes the tab.
 
 Panes and tabs do not move between containers in this version; tabs may only

@@ -215,14 +215,26 @@ fn ordered_request(
             outbox.resize(channel, id, size)?;
             return Ok(None);
         }
+        RequestBody::SyncSessionReferences { .. }
+        | RequestBody::CloseSession { .. }
+        | RequestBody::DiscardSession(_)
+        | RequestBody::CancelCreation(_)
+        | RequestBody::ReadCatalog { .. }
+        | RequestBody::MutateProject(_)
+        | RequestBody::ListProjectSessions { .. } => project_request(body, registry, outbox)?,
         RequestBody::ListSessions => ReplyBody::Sessions(registry.list()),
-        RequestBody::CreateSession { directory, size } => {
-            ReplyBody::SessionCreated(registry.create_with_colors(
-                Path::new(OsStr::from_bytes(&directory.0)),
-                size,
-                outbox.colors(),
-            )?)
-        }
+        RequestBody::CreateSession {
+            project,
+            operation,
+            directory,
+            size,
+        } => ReplyBody::SessionCreated(registry.create_with_colors(
+            project,
+            operation,
+            Path::new(OsStr::from_bytes(&directory.0)),
+            size,
+            outbox.colors(),
+        )?),
         RequestBody::EndSession(session) => {
             registry.end(session)?;
             ReplyBody::SessionEnded
@@ -240,10 +252,6 @@ fn ordered_request(
             before,
             max_rows,
         } => ReplyBody::HistoryPage(registry.saved_history_page(session, before, max_rows)?),
-        RequestBody::DiscardSession(session) => {
-            registry.discard(session)?;
-            ReplyBody::SessionDiscarded
-        }
 
         RequestBody::Search {
             source,
@@ -270,6 +278,54 @@ fn ordered_request(
         },
         RequestBody::Ping => ReplyBody::Pong,
     }))
+}
+
+fn project_request(
+    body: RequestBody,
+    registry: &Registry,
+    outbox: &Outbox,
+) -> Result<ReplyBody, ServerError> {
+    Ok(match body {
+        RequestBody::SyncSessionReferences {
+            owner,
+            revision,
+            sessions,
+        } => {
+            registry.sync_references(outbox, owner, revision, sessions);
+            ReplyBody::SessionReferencesSynced
+        }
+        RequestBody::CloseSession { session, operation } => {
+            registry.close_session(session, operation, outbox)?;
+            ReplyBody::SessionClosed
+        }
+        RequestBody::DiscardSession(session) => {
+            registry.discard(session)?;
+            ReplyBody::SessionDiscarded
+        }
+        RequestBody::CancelCreation(operation) => {
+            registry.cancel_creation(operation)?;
+            ReplyBody::CreationCancelled
+        }
+
+        RequestBody::ReadCatalog { after, revision } => {
+            outbox.watch_catalog();
+            ReplyBody::Catalog(registry.read_catalog(after, revision)?)
+        }
+        RequestBody::MutateProject(intent) => ReplyBody::ProjectMutated {
+            revision: registry.mutate_project(&intent)?,
+        },
+        RequestBody::ListProjectSessions {
+            project,
+            after,
+            revision,
+        } => ReplyBody::ProjectSessions(registry.list_project_sessions(project, after, revision)?),
+        _ => {
+            return Err(ServerError::new(
+                ErrorCode::BadRequest,
+                "expected project request",
+            ));
+        }
+    })
 }
 
 fn live_history(
@@ -332,6 +388,10 @@ fn attach(
     outbox: &Arc<Outbox>,
     last_channel: &AtomicU32,
 ) -> Result<(), ServerError> {
+    let _operation = registry.session_operation();
+    if !registry.can_attach(session) {
+        return Err(ServerError::unknown_session(session));
+    }
     let handle = registry
         .handle(session)
         .ok_or_else(|| ServerError::unknown_session(session))?;

@@ -1,4 +1,136 @@
 use super::*;
+use muxy_protocol::ErrorCode;
+
+#[gpui::test]
+fn rejected_project_intent_advances_fifo_but_storage_failure_preserves_it(cx: &mut TestAppContext) {
+    let (state, _, _, _, _) = two_projects();
+    let (boot, requests) = stub_boot(state);
+    let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
+    view.update(cx, |model, cx| {
+        model.connection = ConnectionState::Ready;
+        let pending = model.state.project_intents().to_vec();
+        let error = |code| {
+            muxy_client::ClientError::Server(muxy_protocol::ErrorReply {
+                code,
+                message: "rejected".into(),
+            })
+        };
+        model.receive_project_mutation(
+            pending[0].operation,
+            Err(error(ErrorCode::PersistenceFailed)),
+            cx,
+        );
+        assert_eq!(model.state.project_intents(), pending);
+        requests.try_iter().for_each(drop);
+        model.receive_project_mutation(pending[0].operation, Err(error(ErrorCode::BadPath)), cx);
+        assert_eq!(model.state.project_intents(), &pending[1..]);
+        assert_eq!(
+            store::load(&model.path)
+                .expect("saved state")
+                .project_intents(),
+            &pending[1..]
+        );
+        assert!(
+            requests.try_iter().any(
+                |(_, work)| matches!(work, Work::MutateProject(intent) if intent == pending[1])
+            )
+        );
+        assert!(model.error.is_some());
+    });
+}
+
+#[gpui::test]
+#[ignore = "requires a built server and a fresh MUXY_DIR under /tmp/muxy-catalog-"]
+fn server_first_legacy_migration_walkthrough(cx: &mut TestAppContext) {
+    migration_walkthrough(cx, true).expect("server-first migration");
+}
+
+#[gpui::test]
+#[ignore = "requires a built server and a fresh MUXY_DIR under /tmp/muxy-catalog-"]
+fn desktop_first_legacy_migration_walkthrough(cx: &mut TestAppContext) {
+    migration_walkthrough(cx, false).expect("desktop-first migration");
+}
+
+fn migration_walkthrough(cx: &mut TestAppContext, server_first: bool) -> Result {
+    let directory = PathBuf::from(std::env::var("MUXY_DIR")?);
+    assert!(
+        directory
+            .to_string_lossy()
+            .starts_with("/tmp/muxy-catalog-")
+    );
+    assert!(!directory.join("state.json").exists());
+    let mut state = AppState::bootstrap()?;
+    for id in [501, 502] {
+        let project = state.add_project(directory.clone())?;
+        state.open_terminal_tab(project)?;
+        state.set_pane_session(
+            state.current_project().tabs[0].panes[0].id,
+            SessionId::new(id),
+        )?;
+    }
+    while let Some(intent) = state.project_intents().first().cloned() {
+        state.complete_project_intent(intent.operation)?;
+    }
+    let mut legacy = serde_json::to_value(&state)?;
+    legacy["version"] = 1.into();
+    for project in legacy["projects"].as_array_mut().ok_or("projects")? {
+        let bytes: Vec<u8> = serde_json::from_value(project["directory"].clone())?;
+        project["directory"] = String::from_utf8(bytes)?.into();
+    }
+    let original = serde_json::to_vec(&legacy)?;
+    std::fs::write(directory.join("state.json"), &original)?;
+    let socket = directory.join("server.sock");
+    if server_first {
+        let probe = crate::server::ensure_server_running(&socket)?;
+        assert_eq!(probe.catalog()?.home, state.home().id);
+        assert_eq!(probe.catalog()?.projects.len(), 3);
+        assert!(probe.list_sessions()?.is_empty());
+    }
+    let boot = Boot::load()?;
+    assert_eq!(boot.state.window(), state.window());
+    let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
+    wait(cx, &view, |model, _| {
+        model.connection == ConnectionState::Ready
+            && model.catalog.restore.is_none()
+            && !model.catalog.pending
+            && model.state.catalog_revision() > 0
+    })?;
+    view.read_with(cx, |model, _| {
+        assert_eq!(model.state.projects(), state.projects());
+        let mut expected = state.window().clone();
+        expected.bounds = model.state.window().bounds;
+        assert!(expected.bounds.is_some());
+        assert_eq!(model.state.window(), &expected);
+    });
+    let probe = Client::connect(&socket)?;
+    assert!(probe.list_sessions()?.is_empty());
+    let saved = store::load(directory.join("desktop-state.json"))?;
+    assert_eq!(saved.projects(), state.projects());
+    assert_eq!(std::fs::read(directory.join("state.json"))?, original);
+    let deleted = state.projects()[1].id;
+    probe.mutate_project(muxy_protocol::ProjectIntent {
+        operation: muxy_protocol::OperationId::new(),
+        mutation: muxy_protocol::ProjectMutation::Delete(deleted),
+    })?;
+    wait(cx, &view, |model, _| model.state.project(deleted).is_none())?;
+    assert!(directory.is_dir());
+    assert_eq!(std::fs::read(directory.join("state.json"))?, original);
+    view.update(cx, |model, _| {
+        model.work.send((model.generation, Work::Stop))
+    })?;
+    crate::server::stop_server(&probe, &socket)?;
+    let restarted = crate::server::ensure_server_running(&socket)?;
+    assert!(
+        !restarted
+            .catalog()?
+            .projects
+            .iter()
+            .any(|project| project.id == deleted)
+    );
+    assert!(restarted.list_sessions()?.is_empty());
+    crate::server::stop_server(&restarted, &socket)?;
+    report("Catalog legacy migration, retained panes, shared deletion and restart: PASS")
+}
 
 fn two_projects() -> (AppState, ProjectId, ProjectId, PaneId, PaneId) {
     let mut state = AppState::bootstrap().expect("state");
@@ -30,7 +162,8 @@ fn switching_projects_detaches_and_reattaches_in_the_owning_directory(cx: &mut T
     let (boot, requests) = stub_boot(state);
     let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
     view.update(cx, |model, cx| {
-        model.receive((1, Update::Connected([first_session, second_session].map(|id| SessionInfo { id, directory: muxy_protocol::ServerPath(b"/tmp".to_vec()) }).to_vec())), cx);
+        model.receive((1, Update::Connected([first_session, second_session].map(|id| SessionInfo { project: ProjectId::from_u128(1),  id, directory: muxy_protocol::ServerPath(b"/tmp".to_vec()) }).to_vec())), cx);
+        acknowledge_catalog(model, cx);
         model.receive((1, Update::Attached { pane: first_pane, session: first_session, attachment: attachment(), created: false }), cx);
         requests.try_iter().for_each(drop);
         model.select_project(second, cx);
@@ -62,6 +195,7 @@ fn hidden_restore_creates_in_each_project_and_removal_discards_late_creations(
     let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
     view.update(cx, |model, cx| {
         model.receive((1, Update::Connected(Vec::new())), cx);
+        acknowledge_catalog(model, cx);
         let work: Vec<_> = requests.try_iter().map(|(_, work)| work).collect();
         for (id, pane) in [(first, first_pane), (second, second_pane)] {
             let expected = &model.state.project(id).expect("project").directory;
@@ -72,7 +206,7 @@ fn hidden_restore_creates_in_each_project_and_removal_discards_late_creations(
         model.receive((1, Update::Attached { pane: first_pane, session, attachment: attachment(), created: true }), cx);
         assert!(model.state.project(first).is_none());
         assert_eq!(model.state.pending_discards(), [session]);
-        assert!(requests.try_iter().any(|(_, work)| matches!(work, Work::Discard(id) if id == session)));
+        assert!(requests.try_iter().any(|(_, work)| matches!(work, Work::Discard(id, _) if id == session)));
         assert_eq!(model.state.project(second).expect("second").tabs.len(), 1);
         assert!(model.grids.is_empty());
     });
@@ -100,7 +234,7 @@ fn tab_close_confirmation_keeps_its_target_after_project_switch(cx: &mut TestApp
         assert!(
             requests
                 .try_iter()
-                .any(|(_, work)| matches!(work, Work::Discard(id) if id == session))
+                .any(|(_, work)| matches!(work, Work::Discard(id, _) if id == session))
         );
     });
 }
@@ -135,15 +269,16 @@ fn project_removal_requires_confirmation_and_persists_offline_cleanup(cx: &mut T
     assert!(
         !requests
             .try_iter()
-            .any(|(_, work)| matches!(work, Work::Discard(_)))
+            .any(|(_, work)| matches!(work, Work::Discard(_, _)))
     );
     view.update(cx, |model, cx| {
         model.receive((1, Update::Connected(vec![])), cx);
+        acknowledge_catalog(model, cx);
     });
     assert!(
         requests
             .try_iter()
-            .any(|(_, work)| matches!(work, Work::Discard(id) if id == session))
+            .any(|(_, work)| matches!(work, Work::Discard(id, _) if id == session))
     );
 }
 
@@ -216,14 +351,14 @@ fn removal_save_failure_keeps_projects_and_never_discards(cx: &mut TestAppContex
         assert!(
             !requests
                 .try_iter()
-                .any(|(_, work)| matches!(work, Work::Discard(_)))
+                .any(|(_, work)| matches!(work, Work::Discard(_, _)))
         );
         std::fs::remove_dir(temporary).expect("cleanup");
     });
 }
 
 #[gpui::test]
-#[ignore = "requires a built muxy-server and a fresh MUXY_DIR under /tmp/muxy-phase24-"]
+#[ignore = "requires a built muxy CLI and a fresh MUXY_DIR under /tmp/muxy-phase24-"]
 fn projects_live_walkthrough(cx: &mut TestAppContext) {
     run_projects_live_walkthrough(cx).expect("phase 24 walkthrough");
 }

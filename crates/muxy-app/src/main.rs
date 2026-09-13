@@ -1,4 +1,5 @@
 mod boot;
+mod cli_install;
 mod model;
 mod navigation;
 mod opener;
@@ -16,6 +17,7 @@ mod views {
     pub(crate) mod project_menu;
     pub(crate) mod project_picker;
     pub(crate) mod quick_terminal;
+    pub(crate) mod session_picker;
     pub(crate) mod settings;
     pub(crate) mod sidebar;
     pub(crate) mod splits;
@@ -50,10 +52,11 @@ use model::AppModel;
 use views::workspace::{
     AddProject, CheckForUpdates, ClosePane, CloseTab, DecreaseFontSize, EndAllSessionsAndQuit,
     Find, FindNext, FindPrevious, FocusPaneDown, FocusPaneLeft, FocusPaneRight, FocusPaneUp,
-    HideApp, HideOthers, IncreaseFontSize, Minimize, NewHomeTab, NewTab, NextProject, NextPrompt,
-    NextTab, OpenConfiguration, OpenSettings, PreviousProject, PreviousPrompt, PreviousTab, Quit,
-    SelectCommandOutput, SelectTab, ShowAll, SplitDown, SplitRight, ToggleFullScreen,
-    ToggleSidebar, ToggleThemePicker, ToggleZoomPane, Zoom, bind_keys,
+    HideApp, HideOthers, IncreaseFontSize, InstallCommandLineTool, Minimize, NewHomeTab, NewTab,
+    NextProject, NextPrompt, NextTab, OpenConfiguration, OpenSettings, PreviousProject,
+    PreviousPrompt, PreviousTab, Quit, SelectCommandOutput, SelectTab, ShowAll, SplitDown,
+    SplitRight, ToggleFullScreen, ToggleSidebar, ToggleThemePicker, ToggleZoomPane, Zoom,
+    bind_keys,
 };
 
 fn main() -> ExitCode {
@@ -177,6 +180,7 @@ fn menus() -> Vec<Menu> {
                 MenuItem::action("Settings…", OpenSettings),
                 MenuItem::action("Open Configuration…", OpenConfiguration),
                 MenuItem::action("Check for Updates…", CheckForUpdates),
+                MenuItem::action("Install Command Line Tool…", InstallCommandLineTool),
                 MenuItem::separator(),
                 MenuItem::os_submenu("Services", SystemMenuType::Services),
                 MenuItem::separator(),

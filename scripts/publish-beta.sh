@@ -39,14 +39,20 @@ check_source() {
 check_source
 
 cd "$ARTIFACTS"
+ASSETS=(install-muxy.sh)
 for ARCH in arm64 x86_64; do
-    if [[ ! -s "Muxy-${VERSION}-${ARCH}.dmg" ]]; then
-        echo "Error: missing $ARCH DMG" >&2
+    ASSETS+=("Muxy-${VERSION}-${ARCH}.dmg" "muxy-${VERSION}-macos-${ARCH}.zip" "muxy-${VERSION}-linux-${ARCH}.tar.gz")
+done
+for ASSET in "${ASSETS[@]}"; do
+    if [[ ! -f "$ASSET" || ! -s "$ASSET" || -L "$ASSET" ]]; then
+        echo "Error: missing regular release asset: $ASSET" >&2
         exit 1
     fi
 done
-shasum -a 256 "Muxy-${VERSION}-arm64.dmg" "Muxy-${VERSION}-x86_64.dmg" > SHA256SUMS
 python3 "$ROOT/scripts/beta_release.py" update "$VERSION" "$GITHUB_REPOSITORY" "$ARTIFACTS"
+ASSETS+=(update.json)
+shasum -a 256 "${ASSETS[@]}" > SHA256SUMS
+ASSETS+=(SHA256SUMS)
 
 if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
     --json isDraft,isPrerelease,targetCommitish > release.json; then
@@ -62,12 +68,21 @@ else
 Experimental Rust/GPUI beta from the \`2.x\` branch. Not intended for production use.
 
 - macOS 14 or newer. Choose \`arm64\` for Apple Silicon or \`x86_64\` for Intel.
-- Drag \`Muxy Beta.app\` to Applications. The app includes its matching \`muxy-server\`.
+- Drag \`Muxy Beta.app\` to Applications. The app bundles the matching \`muxy\` CLI/TUI and \`muxy-server\`. Use **Install Command Line Tool** to expose the bundled CLI on PATH.
 - Installs alongside Muxy, with separate settings and sessions in \`~/Library/Application Support/Muxy Beta\`.
-- Newer 2.x betas download automatically. Use **Check for Updates…** or **Restart to Update…** to install. Updating ends running terminal sessions and preserves tabs, saved output, and settings.
+- Newer 2.x betas download automatically. Use **Check for Updates…** or **Restart to Update…** to install. Compatible servers keep running during updates; incompatible updates wait for the existing restart flow.
 - When replacing a beta manually, stop its server in Settings before replacing the app.
 
+Standalone CLI/TUI and server: macOS 14+ or Linux with glibc 2.35+, on ARM64 or x86_64. Install the exact matching pair without a desktop app, Rust, or Zig:
+
+\`\`\`sh
+curl -fsSL https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/install-muxy.sh | sh -s -- --version $VERSION
+\`\`\`
+
+The installer uses \`~/.local/bin\`. Use \`--install-dir PATH\` to choose another directory and \`--replace\` to replace existing commands, including a desktop bundle link. It does not modify shell profiles or restart servers. Run \`muxy\` to open the TUI; Ctrl-B then D detaches.
+
 Source: https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA
+
 EOF
     PREVIOUS="$(git -C "$ROOT" describe --tags --match 'v2.0.0-beta-*' --match 'v2.0.0-alpha-*' --abbrev=0 "$GITHUB_SHA^" 2>/dev/null || true)"
     if [[ -n "$PREVIOUS" ]]; then
@@ -80,8 +95,16 @@ EOF
 fi
 
 # A failed upload leaves a resumable draft, never a half-populated public release.
-gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
-    "Muxy-${VERSION}-arm64.dmg" "Muxy-${VERSION}-x86_64.dmg" SHA256SUMS update.json
+gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "${ASSETS[@]}"
+gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets > uploaded-assets.json
+python3 - uploaded-assets.json "${ASSETS[@]}" <<'PY'
+import json, pathlib, sys
+remote = json.loads(pathlib.Path(sys.argv[1]).read_text())["assets"]
+for name in sys.argv[2:]:
+    matches = [asset for asset in remote if asset["name"] == name]
+    if len(matches) != 1 or matches[0]["size"] != pathlib.Path(name).stat().st_size:
+        sys.exit(f"Error: missing or incomplete uploaded asset: {name}")
+PY
 cd "$ROOT"
 check_source
 gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \

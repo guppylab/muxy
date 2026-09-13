@@ -51,6 +51,14 @@ impl Boot {
 
 #[derive(Debug)]
 pub(crate) enum Work {
+    ProjectSessions {
+        project: muxy_protocol::ProjectId,
+        after: Option<SessionId>,
+        revision: Option<u64>,
+    },
+    ReadCatalog,
+    CancelCreation(muxy_protocol::OperationId),
+    MutateProject(muxy_protocol::ProjectIntent),
     Search {
         pane: PaneId,
         source: SearchSource,
@@ -76,11 +84,13 @@ pub(crate) enum Work {
     },
     Attach {
         pane: PaneId,
+        project: muxy_protocol::ProjectId,
         session: Option<SessionId>,
         directory: PathBuf,
         size: Size,
     },
-    Discard(SessionId),
+    References(Vec<SessionId>),
+    Discard(SessionId, muxy_protocol::OperationId),
     CheckClose {
         tab: TabId,
         session: SessionId,
@@ -112,6 +122,20 @@ pub(crate) enum Work {
 
 #[derive(Debug)]
 pub(crate) enum Update {
+    ProjectSessions {
+        project: muxy_protocol::ProjectId,
+        after: Option<SessionId>,
+        result: Result<muxy_protocol::ProjectSessions, ClientError>,
+    },
+    CreationCancelled {
+        operation: muxy_protocol::OperationId,
+        result: Result<(), ClientError>,
+    },
+    Catalog(Result<muxy_protocol::CatalogPage, ClientError>),
+    ProjectMutated {
+        operation: muxy_protocol::OperationId,
+        result: Result<u64, ClientError>,
+    },
     Search {
         pane: PaneId,
         request: SearchRequest,
@@ -142,6 +166,7 @@ pub(crate) enum Update {
         pane: PaneId,
         result: Result<SavedScreen, ClientError>,
     },
+    ReferencesSynced(Result<(), ClientError>),
     Discarded {
         session: SessionId,
         result: Result<(), ClientError>,
@@ -233,6 +258,13 @@ fn bridge(socket: PathBuf) -> std::io::Result<(Worker, async_channel::Receiver<(
                             .collect(),
                     }
                 };
+                if ready
+                    .iter()
+                    .any(|update| matches!(update, Update::ReferencesSynced(Err(_))))
+                    && let Some(client) = &client
+                {
+                    client.disconnect();
+                }
                 if let Some(client) = &client {
                     ready.extend(requests.start(client, generation, &event_sender, &mut delivery));
                 }
@@ -304,6 +336,20 @@ fn schedule(
 
 fn rejected(work: Work, error: ClientError) -> Update {
     match work {
+        Work::ProjectSessions { project, after, .. } => Update::ProjectSessions {
+            project,
+            after,
+            result: Err(error),
+        },
+        Work::CancelCreation(operation) => Update::CreationCancelled {
+            operation,
+            result: Err(error),
+        },
+        Work::ReadCatalog => Update::Catalog(Err(error)),
+        Work::MutateProject(intent) => Update::ProjectMutated {
+            operation: intent.operation,
+            result: Err(error),
+        },
         Work::ReadServerSettings | Work::WriteServerSettings(_) => {
             Update::ServerSettings(Err(error))
         }
@@ -332,7 +378,8 @@ fn rejected(work: Work, error: ClientError) -> Update {
             request,
             result: Err(error),
         },
-        Work::Discard(session) => Update::Discarded {
+        Work::References(_) => Update::ReferencesSynced(Err(error)),
+        Work::Discard(session, _) => Update::Discarded {
             session,
             result: Err(error),
         },
@@ -352,6 +399,30 @@ fn rejected(work: Work, error: ClientError) -> Update {
 )]
 fn perform(work: Work, client: &Client) -> Option<Update> {
     let result = match work {
+        Work::ProjectSessions {
+            project,
+            after,
+            revision,
+        } => {
+            return Some(Update::ProjectSessions {
+                project,
+                after,
+                result: client.project_sessions(project, after, revision),
+            });
+        }
+        Work::CancelCreation(operation) => {
+            return Some(Update::CreationCancelled {
+                operation,
+                result: client.cancel_creation(operation),
+            });
+        }
+        Work::ReadCatalog => return Some(Update::Catalog(client.catalog())),
+        Work::MutateProject(intent) => {
+            return Some(Update::ProjectMutated {
+                operation: intent.operation,
+                result: client.mutate_project(intent),
+            });
+        }
         Work::ReadServerSettings => {
             return Some(Update::ServerSettings(client.read_server_settings()));
         }
@@ -389,11 +460,12 @@ fn perform(work: Work, client: &Client) -> Option<Update> {
         }
         Work::Attach {
             pane,
+            project,
             session,
             directory,
             size,
         } => {
-            return Some(attach(client, pane, session, &directory, size));
+            return Some(attach(client, pane, project, session, &directory, size));
         }
         Work::ReadSaved { pane, session } => {
             return Some(Update::Saved {
@@ -409,10 +481,17 @@ fn perform(work: Work, client: &Client) -> Option<Update> {
         } => {
             return Some(history(client, pane, session, channel, request));
         }
-        Work::Discard(session) => {
+        Work::References(sessions) => {
+            let result = client.sync_session_references(sessions);
+            if result.is_err() {
+                client.disconnect();
+            }
+            return Some(Update::ReferencesSynced(result));
+        }
+        Work::Discard(session, operation) => {
             return Some(Update::Discarded {
                 session,
-                result: client.discard_session(session),
+                result: client.close_session(session, operation),
             });
         }
         Work::CheckClose { tab, session, size } => {
@@ -525,12 +604,17 @@ fn check_close(
 fn attach(
     client: &Client,
     pane: PaneId,
+    project: muxy_protocol::ProjectId,
     existing: Option<SessionId>,
     directory: &std::path::Path,
     size: Size,
 ) -> Update {
     let session = match existing.map_or_else(
-        || client.create_session(directory, size).map(|info| info.id),
+        || {
+            client
+                .create_project_session(project, pane.creation_token(), directory, size)
+                .map(|info| info.id)
+        },
         Ok,
     ) {
         Ok(session) => session,

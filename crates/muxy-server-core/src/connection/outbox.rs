@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 
 use muxy_protocol::{
@@ -18,8 +18,35 @@ struct Attachment {
     resizes: VecDeque<RequestId>,
 }
 
+#[derive(Clone, Default)]
+pub(crate) struct References {
+    pub(crate) owner: Option<muxy_protocol::OperationId>,
+    pub(crate) revision: u64,
+    sessions: HashSet<SessionId>,
+    released: HashSet<SessionId>,
+}
+
+impl References {
+    pub(crate) fn update(
+        &mut self,
+        owner: Option<muxy_protocol::OperationId>,
+        revision: u64,
+        sessions: Vec<SessionId>,
+    ) {
+        let sessions: HashSet<_> = sessions.into_iter().collect();
+        self.released
+            .extend(self.sessions.difference(&sessions).copied());
+        self.released.retain(|session| !sessions.contains(session));
+        self.owner = owner;
+        self.revision = revision;
+        self.sessions = sessions;
+    }
+}
+
 #[derive(Default)]
 struct State {
+    references: References,
+    catalog_watched: bool,
     colors: Option<TerminalColors>,
     control: VecDeque<Message>,
     pending: HashMap<ChannelId, ScreenFrame>,
@@ -30,7 +57,7 @@ struct State {
     closed: bool,
 }
 
-pub(super) struct Outbox {
+pub(crate) struct Outbox {
     state: Mutex<State>,
     ready: Condvar,
     version: Version,
@@ -43,6 +70,51 @@ impl Outbox {
             ready: Condvar::default(),
             version,
         }
+    }
+
+    pub(crate) fn reference_state(&self) -> Option<References> {
+        let state = self.lock();
+        (!state.closed).then(|| state.references.clone())
+    }
+
+    pub(crate) fn set_references(&self, references: References) {
+        self.lock().references = references;
+    }
+
+    pub(crate) fn references(&self, session: SessionId, include_channels: bool) -> bool {
+        let state = self.lock();
+        !state.closed
+            && (state.references.sessions.contains(&session)
+                || (include_channels
+                    && !state.references.released.contains(&session)
+                    && state
+                        .attachments
+                        .values()
+                        .any(|attachment| attachment.handle.info().id == session)))
+    }
+
+    pub(crate) fn detach_session(&self, session: SessionId) {
+        let mut state = self.lock();
+        let channels: Vec<_> = state
+            .attachments
+            .iter()
+            .filter(|(_, attachment)| attachment.handle.info().id == session)
+            .map(|(channel, _)| *channel)
+            .collect();
+        for channel in channels {
+            state.retire(
+                channel,
+                &ServerError::new(ErrorCode::UnknownChannel, "pane was closed"),
+            );
+        }
+        self.ready.notify_one();
+    }
+
+    pub(super) fn watch_catalog(&self) {
+        self.lock().catalog_watched = true;
+    }
+    pub(super) fn catalog_watched(&self) -> bool {
+        self.lock().catalog_watched
     }
 
     pub(super) fn colors(&self) -> Option<TerminalColors> {
@@ -63,6 +135,15 @@ impl Outbox {
         };
         let mut state = self.lock();
         if !state.closed {
+            if let Message::CatalogChanged { revision } = &message
+                && let Some(Message::CatalogChanged { revision: pending }) = state
+                    .control
+                    .iter_mut()
+                    .find(|message| matches!(message, Message::CatalogChanged { .. }))
+            {
+                *pending = (*pending).max(*revision);
+                return;
+            }
             state.control.push_back(message);
             self.ready.notify_one();
         }
@@ -83,10 +164,15 @@ impl Outbox {
                 "connection is closed",
             ));
         }
+        let session = handle.info().id;
+        if state.references.owner.is_some() && state.references.released.contains(&session) {
+            return Err(ServerError::unknown_session(session));
+        }
         if let Some(colors) = state.colors {
             handle.send(SessionCommand::SetColors(colors))?;
         }
         handle.send(command)?;
+        state.references.released.remove(&session);
         state.attachments.insert(
             channel,
             Attachment {

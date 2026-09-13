@@ -41,12 +41,18 @@ macro_rules! id {
 }
 
 id!(ServerId);
-id!(ProjectId);
+pub use muxy_protocol::ProjectId;
 id!(TabId);
 id!(PaneId);
 
 impl ServerId {
     pub const fn local() -> Self {
         Self(Uuid::from_u128(0x9eed_d633_57b5_4359_b76e_762c_6bc2_775c))
+    }
+}
+
+impl PaneId {
+    pub const fn creation_token(self) -> muxy_protocol::OperationId {
+        muxy_protocol::OperationId::from_u128(self.0.as_u128())
     }
 }

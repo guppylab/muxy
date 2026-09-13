@@ -1,6 +1,60 @@
 use super::*;
 
 #[gpui::test]
+#[ignore = "requires a built server and a fresh MUXY_DIR under /tmp/muxy-catalog-"]
+fn quick_terminal_catalog_walkthrough(cx: &mut TestAppContext) {
+    quick_catalog_walkthrough(cx).expect("Quick Terminal catalog walkthrough");
+}
+
+fn quick_catalog_walkthrough(cx: &mut TestAppContext) -> Result {
+    let directory = PathBuf::from(std::env::var("MUXY_DIR")?);
+    assert!(
+        directory
+            .to_string_lossy()
+            .starts_with("/tmp/muxy-catalog-")
+    );
+    let (view, cx) =
+        cx.add_window_view(|window, cx| AppModel::new(Boot::load().expect("boot"), window, cx));
+    wait(cx, &view, |model, _| {
+        model.connection == ConnectionState::Ready && model.catalog.restore.is_none()
+    })?;
+    let before = view.read_with(cx, |model, _| model.state.window().clone());
+    let quick = view.update(cx, |model, cx| {
+        let pane = model.state.ensure_quick_terminal();
+        model.quick.visible = true;
+        model.sync_visible(cx);
+        model.start_attach(pane, Size { cols: 80, rows: 24 }, cx);
+        pane
+    });
+    wait(cx, &view, |model, _| model.pane_session(quick).is_some())?;
+    let session = view
+        .read_with(cx, |model, _| model.pane_session(quick))
+        .ok_or("session")?;
+    let probe = Client::connect(&directory.join("server.sock"))?;
+    let catalog = probe.catalog()?;
+    let membership = probe.project_sessions(catalog.home, None, None)?;
+    assert_eq!(membership.sessions[0].info.id, session);
+    assert_eq!(membership.sessions[0].info.project, catalog.home);
+    view.update(cx, |model, cx| {
+        model.hide_quick_terminal(false, cx);
+        assert_eq!(model.state.window(), &before);
+        model.quick.visible = true;
+        model.sync_visible(cx);
+        model.start_attach(quick, Size { cols: 80, rows: 24 }, cx);
+    });
+    wait(cx, &view, |model, _| !model.pending.contains(&quick))?;
+    assert_eq!(probe.list_sessions()?.len(), 1);
+    view.update(cx, AppModel::close_quick_terminal);
+    wait(cx, &view, |model, _| {
+        model.state.pending_discards().is_empty() && model.state.pending_cancellations().is_empty()
+    })?;
+    assert!(probe.list_sessions()?.is_empty());
+    report(
+        "Quick Terminal belongs to server Home; hide/reattach preserves identity; close cleans session: PASS",
+    )
+}
+
+#[gpui::test]
 fn quick_terminal_uses_home_without_changing_workspace_and_reattaches_after_hide(
     cx: &mut TestAppContext,
 ) {
@@ -8,6 +62,7 @@ fn quick_terminal_uses_home_without_changing_workspace_and_reattaches_after_hide
     let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
     view.update(cx, |model, cx| {
         model.receive((1, Update::Connected(vec![])), cx);
+        acknowledge_catalog(model, cx);
         model.new_tab(cx);
         let window = model.state.window().clone();
         let quick = model.state.ensure_quick_terminal();
@@ -25,7 +80,7 @@ fn quick_terminal_uses_home_without_changing_workspace_and_reattaches_after_hide
         model.sync_visible(cx);
         assert!(!model.grids.contains_key(&quick));
         assert_eq!(model.pane_session(quick), Some(session));
-        assert!(!requests.try_iter().any(|(_, work)| matches!(work, Work::Discard(_))));
+        assert!(!requests.try_iter().any(|(_, work)| matches!(work, Work::Discard(_, _))));
         model.quick.visible = true;
         model.sync_visible(cx);
         model.start_attach(quick, Size { cols: 100, rows: 30 }, cx);
@@ -58,13 +113,14 @@ fn quick_terminal_disable_queues_cleanup_offline_and_preserves_preferences(
         assert!(
             !requests
                 .try_iter()
-                .any(|(_, work)| matches!(work, Work::Discard(_)))
+                .any(|(_, work)| matches!(work, Work::Discard(_, _)))
         );
         model.receive((1, Update::Connected(vec![])), cx);
+        acknowledge_catalog(model, cx);
         assert!(
             requests
                 .try_iter()
-                .any(|(_, work)| matches!(work, Work::Discard(id) if id == session))
+                .any(|(_, work)| matches!(work, Work::Discard(id, _) if id == session))
         );
     });
 }
@@ -77,6 +133,7 @@ fn quick_terminal_exit_discards_only_its_session_and_next_show_gets_new_identity
     let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
     view.update(cx, |model, cx| {
         model.receive((1, Update::Connected(vec![])), cx);
+        acknowledge_catalog(model, cx);
         model.new_tab(cx);
         let window = model.state.window().clone();
         let pane = model.state.ensure_quick_terminal();

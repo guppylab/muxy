@@ -1,7 +1,7 @@
-//! Server-owned sessions, capability execution, settings, and client runtime.
+//! Server-owned projects, sessions, capability execution, settings, and client runtime.
 //!
-//! The server treats directories and session identifiers as raw inputs and
-//! never models app-owned workspaces, projects, tabs, or panes.
+//! Project metadata and explicit session membership are shared; client-owned
+//! workspaces, tabs, panes, and presentation never enter this crate.
 
 mod archive;
 pub mod connection;
@@ -19,3 +19,6 @@ pub use settings::ServerSettings;
 
 mod shell;
 pub use shell::ShellIntegration;
+
+mod catalog;
+pub use catalog::LegacyImport;

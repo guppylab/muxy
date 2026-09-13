@@ -4,6 +4,7 @@ use crate::{ChannelId, Cursor, Modes, Row, ServerPath, SessionId, Size};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SessionInfo {
+    pub project: crate::ProjectId,
     pub id: SessionId,
     pub directory: ServerPath,
 }

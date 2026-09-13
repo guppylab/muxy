@@ -1,7 +1,7 @@
 # Protocol
 
-The app and server talk over a reliable, ordered byte stream. This is
-terminal/session protocol. Exact types, kind numbers, and limits live in the
+Clients and the server talk over a reliable, ordered local byte stream. This
+contract covers projects, terminal sessions, and server capabilities. Exact types, kind numbers, and limits live in the
 protocol and wire crates and their fixtures; this document says what they mean.
 
 ## Versions
@@ -50,6 +50,8 @@ share a supported contract. Any other traffic before hello is fatal.
 | Hello, hello reply, version unsupported | client, server | control |
 | Attach, detach, resize, and their replies | client, server | control |
 | List, create, and end session, and their replies | client, server | control |
+| Project catalog pages, field mutations, deletion, and their replies | client, server | control |
+| Catalog revision invalidation | server | control |
 | Read saved terminal content, discard session and saved content, and their replies | client, server | control |
 | History page and search, and their replies | client, server | control |
 | Set terminal colors and its reply | client, server | control |
@@ -66,7 +68,27 @@ order. Errors about a request, such as a bad path, size, limit, or cursor,
 an unknown session or channel, or a failed spawn, are correlated and leave
 the connection usable. Anything malformed or out of place is fatal: the
 server reports it and closes, and a client that sees it closes. Only the
-server sends errors. Any number of clients may attach to one session.
+server sends errors. Any number of clients may attach to one session. Connected
+clients register
+the sessions used by all their open panes, independently of visible output
+subscriptions. A pane close ends and discards a session only when no other
+connected pane uses it; the server makes that decision atomically and preserves
+it across retries. Disconnecting or quitting a client never ends its sessions.
+
+## Projects and membership
+
+Project descriptors carry stable identity, Home status, Unix directory bytes,
+shared metadata, kind, and parent. Catalog pages are bounded; coalesced revision
+invalidations tell clients when to refetch without losing changes during a fetch.
+Mutations acknowledge durable storage. Each session creation carries an explicit
+project and a durable client operation token; retrying returns the same result,
+including an ended result. Live-session lists remain live-only; project-filtered
+lists distinguish live sessions from retained ended content. Membership and
+lifecycle changes also advance the catalog revision.
+
+This ownership change requires a new beta compatibility identifier. Mixed
+incompatible peers are rejected before requests; startup leaves an incompatible
+running daemon and its sessions intact.
 
 ## Screen
 

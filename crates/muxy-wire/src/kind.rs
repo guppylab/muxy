@@ -19,6 +19,7 @@ pub enum MessageKind {
     Mouse = 12,
     ServerRestarting = 13,
     CellSize = 14,
+    CatalogChanged = 15,
 }
 
 impl MessageKind {
@@ -41,6 +42,7 @@ impl MessageKind {
             12 => Ok(Self::Mouse),
             13 => Ok(Self::ServerRestarting),
             14 => Ok(Self::CellSize),
+            15 => Ok(Self::CatalogChanged),
             _ => Err(WireError::UnknownKind(value)),
         }
     }
@@ -49,6 +51,7 @@ impl MessageKind {
 impl From<&Message> for MessageKind {
     fn from(message: &Message) -> Self {
         match message {
+            Message::CatalogChanged { .. } => Self::CatalogChanged,
             Message::Hello { .. } => Self::Hello,
             Message::Request { .. } => Self::Request,
             Message::FrameAck { .. } => Self::FrameAck,

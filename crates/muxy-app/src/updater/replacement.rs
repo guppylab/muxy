@@ -3,15 +3,7 @@ use std::path::Path;
 use super::Result;
 
 pub(super) fn lock(directory: &Path) -> Result<std::fs::File> {
-    let file = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(directory.join(".muxy-beta-update.lock"))?;
-    file.try_lock()
-        .map_err(|error| format!("Another beta installation is already in progress: {error}"))?;
-    Ok(file)
+    Ok(muxy_client::local::bundle::lock_replacement(directory)?)
 }
 
 pub(super) fn replace_and_restart(
@@ -61,6 +53,7 @@ mod tests {
         let directory = tempfile::tempdir()?;
         let first = lock(directory.path())?;
         assert!(lock(directory.path()).is_err());
+        first.unlock()?;
         drop(first);
         assert!(lock(directory.path()).is_ok());
         Ok(())

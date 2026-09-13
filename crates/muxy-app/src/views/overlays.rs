@@ -11,6 +11,7 @@ use super::{
 use crate::model::AppModel;
 
 pub(crate) enum Overlay {
+    Sessions(super::session_picker::SessionPicker),
     Menu(Menu),
     ProjectEditor(super::project_editor::Editor),
     ProjectColors(super::project_editor::Colors),
@@ -114,6 +115,7 @@ pub(crate) fn layer(model: &AppModel, window: &Window, cx: &mut Context<AppModel
         Some(Overlay::ProjectColors(colors)) => {
             super::project_editor::render_colors(colors, model, window, cx)
         }
+        Some(Overlay::Sessions(picker)) => picker.picker.clone().into_any_element(),
         Some(Overlay::Projects(picker)) => picker.clone().into_any_element(),
         Some(Overlay::Themes { picker, anchor, .. }) => {
             let origin = anchor.map_or(point(px(8.0), viewport.height - px(12.0)), |anchor| {

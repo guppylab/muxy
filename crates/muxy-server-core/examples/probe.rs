@@ -101,11 +101,25 @@ fn probe(path: &Path) -> Result {
         }
         other => return Err(format!("expected sessions, got {other:?}").into()),
     }
+    let project = match request(
+        &mut decoder,
+        &mut encoder,
+        99,
+        RequestBody::ReadCatalog {
+            after: None,
+            revision: None,
+        },
+    )? {
+        ReplyBody::Catalog(page) => page.home,
+        other => return Err(format!("expected catalog, got {other:?}").into()),
+    };
     let info = match request(
         &mut decoder,
         &mut encoder,
         2,
         RequestBody::CreateSession {
+            project,
+            operation: muxy_protocol::OperationId::new(),
             directory: ServerPath(env::current_dir()?.as_os_str().as_bytes().to_vec()),
             size: SIZE,
         },

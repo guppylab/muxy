@@ -12,17 +12,24 @@ pub struct RestorePlan {
 }
 
 pub fn plan(state: &AppState, sessions: &[SessionInfo]) -> RestorePlan {
-    let live: HashSet<_> = sessions.iter().map(|session| session.id).collect();
+    let live: HashSet<_> = sessions
+        .iter()
+        .map(|session| (session.project, session.id))
+        .collect();
     let mut plan = RestorePlan::default();
-    for pane in state
+    for (project, pane) in state
         .projects()
         .iter()
         .filter(|project| project.status() == ProjectStatus::Available)
-        .flat_map(|project| &project.tabs)
-        .flat_map(|tab| &tab.panes)
+        .flat_map(|project| {
+            project
+                .tabs
+                .iter()
+                .flat_map(move |tab| tab.panes.iter().map(move |pane| (project.id, pane)))
+        })
     {
         match pane.content {
-            PaneContent::Terminal { session: Some(id) } if live.contains(&id) => {
+            PaneContent::Terminal { session: Some(id) } if live.contains(&(project, id)) => {
                 plan.attach.push((pane.id, id));
             }
             PaneContent::Terminal { session: Some(id) } => plan.retain.push((pane.id, id)),

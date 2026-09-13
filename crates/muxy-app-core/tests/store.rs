@@ -74,7 +74,7 @@ fn saved_json_is_readable_and_round_trips_every_field() -> TestResult {
     let state = populated()?;
     store::save(fixture.path(), &state)?;
     let bytes = fs::read_to_string(fixture.path())?;
-    assert!(bytes.contains("\n  \"version\": 1,"));
+    assert!(bytes.contains("\n  \"version\": 2,"));
     assert!(bytes.ends_with('\n'));
     assert_eq!(
         serde_json::from_str::<Value>(&bytes)?,
@@ -166,7 +166,7 @@ fn malformed_domain_state_is_rejected_with_the_path() -> TestResult {
     let fixture = Fixture::new()?;
     let valid = serde_json::to_value(populated()?)?;
     let mut invalid_states = Vec::new();
-    for version in [0, 2] {
+    for version in [0, 3] {
         let mut value = valid.clone();
         value["version"] = json!(version);
         invalid_states.push(value);

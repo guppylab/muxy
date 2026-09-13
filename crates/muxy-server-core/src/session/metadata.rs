@@ -1,6 +1,12 @@
-use libproc::net_info::VInfoStat;
-use libproc::proc_pid::{self, PIDInfo, PidInfoFlavor};
-use libproc::processes::{self, ProcFilter};
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "linux")]
+use linux::{foreground_member, process_directory};
+#[cfg(target_os = "macos")]
+use macos::{foreground_member, process_directory};
+
 use muxy_protocol::{ForegroundProcess, MetadataEvent, ServerPath};
 use muxy_pty::Pty;
 use muxy_terminal::TerminalEvent;
@@ -69,26 +75,6 @@ impl Metadata {
     }
 }
 
-fn foreground_member(group: u32) -> Option<(i32, String)> {
-    let named = |pid| {
-        let pid = i32::try_from(pid).ok()?;
-        proc_pid::name(pid).ok().map(|name| (pid, name))
-    };
-    if let Some(leader) = named(group) {
-        return Some(leader);
-    }
-    let mut members = processes::pids_by_type(ProcFilter::ByProgramGroup { pgrpid: group }).ok()?;
-    members.sort_unstable();
-    members.into_iter().find_map(named)
-}
-
-fn process_directory(pid: i32) -> Option<ServerPath> {
-    let info = proc_pid::pidinfo::<VnodePathInfo>(pid, 0).ok()?;
-    let path = &info.current.path;
-    let length = path.iter().position(|byte| *byte == 0)?;
-    (path.first() == Some(&b'/')).then(|| ServerPath(path[..length].to_vec()))
-}
-
 fn terminal_directory(value: &str) -> Option<ServerPath> {
     if value.starts_with('/') {
         return (!value.contains('\0')).then(|| ServerPath(value.as_bytes().to_vec()));
@@ -112,32 +98,6 @@ fn terminal_directory(value: &str) -> Option<ServerPath> {
     Some(ServerPath(path))
 }
 
-#[repr(C)]
-struct VnodeInfo {
-    stat: VInfoStat,
-    kind: i32,
-    padding: i32,
-    filesystem: [i32; 2],
-}
-
-#[repr(C)]
-struct VnodePath {
-    info: VnodeInfo,
-    path: [u8; 1024],
-}
-
-#[repr(C)]
-struct VnodePathInfo {
-    current: VnodePath,
-    root: VnodePath,
-}
-
-impl PIDInfo for VnodePathInfo {
-    fn flavor() -> PidInfoFlavor {
-        PidInfoFlavor::VNodePathInfo
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -150,8 +110,6 @@ mod tests {
             process_directory(i32::try_from(std::process::id())?),
             Some(ServerPath(expected.as_os_str().as_bytes().to_vec()))
         );
-        assert_eq!(size_of::<VnodePathInfo>(), 2352);
-        assert_eq!(std::mem::offset_of!(VnodePath, path), 152);
         Ok(())
     }
 

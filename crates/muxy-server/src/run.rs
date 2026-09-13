@@ -95,17 +95,8 @@ pub(crate) fn run(args: &Args) -> io::Result<()> {
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .join("sessions");
-    let hooks = muxy_server_core::ShellIntegration::install(
-        &directory.with_file_name("shell-integration"),
-    )?;
-    let settings_path = args.settings.clone();
-    let registry = Arc::new(
-        Registry::persistent(settings, sender, &directory)?
-            .with_shell_integration(hooks)
-            .with_settings_persistence(move |settings| {
-                settings_file::save(&settings_path, settings)
-            }),
-    );
+    let legacy = crate::legacy::read(directory.parent().unwrap_or_else(|| Path::new(".")))?;
+    let registry = bootstrap_registry(args, settings, sender, &directory, legacy)?;
     let stopping = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let requested_stop = Arc::clone(&stopping);
     let requested_listener = Arc::clone(&socket.listener);
@@ -173,6 +164,26 @@ pub(crate) fn run(args: &Args) -> io::Result<()> {
         .and(broadcast_result)
         .and(worker_result)
         .and(signal_result)
+}
+
+fn bootstrap_registry(
+    args: &Args,
+    settings: muxy_server_core::ServerSettings,
+    sender: Sender<ServerEvent>,
+    directory: &Path,
+    legacy: muxy_server_core::LegacyImport,
+) -> io::Result<Arc<Registry>> {
+    let hooks = muxy_server_core::ShellIntegration::install(
+        &directory.with_file_name("shell-integration"),
+    )?;
+    let settings_path = args.settings.clone();
+    Ok(Arc::new(
+        Registry::persistent_with_import(settings, sender, directory, legacy)?
+            .with_shell_integration(hooks)
+            .with_settings_persistence(move |settings| {
+                settings_file::save(&settings_path, settings)
+            }),
+    ))
 }
 
 fn accept(
@@ -277,11 +288,12 @@ fn lock(clients: &Clients) -> MutexGuard<'_, BTreeMap<u64, Client>> {
 
 fn validate_socket(path: &Path) -> io::Result<()> {
     let bytes = path.as_os_str().as_encoded_bytes().len();
-    if bytes >= 104 {
+    let limit = if cfg!(target_os = "linux") { 108 } else { 104 };
+    if bytes >= limit {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!(
-                "socket path is {bytes} bytes; macOS limit is 104 bytes including the terminating NUL (maximum path: 103 bytes): {}",
+                "socket path is {bytes} bytes; platform limit is {limit} bytes including the terminating NUL: {}",
                 path.display()
             ),
         ));
@@ -295,8 +307,9 @@ mod tests {
 
     #[test]
     fn socket_length_counts_bytes_and_reserves_the_terminator() {
-        assert!(validate_socket(Path::new(&"a".repeat(103))).is_ok());
-        assert!(validate_socket(Path::new(&"a".repeat(104))).is_err());
-        assert!(validate_socket(Path::new(&"é".repeat(52))).is_err());
+        let limit = if cfg!(target_os = "linux") { 108 } else { 104 };
+        assert!(validate_socket(Path::new(&"a".repeat(limit - 1))).is_ok());
+        assert!(validate_socket(Path::new(&"a".repeat(limit))).is_err());
+        assert!(validate_socket(Path::new(&"é".repeat(limit / 2))).is_err());
     }
 }

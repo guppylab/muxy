@@ -74,7 +74,7 @@ fn exited_content_is_read_without_attachment_and_discard_is_idempotent() -> Test
                 break;
             }
             ClientEvent::Frame { channel, frame } => client.ack(channel, frame.seq)?,
-            ClientEvent::Metadata { .. } => {}
+            ClientEvent::Metadata { .. } | ClientEvent::CatalogChanged { .. } => {}
             ClientEvent::ServerRestarting | ClientEvent::Disconnected => {
                 return Err("client disconnected".into());
             }
@@ -133,17 +133,17 @@ fn saved_history_pages_remain_readable_after_the_server_reopens_its_archive() ->
         let (client, server) = UnixStream::pair()?;
         let worker = thread::spawn(move || connection::serve(Box::new(server), owner, events));
         let client = Client::from_stream(Box::new(client))?;
+        let events = client.events().ok_or("events already taken")?;
         if !restart {
             let size = Size { cols: 80, rows: 24 };
             let session = client.create_session(&root, size)?;
             saved = Some(session.id);
             let attachment = client.attach(session.id, size)?;
-            let events = client.events().ok_or("events already taken")?;
             client.send_input(attachment.channel, b"stty -echo; PS1=''; printf '\\033[2J\\033[H\\033[3J'; seq 1 5000; printf ARCHIVE_READY; exit 7\n")?;
             loop {
                 match events.recv_timeout(Duration::from_secs(5))? {
                     ClientEvent::Frame { channel, frame } => client.ack(channel, frame.seq)?,
-                    ClientEvent::Metadata { .. } => {}
+                    ClientEvent::Metadata { .. } | ClientEvent::CatalogChanged { .. } => {}
                     ClientEvent::SessionEnded {
                         session: id,
                         reason,

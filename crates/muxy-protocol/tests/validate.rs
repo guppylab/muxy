@@ -146,6 +146,8 @@ fn every_request_with_a_size_validates_it() {
     ] {
         for body in [
             RequestBody::CreateSession {
+                project: muxy_protocol::ProjectId::from_u128(1),
+                operation: muxy_protocol::OperationId::from_u128(2),
                 directory: directory(),
                 size,
             },
@@ -170,6 +172,7 @@ fn every_message_with_a_path_validates_it() {
         (ServerPath(Vec::new()), Err(ErrorCode::BadPath)),
     ] {
         let info = SessionInfo {
+            project: muxy_protocol::ProjectId::from_u128(1),
             id: session_id(),
             directory: directory.clone(),
         };
@@ -177,12 +180,15 @@ fn every_message_with_a_path_validates_it() {
         snapshot.directory = directory.clone();
         for message in [
             request(RequestBody::CreateSession {
+                project: muxy_protocol::ProjectId::from_u128(1),
+                operation: muxy_protocol::OperationId::from_u128(2),
                 directory: directory.clone(),
                 size: snapshot.size,
             }),
             reply(ReplyBody::SessionCreated(info.clone())),
             reply(ReplyBody::Sessions(vec![
                 SessionInfo {
+                    project: muxy_protocol::ProjectId::from_u128(1),
                     id: session_id(),
                     directory: self::directory(),
                 },
@@ -286,6 +292,40 @@ fn samples_cover_every_message_variant_once_and_use_the_right_channel() {
     let mut seen = BTreeSet::new();
     for message in Message::samples() {
         let (name, channel) = match &message {
+            Message::Request {
+                body: RequestBody::ReadCatalog { .. },
+                ..
+            } => ("ReadCatalog", ChannelKind::Control),
+            Message::Request {
+                body: RequestBody::MutateProject(_),
+                ..
+            } => ("MutateProject", ChannelKind::Control),
+            Message::Request {
+                body: RequestBody::ListProjectSessions { .. },
+                ..
+            } => ("ListProjectSessions", ChannelKind::Control),
+            Message::Request {
+                body: RequestBody::CancelCreation(_),
+                ..
+            } => ("CancelCreation", ChannelKind::Control),
+            Message::Reply {
+                body: ReplyBody::Catalog(_),
+                ..
+            } => ("Catalog", ChannelKind::Control),
+            Message::Reply {
+                body: ReplyBody::ProjectMutated { .. },
+                ..
+            } => ("ProjectMutated", ChannelKind::Control),
+            Message::Reply {
+                body: ReplyBody::ProjectSessions(_),
+                ..
+            } => ("ProjectSessions", ChannelKind::Control),
+            Message::Reply {
+                body: ReplyBody::CreationCancelled,
+                ..
+            } => ("CreationCancelled", ChannelKind::Control),
+
+            Message::CatalogChanged { .. } => ("CatalogChanged", ChannelKind::Control),
             Message::Request {
                 body: RequestBody::StopServerIfIdle,
                 ..
@@ -395,6 +435,15 @@ fn samples_cover_every_message_variant_once_and_use_the_right_channel() {
     assert_eq!(
         seen,
         BTreeSet::from([
+            "CatalogChanged",
+            "ReadCatalog",
+            "MutateProject",
+            "ListProjectSessions",
+            "CancelCreation",
+            "Catalog",
+            "ProjectMutated",
+            "ProjectSessions",
+            "CreationCancelled",
             "CellSize",
             "ReadServerSettings",
             "WriteServerSettings",
