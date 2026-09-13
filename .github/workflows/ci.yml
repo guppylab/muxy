@@ -5,15 +5,6 @@ on:
     branches: [main]
   pull_request:
   workflow_call:
-    inputs:
-      release:
-        description: Linux checks run in the release build jobs
-        type: boolean
-        default: false
-
-concurrency:
-  group: ${{ github.workflow }}-ci-${{ github.ref }}
-  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -54,7 +45,6 @@ jobs:
           RUSTDOCFLAGS: -D warnings
 
   headless:
-    if: ${{ !inputs.release }}
     strategy:
       fail-fast: false
       matrix:
@@ -83,11 +73,12 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: headless-${{ matrix.target }}
-          path: target/headless/
+          path: |
+            target/release/muxy
+            target/release/muxy-server
           if-no-files-found: error
 
   headless-newer:
-    if: ${{ !inputs.release }}
     needs: headless
     strategy:
       fail-fast: false
@@ -101,7 +92,18 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y zsh fish binutils vim-tiny less
+      - run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config zsh fish binutils vim-tiny less
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.92.0
+          components: rustfmt, clippy
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: headless-${{ matrix.target }}-newer-baseline
       - uses: actions/download-artifact@v4
         with:
           name: headless-${{ matrix.target }}

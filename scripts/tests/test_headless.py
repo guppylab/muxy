@@ -7,12 +7,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "scripts"))
-
-import runtime_tests
 
 
 def module(name):
@@ -27,62 +23,6 @@ AUDIT = module("audit-linux")
 
 
 class HeadlessTests(unittest.TestCase):
-    def test_newer_userspace_verification_never_invokes_build_tools(self):
-        with patch.object(sys, "argv", ["check-headless.py", "--target", "aarch64-unknown-linux-gnu",
-                                       "--runtime-binary", "/tmp/floor-runtime/muxy"]), \
-             patch.object(HEADLESS.platform, "system", return_value="Linux"), \
-             patch.object(HEADLESS.platform, "machine", return_value="aarch64"), \
-             patch.object(HEADLESS.subprocess, "check_output") as build_tool, \
-             patch.object(HEADLESS, "verify_runtime") as verify:
-            HEADLESS.main()
-        build_tool.assert_not_called()
-        verify.assert_called_once_with(Path("/tmp/floor-runtime/muxy").resolve(), "aarch64-unknown-linux-gnu")
-
-    def test_runtime_test_export_requires_all_suites_and_copies_exact_executables(self):
-        with tempfile.TemporaryDirectory(prefix="runtime tests ") as temporary:
-            root = Path(temporary)
-            artifacts = [{"reason": "compiler-artifact", "executable": "/unused/bin",
-                          "target": {"name": "muxy", "kind": ["bin"]}}]
-            for name in runtime_tests.SUITES:
-                source = root / name
-                source.write_text(name)
-                artifacts.append({"reason": "compiler-artifact", "executable": str(source),
-                                  "target": {"name": name, "kind": ["test"]}})
-            destination = root / "exported"
-            with patch.object(runtime_tests.subprocess, "check_output",
-                              return_value="\n".join(map(json.dumps, artifacts[:-1]))):
-                with self.assertRaisesRegex(ValueError, "lifecycle"):
-                    runtime_tests.build(destination)
-            self.assertFalse(destination.exists())
-            with patch.object(runtime_tests.subprocess, "check_output",
-                              return_value="\n".join(map(json.dumps, artifacts))):
-                runtime_tests.build(destination, "aarch64-unknown-linux-gnu")
-            self.assertEqual(sorted(p.name for p in destination.iterdir()), sorted(runtime_tests.SUITES))
-            for name in runtime_tests.SUITES:
-                self.assertEqual((destination / name).read_text(), name)
-
-    def test_runtime_tests_use_installed_pair_without_tools_and_propagate_failure(self):
-        with tempfile.TemporaryDirectory(prefix="runtime tests ") as temporary:
-            root = Path(temporary)
-            binary = (root / "installed pair/muxy").resolve()
-            for name in runtime_tests.SUITES:
-                (root / name).write_text(f"#!{sys.executable}\n" +
-                    "import json, os, sys\nfrom pathlib import Path\n" +
-                    "with open(os.environ['TEST_LOG'], 'a') as log:\n" +
-                    "    log.write(json.dumps([Path(sys.argv[0]).name, os.environ['MUXY_TEST_RUNTIME'], " +
-                    "os.environ['MUXY_TEST_SERVER'], os.environ['MUXY_TEST_SERVER_PROFILE']]) + '\\n')\n" +
-                    "sys.exit(7 if os.environ.get('FAIL_SUITE') == Path(sys.argv[0]).name else 0)\n")
-            log = root / "log"
-            env = {"PATH": str(root / "no tools"), "TEST_LOG": str(log)}
-            runtime_tests.run(root, binary, profile="beta", env=env)
-            self.assertEqual([json.loads(line) for line in log.read_text().splitlines()],
-                [[name, str(binary), str(binary.with_name("muxy-server")), "beta"] for name in runtime_tests.SUITES])
-            log.unlink()
-            with self.assertRaises(subprocess.CalledProcessError) as failure:
-                runtime_tests.run(root, binary, profile="beta", env={**env, "FAIL_SUITE": "commands"})
-            self.assertEqual(failure.exception.returncode, 7)
-            self.assertEqual(len(log.read_text().splitlines()), 1)
-
     def test_zig_build_uses_baseline_cpu_and_preserves_other_arguments(self):
         with tempfile.TemporaryDirectory(prefix="zig test ") as temporary:
             zig = Path(temporary) / "real zig"

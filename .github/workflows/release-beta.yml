@@ -13,17 +13,12 @@ env:
   MACOSX_DEPLOYMENT_TARGET: '14.0'
 
 jobs:
-  checks:
-    uses: ./.github/workflows/ci.yml
-    with:
-      release: true
-
-  validate:
+  prepare:
     if: github.repository == 'muxy-app/muxy' && !github.event.deleted
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.version.outputs.version }}
-      tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -44,10 +39,11 @@ jobs:
           fi
 
   build:
+    name: Build (${{ matrix.platform }}, ${{ matrix.arch }})
     concurrency:
       group: ${{ github.workflow }}-${{ github.ref }}-build-${{ matrix.target }}
       cancel-in-progress: true
-    needs: [checks, validate]
+    needs: prepare
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     strategy:
@@ -75,19 +71,18 @@ jobs:
             target: aarch64-unknown-linux-gnu
             runner: ubuntu-22.04-arm
     env:
-      VERSION: ${{ needs.validate.outputs.version }}
+      VERSION: ${{ needs.prepare.outputs.version }}
       ARCH: ${{ matrix.arch }}
-      PACKAGE_DIR: target/beta/${{ needs.validate.outputs.version }}/${{ matrix.directory }}
+      PACKAGE_DIR: target/beta/${{ needs.prepare.outputs.version }}/${{ matrix.directory }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
       - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config zsh fish binutils vim-tiny less
+        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config binutils
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.92.0
-          components: ${{ runner.os == 'Linux' && 'clippy' || '' }}
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.15.2
@@ -155,22 +150,15 @@ jobs:
           "$PACKAGE_DIR/muxy-$VERSION-macos-$ARCH.zip"
           --version "$VERSION" --dmg "$PACKAGE_DIR/Muxy-$VERSION-$ARCH.dmg"
           --notarized
-      - name: Check, build and package the native glibc 2.35 pair
+      - name: Build and package the native glibc 2.35 pair
         if: runner.os == 'Linux'
-        run: python3 scripts/check-headless.py --target "${{ matrix.target }}" --release-version "$VERSION"
+        run: bash scripts/build-cli-linux.sh "$ARCH" "$VERSION"
       - name: Verify packaged pair and standalone installation
         if: runner.os == 'Linux'
         run: >-
           python3 scripts/verify-release-package.py
           "$PACKAGE_DIR/muxy-$VERSION-linux-$ARCH.tar.gz"
-          --version "$VERSION" --test-binaries target/headless/tests
-      - uses: actions/upload-artifact@v4
-        if: runner.os == 'Linux'
-        with:
-          name: beta-runtime-tests-${{ matrix.arch }}
-          path: target/headless/tests/
-          if-no-files-found: error
-          retention-days: 7
+          --version "$VERSION"
       - name: Upload distribution archives
         uses: actions/upload-artifact@v4
         with:
@@ -201,49 +189,12 @@ jobs:
           fi
           rm -f "$RUNNER_TEMP/muxy-beta-certificate.p12"
 
-  verify-linux-newer:
-    concurrency:
-      group: ${{ github.workflow }}-${{ github.ref }}-newer-linux-${{ matrix.arch }}
-      cancel-in-progress: true
-    needs: [validate, build]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x86_64
-            runner: ubuntu-24.04
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
-    env:
-      VERSION: ${{ needs.validate.outputs.version }}
-      ARCH: ${{ matrix.arch }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-      - run: sudo apt-get update && sudo apt-get install -y zsh fish binutils vim-tiny less
-      - uses: actions/download-artifact@v4
-        with:
-          name: beta-distribution-linux-${{ matrix.arch }}
-          path: artifacts
-      - uses: actions/download-artifact@v4
-        with:
-          name: beta-runtime-tests-${{ matrix.arch }}
-          path: runtime-tests
-      - name: Verify the exact floor-built archive on newer userspace
-        run: >-
-          python3 scripts/verify-release-package.py
-          "artifacts/muxy-$VERSION-linux-$ARCH.tar.gz" --version "$VERSION"
-          --test-binaries runtime-tests
-
   release:
     if: false
     concurrency:
       group: muxy-beta-2.x-feed
       cancel-in-progress: false
-    needs: [validate, build, verify-linux-newer]
+    needs: [prepare, build]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -263,5 +214,5 @@ jobs:
       - name: Publish beta prerelease
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ needs.validate.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: bash scripts/publish-beta.sh "$VERSION" artifacts

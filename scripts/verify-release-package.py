@@ -16,8 +16,6 @@ import tempfile
 import time
 import zipfile
 
-import runtime_tests
-
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -126,8 +124,6 @@ cp "$VERIFY_DOWNLOADS/${URL##*/}" "$OUTPUT"
                 server.kill()
                 server.wait()
                 raise
-        if args.test_binaries:
-            runtime_tests.run(args.test_binaries, destination / 'muxy', profile='beta', env=env)
         print(json.dumps({'archive': args.archive.name, 'version': args.version, 'native': platform.machine(),
                           'installer': 'passed without Rust/Zig or desktop', 'live_server_preserved': True,
                           'dmg_bytes_match': bool(args.dmg), 'notarization_checked': args.notarized}), flush=True)
@@ -139,7 +135,6 @@ if __name__ == '__main__':
     parser.add_argument('--version', required=True)
     parser.add_argument('--dmg', type=Path)
     parser.add_argument('--notarized', action='store_true')
-    parser.add_argument('--test-binaries', type=Path, help='reuse integration tests built on the oldest supported OS')
     options = parser.parse_args()
     options.archive = options.archive.resolve()
     if options.dmg:

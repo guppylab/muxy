@@ -62,17 +62,9 @@ class LinuxReleaseTests(unittest.TestCase):
         self.log = self.root / 'tools.jsonl'
         self.env = {**os.environ, 'PATH': str(tools) + os.pathsep + os.environ['PATH'], 'TOOL_LOG': str(self.log), 'COPYFILE_DISABLE': '1'}
 
-    def build(self, arch='arm64', no_build=False, **overrides):
-        return subprocess.run(['bash', str(self.root / 'scripts/build-cli-linux.sh'), arch, VERSION,
-                               *(['--no-build'] if no_build else [])],
+    def build(self, arch='arm64', **overrides):
+        return subprocess.run(['bash', str(self.root / 'scripts/build-cli-linux.sh'), arch, VERSION],
                               env={**self.env, 'TEST_ARCH': arch, **overrides}, capture_output=True, text=True)
-
-    def test_prebuilt_pair_is_packaged_without_cleaning_or_rebuilding(self):
-        result = self.build(no_build=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        calls = [json.loads(line) for line in self.log.read_text().splitlines()]
-        self.assertFalse(any(call[0] in ('cargo', 'zig') for call in calls))
-        self.assertTrue((self.root / f'target/beta/{VERSION}/linux-arm64/muxy-{VERSION}-linux-arm64.tar.gz').is_file())
 
     def test_both_native_archives_contain_audited_pair_and_license_with_symbols(self):
         for arch in ('arm64', 'x86_64'):
