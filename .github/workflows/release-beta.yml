@@ -51,25 +51,10 @@ jobs:
       matrix:
         include:
           - platform: macos
-            directory: arm64
-            arch: arm64
-            target: aarch64-apple-darwin
-            runner: macos-15
-          - platform: macos
             directory: x86_64
             arch: x86_64
             target: x86_64-apple-darwin
             runner: macos-15-intel
-          - platform: linux
-            directory: linux-x86_64
-            arch: x86_64
-            target: x86_64-unknown-linux-gnu
-            runner: ubuntu-22.04
-          - platform: linux
-            directory: linux-arm64
-            arch: arm64
-            target: aarch64-unknown-linux-gnu
-            runner: ubuntu-22.04-arm
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
       ARCH: ${{ matrix.arch }}
@@ -91,7 +76,9 @@ jobs:
           cache-on-failure: true
           key: beta-${{ matrix.target }}-baseline
       - name: Stamp the build version without committing a bump
-        run: python3 scripts/beta_release.py stamp "$VERSION"
+        run: |
+          rm -rf target/beta
+          python3 scripts/beta_release.py stamp "$VERSION"
       - name: Import signing certificate
         if: runner.os == 'macOS'
         env:
@@ -180,6 +167,9 @@ jobs:
             ${{ env.PACKAGE_DIR }}/*-audit.txt
           if-no-files-found: error
           retention-days: 30
+      - name: Keep packaged output out of the build cache
+        if: always()
+        run: rm -rf target/beta
       - name: Remove signing keychain
         if: always() && runner.os == 'macOS'
         run: |
