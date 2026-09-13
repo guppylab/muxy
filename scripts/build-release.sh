@@ -42,6 +42,9 @@ export MACOSX_DEPLOYMENT_TARGET=14.0
 export LIBGHOSTTY_VT_SYS_OPTIMIZE=ReleaseFast
 export CARGO_TARGET_DIR="$ROOT/target"
 export CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=packed
+MUXY_ZIG="$(command -v zig)"
+export MUXY_ZIG
+export PATH="$ROOT/scripts/zig:$PATH"
 OUTPUT_DIR="$CARGO_TARGET_DIR/beta/$VERSION/$ARCH"
 if [[ -e "$OUTPUT_DIR" ]]; then
     echo "Error: output already exists: $OUTPUT_DIR" >&2
@@ -49,8 +52,9 @@ if [[ -e "$OUTPUT_DIR" ]]; then
 fi
 
 cd "$ROOT"
-echo "==> Building app and server for $TARGET"
-cargo build --locked --release --target "$TARGET" -p muxy-app -p muxy-server
+echo "==> Building app, CLI and server for $TARGET"
+cargo clean -p libghostty-vt-sys
+cargo build --locked --release --target "$TARGET" -p muxy-app -p muxy-cli -p muxy-server
 BIN_DIR="$CARGO_TARGET_DIR/$TARGET/release"
 
 mkdir -p "$(dirname "$OUTPUT_DIR")"
@@ -59,7 +63,7 @@ trap 'rm -rf "$STAGING"' EXIT
 APP="$STAGING/dmg/Muxy Beta.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$STAGING/symbols" "$STAGING/artifacts"
 
-for BINARY in muxy-app muxy-server; do
+for BINARY in muxy-app muxy muxy-server; do
     install -m 755 "$BIN_DIR/$BINARY" "$APP/Contents/MacOS/$BINARY"
     EXECUTABLE="$APP/Contents/MacOS/$BINARY"
     if [[ "$(lipo -archs "$EXECUTABLE")" != "$ARCH" ]]; then
@@ -67,13 +71,13 @@ for BINARY in muxy-app muxy-server; do
         exit 1
     fi
     # A release must not depend on Homebrew or Cargo build-directory dylibs.
-    otool -L "$EXECUTABLE" > "$STAGING/dependencies.txt"
+    otool -L "$EXECUTABLE" > "$STAGING/artifacts/$BINARY-dependencies.txt"
     while IFS= read -r LIBRARY; do
         case "$LIBRARY" in
             /System/Library/*|/usr/lib/*) ;;
             *) echo "Error: unbundled dependency in $BINARY: $LIBRARY" >&2; exit 1 ;;
         esac
-    done < <(tail -n +2 "$STAGING/dependencies.txt" | awk '{print $1}')
+    done < <(tail -n +2 "$STAGING/artifacts/$BINARY-dependencies.txt" | awk '{print $1}')
     ditto "$BIN_DIR/$BINARY.dSYM" "$STAGING/symbols/$BINARY.dSYM"
     strip -Sx "$EXECUTABLE"
 done
@@ -101,13 +105,21 @@ if [[ "$SIGN_IDENTITY" == - ]]; then
 else
     SIGN_ARGS+=(--options runtime --timestamp)
 fi
-# Sign the server and app executable before sealing the containing bundle.
-for BINARY in muxy-server muxy-app; do
+# Sign every executable before sealing the bundle.
+for BINARY in muxy muxy-server muxy-app; do
     codesign "${SIGN_ARGS[@]}" "$APP/Contents/MacOS/$BINARY"
 done
 codesign "${SIGN_ARGS[@]}" "$APP"
 codesign --verify --deep --strict --verbose=2 "$APP"
-python3 "$ROOT/scripts/beta_release.py" check-build "$VERSION" "$APP/Contents/MacOS/muxy-server"
+for BINARY in muxy muxy-server; do
+    python3 "$ROOT/scripts/beta_release.py" check-build "$VERSION" "$APP/Contents/MacOS/$BINARY"
+done
+
+# Copy the sealed executables without stripping or signing them again.
+mkdir "$STAGING/cli"
+cp "$APP/Contents/MacOS/muxy" "$APP/Contents/MacOS/muxy-server" "$ROOT/LICENSE" "$STAGING/cli/"
+CLI_ARCHIVE="$STAGING/artifacts/muxy-${VERSION}-macos-${ARCH}.zip"
+(cd "$STAGING/cli" && zip -X "$CLI_ARCHIVE" muxy muxy-server LICENSE)
 
 ln -s /Applications "$STAGING/dmg/Applications"
 DMG="$STAGING/artifacts/Muxy-${VERSION}-${ARCH}.dmg"

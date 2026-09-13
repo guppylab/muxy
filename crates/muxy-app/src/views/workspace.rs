@@ -18,6 +18,7 @@ actions!(
     [
         OpenSettings,
         CheckForUpdates,
+        InstallCommandLineTool,
         NewTab,
         NewHomeTab,
         CloseTab,
@@ -128,6 +129,7 @@ fn workspace_bindings(keymap: &impl muxy_core::shortcuts::ShortcutSettings) -> V
     registry.register(ShortcutId::ShowAll, &ShowAll);
     registry.register(ShortcutId::Zoom, &Zoom);
     registry.register(ShortcutId::OpenConfiguration, &OpenConfiguration);
+    registry.register(ShortcutId::InstallCommandLineTool, &InstallCommandLineTool);
     registry.into_bindings()
 }
 
@@ -235,6 +237,9 @@ fn action_handlers(cx: &mut Context<AppModel>) -> gpui::Div {
         )
         .on_action(cx.listener(|model, _: &FocusPaneDown, _, cx| {
             model.focus_direction(Direction::Down, cx);
+        }))
+        .on_action(cx.listener(|model, _: &InstallCommandLineTool, _, cx| {
+            model.install_command_line(cx);
         }))
         .on_action(cx.listener(|model, _: &CheckForUpdates, _, cx| {
             model.check_for_updates(true, cx);

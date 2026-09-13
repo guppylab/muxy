@@ -13,6 +13,9 @@ pub enum ChannelKind {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Message {
+    CatalogChanged {
+        revision: u64,
+    },
     Hello {
         compatibility: u64,
         versions: Vec<Version>,
@@ -50,7 +53,8 @@ pub enum Message {
 impl Message {
     pub fn channel_kind(&self) -> ChannelKind {
         match self {
-            Self::Hello { .. }
+            Self::CatalogChanged { .. }
+            | Self::Hello { .. }
             | Self::Request { .. }
             | Self::FrameAck { .. }
             | Self::HelloReply { .. }

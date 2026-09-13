@@ -22,7 +22,7 @@ impl Installation {
     pub(crate) fn detect() -> Result<Self> {
         build_number(env!("CARGO_PKG_VERSION"))
             .ok_or("Automatic updates require an installed release of Muxy Beta")?;
-        let executable = std::env::current_exe()?.canonicalize()?;
+        let executable = muxy_core::executable::current_path()?;
         let bundle = executable
             .parent()
             .and_then(Path::parent)
@@ -188,6 +188,8 @@ impl Installation {
                     .as_u64()
                     .is_some_and(|instance| instance != server.instance)
                 && path.join("previous.app").is_dir()
+                && let Some(_lease) =
+                    muxy_client::local::bundle::lock_unused(&path.join("previous.app"))?
             {
                 std::fs::remove_dir_all(path)?;
             }
@@ -232,10 +234,15 @@ impl Installation {
         } else {
             "x86_64"
         };
-        for binary in ["muxy-app", "muxy-server"] {
+        for binary in ["muxy-app", "muxy", "muxy-server"] {
             run(Command::new("/usr/bin/lipo")
                 .arg(app.join("Contents/MacOS").join(binary))
                 .args(["-verify_arch", arch]))?;
+        }
+        let server = crate::server::read_build_info(&app.join("Contents/MacOS/muxy-server"))?;
+        let client = crate::server::read_build_info(&app.join("Contents/MacOS/muxy"))?;
+        if client != server || server.version != version {
+            return Err("The bundled client and server do not match the release".into());
         }
         Ok(())
     }
@@ -438,7 +445,7 @@ mod tests {
 <key>CFBundlePackageType</key><string>APPL</string>
 </dict></plist>"#,
         )?;
-        for binary in ["muxy-app", "muxy-server"] {
+        for binary in ["muxy-app", "muxy", "muxy-server"] {
             let path = binaries.join(binary);
             std::fs::copy("/usr/bin/true", &path)?;
             run(Command::new("/usr/bin/codesign")
@@ -455,7 +462,7 @@ mod tests {
             team: "TESTTEAM00".into(),
         };
         assert!(installation.verify_signature(&app, true).is_err());
-        std::fs::write(binaries.join("muxy-server"), b"changed helper")?;
+        std::fs::write(binaries.join("muxy"), b"changed helper")?;
         assert!(verify_code(&app, "identifier \"com.muxy-beta.app\"").is_err());
         Ok(())
     }

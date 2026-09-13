@@ -30,6 +30,7 @@ pub(crate) fn register_shortcuts(registry: &mut muxy_ui::shortcuts::Registry<'_>
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Command {
     Dismiss,
+    ExistingSessions(muxy_app_core::ProjectId),
     TerminalCopy(muxy_app_core::PaneId),
     TerminalPaste(muxy_app_core::PaneId),
     TerminalSelectAll(muxy_app_core::PaneId),
@@ -140,6 +141,10 @@ impl AppModel {
         self.dismiss_overlay(cx);
         match command {
             Command::Dismiss => {}
+            Command::ExistingSessions(project) => {
+                self.open_session_picker(project, window, cx);
+                return;
+            }
             Command::TerminalCopy(id)
             | Command::TerminalPaste(id)
             | Command::TerminalSelectAll(id)

@@ -135,6 +135,17 @@ fn end_kills_a_running_program() -> TestResult {
     let (events, _) = attach(&handle, 1, SIZE)?;
 
     handle.send(SessionCommand::Input(b"cat\n".to_vec()))?;
+    let deadline = Instant::now() + TIMEOUT;
+    loop {
+        match events.recv_timeout(deadline.saturating_duration_since(Instant::now()))? {
+            AttachmentEvent::Metadata(muxy_protocol::MetadataEvent::ForegroundProcess {
+                name,
+                is_shell: false,
+            }) if name == "cat" => break,
+            AttachmentEvent::Frame(_) | AttachmentEvent::Metadata(_) => {}
+            other => return Err(format!("waiting for cat: {other:?}").into()),
+        }
+    }
     handle.send(SessionCommand::Input(b"ping\n".to_vec()))?;
     wait_for_text(&events, "ping\nping")?;
 
@@ -278,12 +289,19 @@ fn wait_for_text(
     events: &Receiver<AttachmentEvent>,
     needle: &str,
 ) -> Result<ScreenFrame, Box<dyn Error>> {
-    wait_for_frame(events, |frame| text(&frame.rows).contains(needle))
+    let mut rows = std::collections::BTreeMap::new();
+    wait_for_frame(events, |frame| {
+        if frame.reset {
+            rows.clear();
+        }
+        rows.extend(frame.rows.iter().map(|row| (row.index, row.clone())));
+        text(&rows.values().cloned().collect::<Vec<_>>()).contains(needle)
+    })
 }
 
 fn wait_for_frame(
     events: &Receiver<AttachmentEvent>,
-    accept: impl Fn(&ScreenFrame) -> bool,
+    mut accept: impl FnMut(&ScreenFrame) -> bool,
 ) -> Result<ScreenFrame, Box<dyn Error>> {
     let deadline = Instant::now() + TIMEOUT;
     loop {

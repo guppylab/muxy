@@ -13,7 +13,7 @@ type TestResult = Result<(), Box<dyn Error>>;
 fn bootstrap_has_only_home_with_no_tabs() -> TestResult {
     let state = AppState::bootstrap()?;
     let home = state.home();
-    assert_eq!(state.version(), 1);
+    assert_eq!(state.version(), 2);
     assert_eq!(state.projects().len(), 1);
     assert_eq!(state.projects().first(), Some(home));
     assert_eq!(home.name, "Home");

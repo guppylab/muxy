@@ -106,6 +106,7 @@ fn find_searches_each_edit_immediately_ignores_case_and_keeps_input_out_of_the_s
     let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
     view.update(cx, |model, cx| {
         model.receive((1, Update::Connected(vec![])), cx);
+        acknowledge_catalog(model, cx);
         model.new_tab(cx);
         let pane = model.active_pane().expect("pane");
         model.receive(

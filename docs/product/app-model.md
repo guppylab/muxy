@@ -1,154 +1,106 @@
 # App model
 
-This document separates the app/server boundary from the way users navigate
-projects, tabs, and panes.
+The desktop and keyboard TUI are clients of the same server. The
+[product model](./product-model.md) defines what clients own; this document
+defines how users navigate and manage their views.
 
-## Main app and servers
+## Clients and servers
+
+The desktop bundles the same `muxy` CLI/TUI and `muxy-server` executables
+provided for standalone use. Either client connects to the server on its
+machine, starting it if needed. Remote connections are deferred; users can
+already SSH to another machine and run `muxy` there.
+
+The model allows clients to organize several servers later. A project routes
+to its `server_id`, and its panes inherit that route. Changing projects may
+therefore change the responsible server. There is no global active-server
+selection or sidebar server selector. Servers are managed in Settings, with
+the current device selected by default.
+
+## Layouts and restoration
+
+Desktop and TUI keep separate layouts and workspaces while sharing access to
+server projects and sessions. Several TUI instances can open the same saved
+TUI layout concurrently; layout changes need not appear live in another
+instance. Opening an existing session adds it to the client's layout; sessions
+from another client are discoverable within their project.
+
+On launch, desktop restores every project, its tabs, and window view state. It
+never creates a tab automatically. The TUI's first launch opens one shell in
+Home; later launches restore its saved project and layout.
+
+The desktop currently opens one workspace window and a reusable Settings
+window. Multiple workspace windows, including the same project in two windows,
+and side-by-side tab layouts may be added later without changing ownership.
+
+## Navigation and focus
 
 ```mermaid
 flowchart LR
-    subgraph DEVICE["Current device"]
-        APP["Main app"]
-        LOCAL["Current-device server"]
-    end
-
-    subgraph REMOTES["Remote devices"]
-        REMOTE1["Remote server 1"]
-        REMOTE2["Remote server 2"]
-        REMOTEN["…"]
-    end
-
-    APP -->|"project.server_id = current device"| LOCAL
-    APP -->|"project.server_id = remote 1"| REMOTE1
-    APP -->|"project.server_id = remote 2"| REMOTE2
-    APP -.->|"more configured servers"| REMOTEN
-
-    LOCAL -.-> ROLE["Responsibilities of each server<br/>Terminal · Git · future capabilities"]
-    REMOTE1 -.-> ROLE
-    REMOTE2 -.-> ROLE
-    REMOTEN -.-> ROLE
+    FILTER["Workspace filter"] --> LIST["Project sidebar"]
+    LIST --> PROJECT["Current project"] --> TAB["Selected tab"]
+    TAB --> PANE["Focused pane"]
 ```
 
-The diagram expresses a product boundary, not a process or network design.
+The sidebar defaults to **All projects**, listing each top-level project once.
+A workspace filter restricts that list to its members; Home always stays first.
+One user-defined top-level order applies under every filter. Worktree children
+appear beneath their parent. Selecting a top-level or worktree project changes
+the current directory context and visible tab set. Filtering never changes
+project ownership or execution context.
 
-- The first version has exactly one server, the current device. Remote servers
-  can be added in later versions; the model already allows several.
-- The main app may organize projects from the current device and several remote
-  servers at the same time.
-- A project record selects the server that handles work for its directory
-  through its `server_id`.
-- A server-bound pane inherits that route through its tab and project.
-- A worktree project uses its parent project's server while supplying its own
-  directory.
-- Switching the current project may therefore switch the responsible server;
-  there is no separate global "active server" selection, and the sidebar has
-  no server selector.
-- Servers are defined and stopped from settings.
-- The current device is the default server shown by server-related settings.
-- Current-device and remote servers have the same conceptual responsibility;
-  their operational differences are deferred.
+The current project, selected tab, and focused pane belong to the window.
+There is one active pane for the whole window, even if several tabs are visible.
+A tab displays that pane's title when it contains the active pane, otherwise
+its first pane's title.
 
-### Disconnected server
+Closing the active pane focuses an adjacent pane in its tab. Closing the whole
+tab focuses the first pane of the next tab, or the previous tab if there is no
+next tab. Closing an inactive pane or tab never steals focus. Normal tab
+selection may restore a pane from the window's focus history.
 
-When a project's server is not running or not reachable, the project is still
-loaded and is not in a failed state. App-only panes in its tabs work normally.
-The bottom status bar shows disconnection and an action to connect; healthy
-connections need no indicator.
-Terminal panes keep their last available content visible. Disconnection does
-not mean that the session has ended.
+## Disconnected and ended sessions
 
-### Ended and unreferenced sessions
+An unreachable server leaves the project loaded and app-only panes usable.
+The bottom status bar shows disconnection with a connect action; healthy
+connections need no indicator. Terminal panes retain their last available
+content. Existing project edits and closes remain available while disconnected
+and replay in order on reconnection.
 
-A terminal pane whose session has ended stays open with its saved screen and
-retained history, marked as exited. It accepts no terminal input, but its
-content remains available for scrolling, search, selection, and copy. Relaunch
-preserves these panes; if saved content is unavailable, the pane explains why.
-Closing the pane removes it immediately, ends its session, and discards its
-saved content. If the server is unreachable, termination stays pending until
-reconnection, including after an app restart. Closing the last pane closes the
-tab. Sessions that no pane references are listed so the user can attach one to
-a new pane or end it.
+An ended terminal pane stays open, marked as exited, and accepts no input.
+Its saved screen and history remain available for scrolling, search, selection,
+and copy, including after relaunch. Missing saved content is explained in the
+pane. An ended or discarded session is never automatically restarted. See the
+[server model](./server-model.md#closing-panes) for close and retention rules.
 
-Quitting the app leaves sessions running. End All Sessions and Quit ends all
-live sessions on the current-device server and clears terminal panes and their
-saved content before quitting. App-only panes remain, including in mixed tabs.
-
-## Navigation and visible context
-
-```mermaid
-flowchart TB
-    FILTER["Workspace filter<br/>Default: All projects"] --> LIST["Project sidebar<br/>Top-level projects only"]
-    LIST -->|"select project"| PROJECT["Current project<br/>Top-level or worktree project"]
-    PROJECT --> TABS["Visible tab set<br/>owned by this project"]
-    TABS -->|"select tab"| TAB["Selected tab"]
-    TAB --> LAYOUT["Pane layout"]
-    LAYOUT --> PANE["One or more panes"]
-    PANE --> CONTENT["Pane content<br/>Terminal · Web view · Extension · …"]
-    PANE -.->|"active pane provides"| TITLE["Displayed tab title"]
-```
-
-The workspace filter changes which top-level projects are listed. The current
-project may be that top-level project or one of its worktree child projects.
-Choosing a worktree child, listed beneath its parent in the sidebar, changes
-the current project and therefore the visible tab set.
-
-The current project, the selected tab, and the focused pane are view state
-that belongs to the window, not to a project or tab. There is one active pane
-for the entire window. Tabs may later be laid out side by side, each with its
-own panes; that does not introduce a separate active pane per tab. The first version opens a
-single workspace window and a separate Settings window. A later version may
-open several workspace windows, including the same
-project in two windows at once, without changing how projects store their
-tabs.
-
-When the active pane closes, focus moves to an adjacent pane in its tab. If the
-whole tab closes, focus moves to the first pane of the next neighboring tab,
-or the previous tab if there is no next tab. Closing an inactive pane or tab
-never steals focus. Normal tab selection may restore a pane from the window's
-focus history. A tab without window focus displays its first pane's title.
-
-On launch the app restores every project, its tabs, and the window's view
-state. Quitting the app leaves every session running; a separate action ends
-all sessions and quits.
-
-| User action | Changes | Does not change |
-| --- | --- | --- |
-| Filter by workspace | Projects visible in the sidebar | Project identity, membership, or server |
-| Choose a top-level or worktree project | Current project, directory, and visible tab set | Other projects' saved app state |
-| Select a tab | Visible pane layout | The tab's owning project |
-| Focus a pane | Active pane and displayed tab title | Ownership of any pane |
-| Close the last pane in a tab | The tab is closed | Other tabs of the project |
-| Change directory in a terminal | That terminal process's current directory | Pane, tab, project, or server ownership |
+Quitting or detaching leaves sessions running. **End All Sessions and Quit**
+ends all live sessions on the current-device server and clears terminal panes
+and their saved content before quitting. App-only panes remain, including in
+mixed tabs.
 
 ## Settings window
 
-Settings opens in one reusable app-level window, separate from project tabs and
-panes. Opening or closing it does not change the workspace's selected project,
-tab, or pane. It remains available without a server connection. The window exposes:
-
-- settings owned by the main app; and
-- settings for a selected server, defaulting to the current-device server.
+Settings is one reusable app-level window, separate from project tabs. It
+remains available while disconnected and never changes project, tab, or pane
+selection. It uses the active theme, searchable categories, and controls that
+apply changes immediately without relaunching.
 
 App preferences live in `settings.toml`, terminal preferences in `ghostty.conf`,
-and custom themes in `themes/`. The Settings window edits these sources and applies
-changes without relaunching. Keyboard shortcuts are settings: every action is
-registered in one shared system that the user may override. This includes app
-actions, text fields, menus, pickers, and buttons, with their contexts and aliases.
-Ordinary terminal keystrokes remain terminal input. Server settings belong to
-the server. Stopping or restarting it requires confirmation and ends its running
-sessions without discarding saved terminal output.
+and custom themes in `themes/`. Keyboard shortcuts share one overridable action
+system, including contexts and aliases for app actions, fields, menus, pickers,
+and buttons. Ordinary terminal keystrokes remain terminal input.
 
-Settings uses the active theme, with searchable categories and controls that
-apply changes immediately. Existing saved settings panes are removed on restore
-without removing neighboring terminal panes or their sessions.
+Server settings apply to the selected server. Stopping or restarting it requires
+confirmation. Existing saved settings panes are removed on restore without
+affecting neighboring terminal panes or sessions.
 
-### App updates
+## App updates
 
-Compatible app updates preserve running terminal sessions. The bundled server
-is replaced when all its sessions end, including idle shells and detached
-sessions. Server settings show when a server update is pending.
+Compatible app updates preserve running sessions. The bundled server is
+replaced when all sessions end, including idle shells and detached sessions.
+Server settings show pending server updates.
 
-An incompatible beta update can wait until all sessions end. Choosing this
-option schedules installation and app restart while the app is running; users
-can cancel it. Updating immediately instead requires confirmation that all
-terminal processes on the device will end. Tabs and saved output remain.
+An incompatible beta update may wait for all sessions to end. This schedules
+installation and app restart while the app runs; users can cancel it. Updating
+immediately requires confirmation that all terminal processes on the device
+will end. Tabs and saved output remain.

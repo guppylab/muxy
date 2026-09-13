@@ -8,7 +8,10 @@ use muxy_pty::{Pty, PtySize, SpawnRequest};
 use crate::error::ServerError;
 use crate::settings::ServerSettings;
 
+#[cfg(target_os = "macos")]
 const FALLBACK_SHELL: &str = "/bin/zsh";
+#[cfg(target_os = "linux")]
+const FALLBACK_SHELL: &str = "/bin/sh";
 const LOGIN_FLAG: &str = "-l";
 const TERMINAL_ENV: [(&str, &str); 3] = [
     ("TERM", "xterm-256color"),
@@ -21,6 +24,7 @@ pub(crate) fn spawn_shell(
     integration: Option<&crate::ShellIntegration>,
     directory: &Path,
     size: PtySize,
+    identity: (muxy_protocol::ServerIdentity, muxy_protocol::SessionId),
 ) -> Result<Pty, ServerError> {
     if !directory.is_dir() {
         return Err(ServerError::new(
@@ -32,7 +36,7 @@ pub(crate) fn spawn_shell(
         program: resolve_shell(settings),
         args: vec![OsString::from(LOGIN_FLAG)],
         cwd: directory.to_path_buf(),
-        env: environment(),
+        env: environment(identity),
         size,
     };
     request.env.retain(|(name, _)| name != "SHELL");
@@ -47,23 +51,78 @@ pub(crate) fn spawn_shell(
 }
 
 fn resolve_shell(settings: &ServerSettings) -> PathBuf {
-    settings
-        .default_shell
-        .clone()
-        .or_else(|| {
-            env::var_os("SHELL")
-                .filter(|shell| !shell.is_empty())
-                .map(PathBuf::from)
-        })
-        .unwrap_or_else(|| PathBuf::from(FALLBACK_SHELL))
+    select_shell(
+        settings.default_shell.clone(),
+        env::var_os("SHELL"),
+        cfg!(target_os = "linux"),
+    )
 }
 
-fn environment() -> Vec<(OsString, OsString)> {
+fn select_shell(configured: Option<PathBuf>, inherited: Option<OsString>, linux: bool) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    configured
+        .or_else(|| {
+            inherited
+                .filter(|shell| !shell.is_empty())
+                .map(PathBuf::from)
+                .filter(|shell| {
+                    !linux
+                        || (shell.is_absolute()
+                            && shell.metadata().is_ok_and(|metadata| {
+                                metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+                            }))
+                })
+        })
+        .unwrap_or_else(|| PathBuf::from(if linux { "/bin/sh" } else { FALLBACK_SHELL }))
+}
+
+fn environment(
+    identity: (muxy_protocol::ServerIdentity, muxy_protocol::SessionId),
+) -> Vec<(OsString, OsString)> {
     let mut env: Vec<_> = env::vars_os().collect();
+    env.retain(|(name, _)| name != "MUXY_SERVER_ID" && name != "MUXY_SESSION_ID");
+    env.push(("MUXY_SERVER_ID".into(), identity.0.to_string().into()));
+    env.push((
+        "MUXY_SESSION_ID".into(),
+        identity.1.get().to_string().into(),
+    ));
     env.extend(
         TERMINAL_ENV
             .iter()
             .map(|(key, value)| (OsString::from(key), OsString::from(value))),
     );
     env
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linux_falls_back_only_for_invalid_inherited_shells() {
+        for inherited in [
+            None,
+            Some("".into()),
+            Some("/does-not-exist".into()),
+            Some("/tmp".into()),
+            Some("sh".into()),
+        ] {
+            assert_eq!(
+                select_shell(None, inherited, true),
+                PathBuf::from("/bin/sh")
+            );
+        }
+        assert_eq!(
+            select_shell(None, Some("/bin/bash".into()), true),
+            PathBuf::from("/bin/bash")
+        );
+        assert_eq!(
+            select_shell(Some("/does-not-exist".into()), Some("/bin/sh".into()), true),
+            PathBuf::from("/does-not-exist")
+        );
+        assert_eq!(
+            select_shell(None, Some("/does-not-exist".into()), false),
+            PathBuf::from("/does-not-exist")
+        );
+    }
 }

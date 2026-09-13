@@ -1,31 +1,29 @@
 # Constraints
 
-Facts established during the spikes that constrain implementation. Each one
-cost time to learn.
+Platform requirements and implementation constraints. Performance observations
+come from the historical [benchmarks](./benchmarks.md).
 
 ## Platform
 
-- The first release supports macOS only. Server paths on the wire are Unix
-  pathname bytes; other platforms are a later release.
+- The desktop supports macOS 14+. Standalone CLI/server targets are macOS 14+
+  and Linux with glibc 2.35+, each on x86_64 and ARM64. Linux support requires
+  native build and runtime verification on both architectures.
+- Server paths are Unix pathname bytes. Connections are local Unix sockets;
+  remote transport, native Windows, and musl/Alpine support are deferred.
 
 ## Ghostty terminal core
 
-- Build with `LIBGHOSTTY_VT_SYS_OPTIMIZE=ReleaseFast`. The default Zig
-  build is Debug with integrity assertions and runs hundreds of times
-  slower; the spike lost an hour to it before a stack sample showed the
-  assertion.
+- Build with `LIBGHOSTTY_VT_SYS_OPTIMIZE=ReleaseFast`, as configured in the
+  repository. Debug integrity checks made the measured native build too slow.
 - The terminal is not sendable and the C API is not thread-safe. One thread
   owns each terminal; everything else talks to that thread.
-- `max_scrollback` is a byte budget in practice, whatever the Rust docs say.
-  The product's retention is bytes.
+- `max_scrollback` is a byte budget, matching the product's retention setting.
 - Compression is caller-driven. The server decides when a session is idle
   and calls one full pass; decompression on access is transparent.
 - Physical footprint, not RSS, is the metric that reflects compression,
   because released pages are `madvise`d rather than freed.
 - The crate API is marked unstable. Pin the version and wrap it behind one
   module.
-- Style flags and history rows through the render iterator are not yet
-  wired in the spike adapter. Both exist in the API.
 
 ## PTY
 
@@ -36,28 +34,22 @@ cost time to learn.
   must be a dedicated blocking thread that only reads and forwards; sleeping
   to batch reads stalls the producer because the kernel pty buffer is only
   a few kilobytes.
-- Consequence: engine parse speed is never the server's bottleneck. CPU
-  budget follows the producer's write pattern, not its byte volume.
+- In the measured workloads, producer write patterns dominated the CPU budget;
+  engine parse speed was not the bottleneck.
 
 ## Sockets and processes
 
 - On macOS an accepted Unix socket inherits the listener's non-blocking
   flag. Set blocking explicitly on every accepted stream.
-- TCP on loopback costs about twice the client CPU and twice the control
-  latency of a Unix socket for the same traffic.
 - A queue that is not bounded by merging grows by the full output rate
-  whenever a client stalls; 128 MB in one slow-client run. Merging per
-  channel is not an optimisation, it is the memory bound.
+  whenever a client stalls. Merging per channel bounds pending screen state.
 
 ## Rendering
 
-- GPUI holds 60 fps for 16 panes of ordinary content at 31 to 45 percent
-  of a core with a forced redraw every frame. Redraw on demand makes idle
-  panes free.
-- Per-cell colour churn is the pathological case, at 10,000 runs per
-  screen. Merge quads by colour and skip shaping for blank runs before
-  worrying about anything else.
-- Shaped-line caching does not pay; paint submission is the cost.
+- Redraw on demand avoids idle work.
+- Per-cell colour churn is the pathological case. Merge quads by colour and
+  skip shaping for blank runs before adding caches.
+- In the spike, shaped-line caching did not help; paint submission dominated.
 
 ## Measurement
 

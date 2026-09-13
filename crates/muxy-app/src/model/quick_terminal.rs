@@ -385,7 +385,9 @@ impl AppModel {
             self.close_quick_terminal(cx);
             return;
         };
-        if !self.settings.window.confirm_running_process {
+        if self.session_used_outside(session, &[pane])
+            || !self.settings.window.confirm_running_process
+        {
             self.close_quick_terminal(cx);
             return;
         }

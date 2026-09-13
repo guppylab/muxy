@@ -5,7 +5,7 @@ use gpui::{
 };
 
 #[gpui::test]
-#[ignore = "requires a built muxy-server, vim, nvim, less, tmux and a fresh MUXY_DIR under /tmp/muxy-phase18-"]
+#[ignore = "requires a built muxy CLI, vim, nvim, less, tmux and a fresh MUXY_DIR under /tmp/muxy-phase18-"]
 fn phase18_mouse_walkthrough(cx: &mut TestAppContext) {
     let result = run(cx);
     assert!(result.is_ok(), "{result:?}");

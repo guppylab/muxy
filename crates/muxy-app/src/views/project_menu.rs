@@ -16,6 +16,7 @@ pub(crate) fn items(project: &Project) -> Vec<Item> {
             Item::action("Change Color ▸", Command::ProjectColor(id)),
             Item::action("Reveal in Finder", Command::RevealPath(id)),
             Item::action("Copy Path", Command::CopyPath(id)),
+            Item::action("Existing Terminals…", Command::ExistingSessions(id)),
         ]);
     }
     if !project.home {
@@ -33,7 +34,7 @@ impl AppModel {
             return;
         };
         let message = format!(
-            "Remove “{}” and all of its tabs? Its running sessions will end. The folder and its files will stay on disk.",
+            "Remove “{}” from every client? All of its terminal sessions will end, including those displayed in other clients, and their saved output will be discarded. The folder and its files will stay on disk.",
             record.name
         );
         self.dismiss_overlay(cx);

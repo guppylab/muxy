@@ -57,7 +57,7 @@ impl Layout {
         }
     }
 
-    pub(crate) fn split(&mut self, pane: PaneId, new: PaneId, edge: Direction) {
+    pub fn split(&mut self, pane: PaneId, new: PaneId, edge: Direction) {
         match self {
             Self::Leaf(id) if *id == pane => {
                 let (first, second) = if matches!(edge, Direction::Left | Direction::Up) {
@@ -80,7 +80,7 @@ impl Layout {
         }
     }
 
-    pub(crate) fn remove(&mut self, pane: PaneId) {
+    pub fn remove(&mut self, pane: PaneId) {
         if let Self::Split { first, second, .. } = self {
             if matches!(first.as_ref(), Self::Leaf(id) if *id == pane) {
                 *self = *second.clone();
@@ -114,7 +114,7 @@ impl Layout {
         Ok(())
     }
 
-    pub(crate) fn validate(&self) -> Result<(), AppError> {
+    pub fn validate(&self) -> Result<(), AppError> {
         if let Self::Split {
             ratio,
             first,

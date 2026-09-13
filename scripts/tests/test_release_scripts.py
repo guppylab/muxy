@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -43,6 +44,10 @@ if name == "git":
     else:
         sys.exit("unexpected git arguments: " + repr(args))
 elif name == "gh":
+    if args[:2] == ["release", "view"] and args[-1] == "assets":
+        assets = [{"name": p.name, "size": p.stat().st_size} for p in Path.cwd().iterdir()
+                  if p.is_file() and p.name != os.environ.get("MISSING_REMOTE_ASSET")]
+        print(json.dumps({"assets": assets})); sys.exit(0)
     if args[:2] == ["release", "view"]:
         channel = args[2] == "beta-2.x"
         state = os.environ.get("CHANNEL_STATE" if channel else "RELEASE_STATE", "missing")
@@ -76,6 +81,8 @@ elif name == "xcrun":
         print("{}")
     elif args[0] != "stapler":
         sys.exit("unexpected xcrun arguments: " + repr(args))
+elif name == "codesign":
+    sys.exit(int(os.environ.get("CODESIGN_EXIT", "0")))
 elif name == "spctl":
     sys.exit(int(os.environ.get("SPCTL_EXIT", "0")))
 else:
@@ -90,7 +97,7 @@ class ReleaseScriptTests(unittest.TestCase):
         self.directory = Path(self.temp.name)
         self.tools = self.directory / "tools"
         self.tools.mkdir()
-        for name in ("git", "gh", "xcrun", "spctl"):
+        for name in ("git", "gh", "xcrun", "spctl", "codesign"):
             tool = self.tools / name
             tool.write_text(f"#!{sys.executable}\n" + FAKE_TOOL)
             tool.chmod(0o755)
@@ -108,6 +115,9 @@ class ReleaseScriptTests(unittest.TestCase):
         }
         for arch in ("arm64", "x86_64"):
             (self.directory / f"Muxy-{VERSION}-{arch}.dmg").write_bytes(arch.encode())
+            for system, extension in (("macos", "zip"), ("linux", "tar.gz")):
+                (self.directory / f"muxy-{VERSION}-{system}-{arch}.{extension}").write_bytes(b"archive")
+        (self.directory / "install-muxy.sh").write_bytes((ROOT / "scripts/install-muxy.sh").read_bytes())
 
     def run_script(self, script, *args):
         return subprocess.run(
@@ -132,8 +142,8 @@ class ReleaseScriptTests(unittest.TestCase):
         result = self.publish()
         self.assertEqual(result.returncode, 0, result.stderr)
         calls = self.version_release_calls()
-        self.assertEqual([call[2] for call in calls], ["view", "create", "upload", "edit"])
-        for call in (calls[1], calls[3]):
+        self.assertEqual([call[2] for call in calls], ["view", "create", "upload", "view", "edit"])
+        for call in (calls[1], calls[4]):
             self.assertEqual(call[3], f"v{VERSION}")
             self.assertEqual(call[call.index("--target") + 1], SHA)
             self.assertIn("--prerelease", call)
@@ -144,7 +154,7 @@ class ReleaseScriptTests(unittest.TestCase):
             self.assertIn(hashlib.sha256(arch.encode()).hexdigest(),
                           (self.directory / "SHA256SUMS").read_text())
         self.assertIn("--draft", calls[1])
-        self.assertIn("--draft=false", calls[3])
+        self.assertIn("--draft=false", calls[4])
         notes = (self.directory / "release-notes.md").read_text()
         self.assertIn("Rust/GPUI beta", notes)
         self.assertIn("Muxy Beta.app", notes)
@@ -183,7 +193,7 @@ class ReleaseScriptTests(unittest.TestCase):
         self.env.update(RELEASE_STATE="draft")
         result = self.publish()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual([call[2] for call in self.version_release_calls()], ["view", "upload", "edit"])
+        self.assertEqual([call[2] for call in self.version_release_calls()], ["view", "upload", "view", "edit"])
 
     def test_feed_is_promoted_only_after_versioned_assets_are_published(self):
         self.assertEqual(self.publish().returncode, 0)
@@ -241,6 +251,32 @@ class ReleaseScriptTests(unittest.TestCase):
         self.assertNotEqual(self.publish().returncode, 0)
         self.assertEqual(self.calls("gh"), [])
 
+    def test_missing_any_standalone_target_or_installer_prevents_release(self):
+        for asset in list(self.directory.glob("muxy-*")) + [self.directory / "install-muxy.sh"]:
+            data = asset.read_bytes()
+            asset.unlink()
+            self.assertNotEqual(self.publish().returncode, 0)
+            self.assertEqual(self.calls("gh"), [])
+            asset.write_bytes(data)
+
+    def test_missing_remote_asset_leaves_release_draft(self):
+        self.env["MISSING_REMOTE_ASSET"] = f"muxy-{VERSION}-linux-arm64.tar.gz"
+        result = self.publish()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("missing or incomplete uploaded asset", result.stderr)
+        self.assertFalse(any(call[2] == "edit" for call in self.version_release_calls()))
+
+    def test_hashes_cover_every_asset_and_notes_use_immutable_installer(self):
+        self.assertEqual(self.publish().returncode, 0)
+        checksums = (self.directory / "SHA256SUMS").read_text().splitlines()
+        self.assertEqual(len(checksums), 8)
+        for line in checksums:
+            digest, name = line.split()
+            self.assertEqual(digest, hashlib.sha256((self.directory / name).read_bytes()).hexdigest())
+        notes = (self.directory / "release-notes.md").read_text()
+        self.assertIn(f"curl -fsSL https://github.com/example/muxy/releases/download/v{VERSION}/install-muxy.sh | sh -s -- --version {VERSION}", notes)
+        self.assertNotIn("releases/latest", notes)
+
     def test_wrong_branch_prevents_release(self):
         self.env["GITHUB_REF"] = "refs/heads/main"
         self.assertNotEqual(self.publish().returncode, 0)
@@ -279,6 +315,19 @@ class ReleaseScriptTests(unittest.TestCase):
             ["stapler", "staple"], ["stapler", "validate"],
         ])
         self.assertEqual(len(self.calls("spctl")), 1)
+
+    def test_zip_checks_notarized_binaries_without_stapling(self):
+        archive = self.directory / "standalone.zip"
+        with zipfile.ZipFile(archive, "w") as zipped:
+            for name in ("muxy", "muxy-server"):
+                zipped.writestr(name, '#!/bin/sh\necho build-info\n')
+        result = self.run_script("notarize-release.sh", archive)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(any(call[1] == "stapler" for call in self.calls("xcrun")))
+        self.assertEqual(self.calls("spctl"), [])
+        self.assertEqual(sum("--check-notarization" in call for call in self.calls("codesign")), 2)
+        self.env["CODESIGN_EXIT"] = "1"
+        self.assertNotEqual(self.run_script("notarize-release.sh", archive).returncode, 0)
 
     def test_rejected_notarization_with_zero_exit_is_not_stapled(self):
         self.env["NOTARY_STATUS"] = "Invalid"

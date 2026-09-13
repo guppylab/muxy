@@ -4,6 +4,7 @@
 _muxy_installed=1
 _muxy_running=0
 _muxy_in_prompt=0
+_muxy_debug_checked=0
 _muxy_prompt=''
 _muxy_user_prompt=''
 
@@ -39,12 +40,23 @@ _muxy_prompt_end() {
     return "$_muxy_status"
 }
 
-# Do not replace a user's DEBUG trap. Prompt navigation still works without C/D marks.
-if [[ -z $(trap -p DEBUG) ]]; then
-    trap 'if [[ $_muxy_running == 0 && $_muxy_in_prompt == 0 && $BASH_COMMAND != _muxy_* && $BASH_COMMAND != "$PROMPT_COMMAND" ]]; then _muxy_running=1; printf "\e]133;C\a"; fi' DEBUG
+_muxy_prompt_status() {
+    return "$_muxy_status"
+}
+
+# Bash 5 hides the caller's DEBUG trap while sourcing. Inspect it afterward,
+# directly in PROMPT_COMMAND, without replacing a user's trap.
+read -r -d '' _muxy_debug_setup <<'MUXY_DEBUG_SETUP' || :
+if [[ ${_muxy_debug_checked-0} == 0 ]]; then
+    _muxy_debug_checked=1
+    if [[ -z $(trap -p DEBUG) ]]; then
+        trap 'if [[ $_muxy_running == 0 && $_muxy_in_prompt == 0 && $BASH_COMMAND != _muxy_* && $BASH_COMMAND != "$PROMPT_COMMAND" ]]; then _muxy_running=1; printf "\e]133;C\a"; fi' DEBUG
+    fi
 fi
+_muxy_prompt_status
+MUXY_DEBUG_SETUP
 if (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 1) )); then
-    PROMPT_COMMAND=(_muxy_precmd "${PROMPT_COMMAND[@]}" _muxy_prompt_end)
+    PROMPT_COMMAND=(_muxy_precmd "$_muxy_debug_setup" "${PROMPT_COMMAND[@]}" _muxy_prompt_end)
 else
-    PROMPT_COMMAND=$'_muxy_precmd\n'"${PROMPT_COMMAND-}"$'\n_muxy_prompt_end'
+    PROMPT_COMMAND=$'_muxy_precmd\n'"$_muxy_debug_setup"$'\n'"${PROMPT_COMMAND-}"$'\n_muxy_prompt_end'
 fi

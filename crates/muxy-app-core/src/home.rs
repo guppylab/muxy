@@ -14,11 +14,17 @@ impl AppState {
             bounds: None,
         };
         Ok(Self {
+            pending_cancellations: Vec::new(),
+            catalog_server: None,
+            catalog_revision: 0,
+            project_intents: Vec::new(),
+            starting_directories: std::collections::BTreeMap::new(),
             quick_terminal: None,
-            version: 1,
+            version: 2,
             projects: vec![home],
             window,
             pending_discards: Vec::new(),
+            close_operations: std::collections::BTreeMap::new(),
         })
     }
 

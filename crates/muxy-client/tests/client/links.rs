@@ -32,7 +32,7 @@ fn wait_links(
                 }
                 connection.client.ack(channel, frame.seq)?;
             }
-            ClientEvent::Metadata { .. } => {}
+            ClientEvent::Metadata { .. } | ClientEvent::CatalogChanged { .. } => {}
             event => return Err(format!("unexpected hyperlink event: {event:?}").into()),
         }
         if received_links

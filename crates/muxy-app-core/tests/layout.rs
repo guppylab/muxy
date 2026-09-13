@@ -128,6 +128,7 @@ fn restore_accounts_for_each_leaf_even_when_zoomed() -> Result {
     let plan = restore::plan(
         &state,
         &[SessionInfo {
+            project: state.home().id,
             id: live,
             directory: ServerPath(b"/tmp".to_vec()),
         }],

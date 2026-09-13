@@ -14,6 +14,7 @@ pub fn encode(
     }
     output.resize(HEADER_LEN, 0);
     match message {
+        Message::CatalogChanged { revision } => serialize(revision, output)?,
         Message::Hello {
             versions,
             compatibility,
@@ -47,6 +48,9 @@ pub fn decode(header: Header, payload: &[u8]) -> Result<(ChannelId, Message), Wi
         return Err(postcard::Error::DeserializeBadEncoding.into());
     }
     let message = match MessageKind::from_u8(header.kind)? {
+        MessageKind::CatalogChanged => Message::CatalogChanged {
+            revision: deserialize(payload)?,
+        },
         MessageKind::Hello => {
             let (versions, compatibility) = deserialize(payload)?;
             Message::Hello {

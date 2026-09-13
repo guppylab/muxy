@@ -110,7 +110,7 @@ fn line(view: &Entity<AppModel>, cx: &VisualTestContext, row: u16) -> String {
 }
 
 #[gpui::test]
-#[ignore = "requires built muxy-server and fresh MUXY_DIR under /tmp/muxy-phase16- with server PID wrapper"]
+#[ignore = "requires built muxy CLI and fresh MUXY_DIR under /tmp/muxy-phase16- with server PID wrapper"]
 fn phase16_clipboard_walkthrough(cx: &mut TestAppContext) {
     let result = run(cx);
     assert!(result.is_ok(), "{result:?}");

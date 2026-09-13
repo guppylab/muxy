@@ -97,7 +97,7 @@ impl Shell {
         if shell.ends_with("zsh") {
             fs::write(
                 dotfiles.join(".zshenv"),
-                "typeset -g MUXY_TEST_ENV=$(( ${MUXY_TEST_ENV:-0} + 1 ))\n",
+                "skip_global_compinit=1\ntypeset -g MUXY_TEST_ENV=$(( ${MUXY_TEST_ENV:-0} + 1 ))\n",
             )?;
             fs::write(
                 dotfiles.join(".zprofile"),
@@ -113,6 +113,10 @@ impl Shell {
             )?;
         } else if shell.ends_with("fish") {
             let config = home.join(".config/fish");
+            request.env.push((
+                "XDG_CONFIG_HOME".into(),
+                home.join(".config").into_os_string(),
+            ));
             fs::create_dir_all(&config)?;
             fs::write(
                 config.join("config.fish"),
@@ -414,5 +418,24 @@ fn bash_preserves_prompt_commands_with_shell_separators_and_comments() -> TestRe
                 .any(|bytes| bytes == b"\x1b]133;D;1\x07")
         );
     }
+    Ok(())
+}
+
+#[test]
+fn bash_preserves_the_exit_status_seen_by_the_user_prompt_command() -> TestResult {
+    let mut shell = Shell::start(
+        "/bin/bash",
+        false,
+        true,
+        "PROMPT_COMMAND='MUXY_TEST_STATUS=$?'; source \"$MUXY_SHELL_INTEGRATION_DIR/muxy.bash\"",
+    )?;
+    shell.until(b"\x1b]133;B\x07")?;
+    shell.pty.write(b"false\n")?;
+    shell.until(b"\x1b]133;B\x07")?;
+    shell
+        .pty
+        .write(b"printf 'status:%s\\n' \"$MUXY_TEST_STATUS\"\n")?;
+    let output = shell.until(b"\x1b]133;B\x07")?;
+    assert!(String::from_utf8_lossy(&output).contains("status:1"));
     Ok(())
 }

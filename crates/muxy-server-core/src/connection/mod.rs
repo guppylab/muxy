@@ -14,7 +14,7 @@ use muxy_transport::{ByteStream, StreamCancellation};
 use muxy_wire::{Decoder, Encoder, WireError};
 
 use crate::{Registry, ServerEvent};
-use outbox::Outbox;
+pub(crate) use outbox::{Outbox, References};
 
 const POLL: Duration = Duration::from_millis(50);
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
@@ -32,6 +32,7 @@ pub fn serve(
         return Ok(());
     };
     let outbox = Arc::new(Outbox::new(version));
+    registry.register_connection(&outbox);
     let output = Arc::clone(&outbox);
     let cancel = Arc::clone(&cancellation);
     let (done, finished) = mpsc::channel();
@@ -44,10 +45,18 @@ pub fn serve(
             result
         })?;
     let output = Arc::clone(&outbox);
+    let catalog = Arc::clone(&registry);
     let forward = match thread::Builder::new()
         .name("connection-events".into())
         .spawn(move || {
+            let mut revision = 0;
             while !output.is_closed() {
+                let current = catalog.catalog_revision();
+                if current > revision && output.catalog_watched() {
+                    output
+                        .push_control(muxy_protocol::Message::CatalogChanged { revision: current });
+                    revision = current;
+                }
                 match events.recv_timeout(POLL) {
                     Ok(ServerEvent::SessionEnded { id, reason }) => {
                         output.session_ended(id, reason);

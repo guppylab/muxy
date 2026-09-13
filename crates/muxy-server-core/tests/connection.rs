@@ -135,6 +135,8 @@ impl Fixture {
 
     fn create(&self, client: &mut Client) -> TestResult<SessionInfo> {
         match client.request(RequestBody::CreateSession {
+            project: self.registry.home_project(),
+            operation: muxy_protocol::OperationId::new(),
             directory: ServerPath(self.directory.as_os_str().as_bytes().to_vec()),
             size: SIZE,
         })? {
@@ -410,6 +412,8 @@ fn request_errors_are_correlated_and_leave_connection_usable() -> TestResult {
     for (request, code) in [
         (
             RequestBody::CreateSession {
+                project: fixture.registry.home_project(),
+                operation: muxy_protocol::OperationId::new(),
                 directory: ServerPath(vec![]),
                 size: SIZE,
             },
@@ -417,6 +421,8 @@ fn request_errors_are_correlated_and_leave_connection_usable() -> TestResult {
         ),
         (
             RequestBody::CreateSession {
+                project: fixture.registry.home_project(),
+                operation: muxy_protocol::OperationId::new(),
                 directory: ServerPath(b"/not/a/muxy/directory".to_vec()),
                 size: SIZE,
             },
@@ -424,6 +430,8 @@ fn request_errors_are_correlated_and_leave_connection_usable() -> TestResult {
         ),
         (
             RequestBody::CreateSession {
+                project: fixture.registry.home_project(),
+                operation: muxy_protocol::OperationId::new(),
                 directory: ServerPath(b"/tmp".to_vec()),
                 size: Size { cols: 0, rows: 1 },
             },

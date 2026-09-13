@@ -47,7 +47,7 @@ impl Fixture {
     }
 
     fn command(&self) -> Command {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_muxy-server"));
+        let mut command = Command::new(binary());
         command
             .env("MUXY_DIR", &self.directory)
             .env("SHELL", "/bin/sh")
@@ -180,7 +180,12 @@ impl Client {
     }
 
     fn receive(&self) -> TestResult<(ChannelId, Message)> {
-        Ok(self.incoming.recv_timeout(TIMEOUT)??)
+        loop {
+            let event = self.incoming.recv_timeout(TIMEOUT)??;
+            if !matches!(event, (_, Message::CatalogChanged { .. })) {
+                return Ok(event);
+            }
+        }
     }
 
     fn request(&mut self, body: RequestBody) -> TestResult<ReplyBody> {
@@ -199,14 +204,27 @@ impl Client {
                         seq: frame.seq,
                     },
                 )?,
-                (_, Message::Metadata(_)) => {}
+                (_, Message::Metadata(_) | Message::CatalogChanged { .. }) => {}
                 other => return Err(format!("unexpected reply: {other:?}").into()),
             }
         }
     }
 
+    fn home(&mut self) -> TestResult<muxy_protocol::ProjectId> {
+        match self.request(RequestBody::ReadCatalog {
+            after: None,
+            revision: None,
+        })? {
+            ReplyBody::Catalog(page) => Ok(page.home),
+            other => Err(format!("expected catalog, got {other:?}").into()),
+        }
+    }
+
     fn create(&mut self, directory: &Path) -> TestResult<SessionId> {
+        let project = self.home()?;
         match self.request(RequestBody::CreateSession {
+            project,
+            operation: muxy_protocol::OperationId::new(),
             directory: ServerPath(directory.as_os_str().as_encoded_bytes().to_vec()),
             size: SIZE,
         })? {
@@ -222,6 +240,39 @@ impl Client {
         })? {
             ReplyBody::Attached { snapshot, .. } => Ok(snapshot.channel),
             other => Err(format!("expected snapshot, got {other:?}").into()),
+        }
+    }
+
+    fn wait_for_output(&mut self, expected: &str) -> TestResult {
+        let mut rows = std::collections::BTreeMap::new();
+        loop {
+            let (channel, message) = self
+                .receive()
+                .map_err(|error| format!("waiting for {expected}: {error}; rows={rows:?}"))?;
+            if let Message::Frame(frame) = message {
+                self.encoder.send(
+                    CONTROL,
+                    &Message::FrameAck {
+                        channel,
+                        seq: frame.seq,
+                    },
+                )?;
+                if frame.reset {
+                    rows.clear();
+                }
+                rows.extend(frame.rows.iter().map(|row| {
+                    (
+                        row.index,
+                        row.runs
+                            .iter()
+                            .map(|run| run.text.as_str())
+                            .collect::<String>(),
+                    )
+                }));
+                if rows.values().any(|row| row.trim() == expected) {
+                    return Ok(());
+                }
+            }
         }
     }
 
@@ -248,11 +299,13 @@ impl Client {
     }
 
     fn closed(&self) -> TestResult {
-        assert!(matches!(
-            self.incoming.recv_timeout(TIMEOUT)?,
-            Err(WireError::Closed)
-        ));
-        Ok(())
+        loop {
+            match self.incoming.recv_timeout(TIMEOUT)? {
+                Ok((_, Message::CatalogChanged { .. })) => {}
+                Err(WireError::Closed) => return Ok(()),
+                other => return Err(format!("expected closed, got {other:?}").into()),
+            }
+        }
     }
 }
 
@@ -285,30 +338,9 @@ fn lifecycle_serves_shell_logs_and_stops_every_session() -> TestResult {
     let channel = creator.attach(first)?;
     creator.encoder.send(
         channel,
-        &Message::Input(b"printf 'phase-eight-ready\\n'\n".to_vec()),
+        &Message::Input(b"printf '\\nphase-eight-ready\\n'\n".to_vec()),
     )?;
-    loop {
-        let (channel, message) = creator.receive()?;
-        if let Message::Frame(frame) = message {
-            creator.encoder.send(
-                CONTROL,
-                &Message::FrameAck {
-                    channel,
-                    seq: frame.seq,
-                },
-            )?;
-            if frame.rows.iter().any(|row| {
-                row.runs
-                    .iter()
-                    .map(|run| run.text.as_str())
-                    .collect::<String>()
-                    .trim()
-                    == "phase-eight-ready"
-            }) {
-                break;
-            }
-        }
-    }
+    creator.wait_for_output("phase-eight-ready")?;
     assert!(
         matches!(observer.request(RequestBody::ListSessions)?, ReplyBody::Sessions(sessions) if sessions.len() == 2)
     );
@@ -377,14 +409,14 @@ fn shutdown_cancels_clients_that_never_finish_hello() -> TestResult {
 #[test]
 fn shutdown_interrupts_a_blocked_pty_write() -> TestResult {
     assert_shutdown_interrupts_input(
-        b"stty -icanon -echo; printf 'nonreading-ready\\n'; exec sleep 3\n",
+        b"stty -icanon -echo; printf '\\nnonreading-ready\\n'; exec sleep 3\n",
     )
 }
 
 #[test]
 fn shutdown_does_not_wait_for_a_descendant_holding_the_pty() -> TestResult {
     assert_shutdown_interrupts_input(
-        b"stty -icanon -echo; trap '' HUP; sleep 3 & printf 'nonreading-ready\\n'; wait\n",
+        b"stty -icanon -echo; trap '' HUP; sleep 3 & printf '\\nnonreading-ready\\n'; wait\n",
     )
 }
 
@@ -397,28 +429,7 @@ fn assert_shutdown_interrupts_input(command: &[u8]) -> TestResult {
     client
         .encoder
         .send(channel, &Message::Input(command.to_vec()))?;
-    loop {
-        let (received, message) = client.receive()?;
-        if let Message::Frame(frame) = message {
-            client.encoder.send(
-                CONTROL,
-                &Message::FrameAck {
-                    channel: received,
-                    seq: frame.seq,
-                },
-            )?;
-            if frame.rows.iter().any(|row| {
-                row.runs
-                    .iter()
-                    .map(|run| run.text.as_str())
-                    .collect::<String>()
-                    .trim()
-                    == "nonreading-ready"
-            }) {
-                break;
-            }
-        }
-    }
+    client.wait_for_output("nonreading-ready")?;
     client
         .encoder
         .send(channel, &Message::Input(vec![b'x'; 65_536]))?;
@@ -492,7 +503,9 @@ fn custom_paths_and_settings_are_used_without_default_directory() -> TestResult 
         .arg(&log);
     fixture.start_command(command, &socket)?;
     let mut client = Client::new(&socket)?;
+    let project = client.home()?;
     assert!(matches!(client.request(RequestBody::CreateSession {
+        project, operation: muxy_protocol::OperationId::new(),
         directory: ServerPath(fixture.directory.as_os_str().as_encoded_bytes().to_vec()),
         size: SIZE,
     })?, ReplyBody::Error(error) if error.code == muxy_protocol::ErrorCode::SpawnFailed));
@@ -506,12 +519,28 @@ fn custom_paths_and_settings_are_used_without_default_directory() -> TestResult 
 #[test]
 fn default_directory_does_not_touch_other_channels() -> TestResult {
     let mut fixture = Fixture::new()?;
-    let support = fixture.directory.join("Library/Application Support");
-    let (current, other) = if cfg!(debug_assertions) || env!("CARGO_PKG_VERSION") == "2.0.0-beta-0"
-    {
-        ("Muxy Dev", "Muxy Beta")
+    let linux = cfg!(target_os = "linux");
+    let support = fixture.directory.join(if linux {
+        ".local/state"
     } else {
-        ("Muxy Beta", "Muxy Dev")
+        "Library/Application Support"
+    });
+    let (development, beta) = if linux {
+        ("muxy-dev", "muxy-beta")
+    } else {
+        ("Muxy Dev", "Muxy Beta")
+    };
+    // Packaged-runtime verification runs a release server from a debug test harness.
+    let development_build = match std::env::var("MUXY_TEST_SERVER_PROFILE").as_deref() {
+        Ok("beta") => false,
+        Ok("dev") => true,
+        Ok(_) => return Err("invalid MUXY_TEST_SERVER_PROFILE".into()),
+        Err(_) => cfg!(debug_assertions) || env!("CARGO_PKG_VERSION") == "2.0.0-beta-0",
+    };
+    let (current, other) = if development_build {
+        (development, beta)
+    } else {
+        (beta, development)
     };
     for name in ["Muxy", "Muxy Alpha", other] {
         let directory = support.join(name);
@@ -523,6 +552,7 @@ fn default_directory_does_not_touch_other_channels() -> TestResult {
     let mut command = fixture.command();
     command
         .env_remove("MUXY_DIR")
+        .env_remove("XDG_STATE_HOME")
         .env("HOME", &fixture.directory)
         .arg("--socket")
         .arg(&socket);
@@ -548,7 +578,13 @@ fn default_directory_does_not_touch_other_channels() -> TestResult {
 fn socket_length_and_invalid_arguments_fail_clearly() -> TestResult {
     let mut fixture = Fixture::new()?;
     for (arguments, expected) in [
-        (vec!["--socket".to_owned(), "a".repeat(104)], "104 bytes"),
+        (
+            vec![
+                "--socket".to_owned(),
+                "a".repeat(if cfg!(target_os = "linux") { 108 } else { 104 }),
+            ],
+            "platform limit",
+        ),
         (vec!["--socket".to_owned()], "requires a path"),
         (vec!["--stdio".to_owned()], "unknown argument: --stdio"),
         (
@@ -601,6 +637,7 @@ fn shell_hooks_are_socket_relative_and_the_setting_controls_new_shells() -> Test
     let mut fixture = Fixture::new()?;
     let home = fixture.directory.join("home");
     fs::create_dir(&home)?;
+    fs::write(home.join(".zshenv"), "skip_global_compinit=1\n")?;
     fs::write(home.join(".zshrc"), "PS1='muxy-lifecycle> '\n")?;
     for enabled in [true, false] {
         fs::write(
@@ -613,6 +650,7 @@ fn shell_hooks_are_socket_relative_and_the_setting_controls_new_shells() -> Test
         let mut client = Client::new(&fixture.socket())?;
         let session = client.create(&home)?;
         let mut observed = false;
+        let mut screen = String::new();
         wait_until(|| {
             let ReplyBody::Attached { snapshot, .. } = client.request(RequestBody::Attach {
                 session,
@@ -621,14 +659,24 @@ fn shell_hooks_are_socket_relative_and_the_setting_controls_new_shells() -> Test
             else {
                 return Err("missing snapshot".into());
             };
-            let ready = snapshot
+            screen = snapshot
                 .rows
                 .iter()
-                .flat_map(|row| &row.runs)
-                .any(|run| run.text.contains("muxy-lifecycle>"));
+                .map(|row| {
+                    row.runs
+                        .iter()
+                        .map(|run| run.text.as_str())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            let ready = screen.contains("muxy-lifecycle>");
             observed = !snapshot.prompts.is_empty();
             client.request(RequestBody::Detach(snapshot.channel))?;
             Ok(ready)
+        })
+        .map_err(|error| {
+            format!("shell readiness (integration={enabled}): {error}; screen={screen:?}")
         })?;
         assert_eq!(observed, enabled);
         assert!(
@@ -702,7 +750,10 @@ fn settings_persist_and_protocol_stop_gracefully_ends_sessions_before_restart() 
 #[test]
 fn build_info_has_no_server_or_storage_side_effects() -> TestResult {
     let fixture = Fixture::new()?;
-    let output = fixture.command().arg("--build-info").output()?;
+    let output = Command::new(binary())
+        .env("MUXY_DIR", &fixture.directory)
+        .arg("--build-info")
+        .output()?;
     assert!(output.status.success());
     let build: muxy_protocol::BuildInfo = serde_json::from_slice(&output.stdout)?;
     assert_eq!(build, muxy_protocol::BuildInfo::current());
@@ -714,7 +765,7 @@ fn build_info_has_no_server_or_storage_side_effects() -> TestResult {
 fn replacing_the_binary_and_reconnecting_preserves_the_shell_process() -> TestResult {
     let mut fixture = Fixture::new()?;
     let executable = fixture.directory.join("muxy-server");
-    fs::copy(env!("CARGO_BIN_EXE_muxy-server"), &executable)?;
+    copy_executable(&binary(), &executable)?;
     let mut command = Command::new(&executable);
     command
         .env("MUXY_DIR", &fixture.directory)
@@ -731,7 +782,7 @@ fn replacing_the_binary_and_reconnecting_preserves_the_shell_process() -> TestRe
     let pid = fs::read(fixture.directory.join("before.pid"))?;
     drop(client);
     fs::rename(&executable, fixture.directory.join("previous-server"))?;
-    fs::copy(env!("CARGO_BIN_EXE_muxy-server"), &executable)?;
+    copy_executable(&binary(), &executable)?;
     let mut client = Client::new(&fixture.socket())?;
     let channel = client.attach(session)?;
     client
@@ -763,4 +814,19 @@ fn idle_update_notifies_every_client_before_disconnecting() -> TestResult {
     observer.closed()?;
     assert!(fixture.finish()?.status.success());
     Ok(())
+}
+
+fn copy_executable(source: &Path, destination: &Path) -> TestResult {
+    // A separate process prevents concurrent test forks inheriting a writable
+    // descriptor and temporarily blocking Linux exec with ETXTBSY.
+    let output = Command::new("cp").args([source, destination]).output()?;
+    assert!(output.status.success(), "{output:?}");
+    Ok(())
+}
+
+fn binary() -> PathBuf {
+    std::env::var_os("MUXY_TEST_SERVER").map_or_else(
+        || PathBuf::from(env!("CARGO_BIN_EXE_muxy-server")),
+        PathBuf::from,
+    )
 }

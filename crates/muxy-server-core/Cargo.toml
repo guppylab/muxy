@@ -14,7 +14,6 @@ workspace = true
 
 [dependencies]
 getrandom = "0.3"
-libproc = "0.14.11"
 log = "0.4"
 muxy-core = { path = "../muxy-core" }
 muxy-protocol = { path = "../muxy-protocol" }
@@ -24,3 +23,7 @@ muxy-transport = { path = "../muxy-transport" }
 muxy-wire = { path = "../muxy-wire" }
 postcard = { version = "1", default-features = false, features = ["use-std"] }
 serde = { version = "1", features = ["derive"] }
+serde_json.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libproc = "0.14.11"

@@ -8,17 +8,20 @@ boundaries. It stays above code: names are roles, not types.
 ```mermaid
 flowchart LR
     subgraph APP["App process · Rust + GPUI"]
-        UI["Windows, projects, tabs, panes"]
+        UI["Windows, project views, tabs, panes"]
         GRID["Run grid per attached session"]
         CONN["Connection per server"]
     end
-    subgraph SERVER["Server process · Rust, one per host"]
-        ACCEPT["Listener / stdio entry"]
+    subgraph SERVER["muxy-server process · Rust, one per profile"]
+        ACCEPT["Local Unix listener"]
+        CATALOG["Projects and session membership"]
         CLIENT["Client connection<br/>reader · writer thread · outbox"]
         S1["Session thread 1"]
         S2["Session thread 2"]
         SN["…"]
     end
+    TUI["muxy TUI · Ratatui · shared TUI layout"] <-->|"local socket"| ACCEPT
+    CATALOG --- CLIENT
     UI --> GRID
     GRID <--> CONN
     CONN <-->|"byte stream"| ACCEPT
@@ -30,10 +33,13 @@ flowchart LR
 
 - The app never parses terminal output. It holds, per attached session, the
   visible rows as style runs plus whatever history window it has fetched.
-- The server knows sessions and clients, nothing about projects or panes,
-  as the [server model](../product/server-model.md) requires.
-- A server reached remotely is the same binary started in stdio mode by
-  whatever exec mechanism reaches the host. The protocol is identical.
+- The server owns the durable project catalog, shared metadata, Home, and
+  explicit session membership. Clients own tabs, panes, order, and workspaces.
+- The desktop bundles separate `muxy` and `muxy-server` executables, also
+  distributed together for standalone use. Both clients use the shared client
+  library and protocol, connecting to the local server or starting it under
+  the shared startup lock. Neither client links the server implementation.
+- Both clients connect locally. Remote transport is outside this phase.
 
 ## Session thread
 
@@ -71,24 +77,24 @@ flowchart TB
 flowchart LR
     RX["Reader thread"] -->|"input, acks, pings"| ROUTE["Immediate routing"]
     RX -->|"other requests"| WORK["Bounded, ordered request worker"]
-    OUTBOX["Outbox<br/>control queue · one pending merged frame per session · one credit per session"] --> TX["Writer thread<br/>control first, then any session with credit"]
-    TX -->|"postcard · zstd streaming · channel framing"| STREAM["Byte stream"]
+    OUTBOX["Outbox<br/>control queue · one pending merged frame per channel · one credit per channel"] --> TX["Writer thread<br/>control first, then any channel with credit"]
+    TX -->|"postcard · channel framing"| STREAM["Byte stream"]
 ```
 
 - The connection reader never waits for storage, process creation, or owner
   replies. Bounded background work handles these requests; lifecycle work stays
   ordered. Registry locks cover bookkeeping, not blocking operations.
-- Frames for a session replace or merge into the single pending frame for
-  that client. The frame is sent when the client's acknowledgement for the
-  previous frame on that channel has arrived.
+- Frames replace or merge into a single pending frame per attachment channel.
+  The frame is sent when the client's acknowledgement for the previous frame
+  on that channel has arrived.
 - Control messages, including pongs, attach replies, and history pages,
   never wait behind screen data.
 - Attach sends the visible screen and a recent history window as runs.
   Older history is served in pages on request.
 - Any number of clients may attach to a session; each has its own outbox
   and credits, so a slow client never affects a fast one.
-- Merging, credits, control-first writing, and compression are runtime
-  work; the [protocol](./protocol.md) says what v1 puts on the wire.
+- Merging, credits, and control-first writing are implemented. Streaming wire
+  compression remains deferred; see the [protocol](./protocol.md).
 
 ## App rendering
 
@@ -106,10 +112,9 @@ behind their lifecycle completions. A flush waits for outstanding work.
 
 ```mermaid
 flowchart LR
-    STREAM["Byte stream"] --> DEC["Decode frame<br/>zstd streaming · postcard"]
+    STREAM["Byte stream"] --> DEC["Decode frame<br/>postcard"]
     DEC --> GRID["Run grid for the session"]
     GRID -->|"on frame arrival"| PAINT["Paint pane<br/>one shaped line per row · one quad per run · cursor quad"]
-    GRID -.->|"optional, per user setting"| EMU["Full-emulator surface<br/>Ghostty or Alacritty fed from runs"]
 ```
 
 - The app redraws a pane only when a frame arrives or the viewport changes.
@@ -117,31 +122,36 @@ flowchart LR
   everything else, and a pane that becomes visible attaches or re-fetches.
   Cached client content is displayed first, including while disconnected.
   Server reads refresh it lazily; the server owns durable retained history.
-- The optional full-emulator surface is a local rendering choice that does
-  not change the server or the protocol.
+- A future full-emulator surface would convert runs locally without changing
+  the server or protocol; see [D9](./decisions.md#d9-the-app-renders-the-run-grid-directly-in-gpui-and-redraws-on-demand).
 
 ## Transport adapters
 
-| Situation | Adapter | Notes |
-| --- | --- | --- |
-| Server on this device | Unix domain socket | Default. Path owned by the app's server settings. |
-| Server reached through SSH, Docker exec, kubectl exec | Server started in stdio mode by the exec mechanism | Authentication and encryption are the exec mechanism's. No protocol change. |
-| Server exposed on a port | TCP with TLS and a token | Last resort; costs twice the client CPU and latency of the socket on loopback. |
+Both clients and the server resolve the same profile and configured Unix
+socket. Remote, stdio, and network transports are deferred. Running `muxy`
+after an independent SSH login uses that machine's local server.
 
 ## Lifecycle notes
 
+The server imports legacy project identities and session references once,
+retaining the original desktop state for recovery. Clients save their migrated
+views separately. Retried mutations and session creation are idempotent;
+disconnected desktop edits keep their existing behavior through durable intents.
+Project deletion prevents new sessions before ending and discarding owned
+content, and resumes after interruption without touching project directories.
+
 - Compatible app updates keep the server running. Installation preserves the
-  old bundle until its server instance exits. Cleanup shares installation locks,
+  old bundle until its server instance exits and bundled runtime users release
+  their leases. A running TUI does not block app installation. Cleanup shares installation locks,
   verifies the current instance, and retains uncommitted recovery bundles. The app coordinates idle server
   replacement with startup and installation locks, then reconnects. Pending
   update schedules survive app restarts; no background updater launches the app.
-- Stopping the server ends its sessions. Settings and saved terminal records
-  survive. A record holds the last saved screen, bounded history, and any
-  known exit reason; recovery never restarts its process.
-- The app retrieves saved content through the server protocol and keeps ended
-  panes until the user closes them. Closing a pane discards its saved record.
-- Graceful shutdown saves terminal content. An abrupt stop recovers the last
-  completed checkpoint, which may omit the most recent output.
-- A client that disconnects leaves sessions running; its outbox is dropped.
+- Saved records contain the screen, bounded history, and known exit reason.
+  The app reads them through the protocol; the
+  [server model](../product/server-model.md) defines retention and close behavior.
+- Clients register all open-pane references separately from output subscriptions.
+  The server decides final-reference closes atomically and preserves results
+  across retries. A disconnect drops the client's outbox and references without
+  ending its sessions.
 - Resize is a request to the session owner; the terminal reflows and the
   next tick emits the full visible screen.

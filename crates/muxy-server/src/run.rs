@@ -27,7 +27,7 @@ struct Client {
 struct Socket {
     listener: Arc<UnixSocketListener>,
     path: PathBuf,
-    identity: (u64, u64),
+    identity: Mutex<Option<(u64, u64)>>,
 }
 
 impl Socket {
@@ -38,22 +38,35 @@ impl Socket {
         Ok(Self {
             listener,
             path,
-            identity: (metadata.dev(), metadata.ino()),
+            identity: Mutex::new(Some((metadata.dev(), metadata.ino()))),
         })
     }
 }
 
 impl Drop for Socket {
     fn drop(&mut self) {
-        self.listener.close();
-        if let Err(error) = self.remove() {
-            log::error!("socket cleanup failed: {error}");
-        }
+        self.close();
     }
 }
 
 impl Socket {
+    fn close(&self) {
+        if let Err(error) = self.remove() {
+            log::error!("socket cleanup failed: {error}");
+        }
+    }
+
     fn remove(&self) -> io::Result<()> {
+        let mut owned = self.identity.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(identity) = owned.take() else {
+            return Ok(());
+        };
+        let result = self.remove_owned(identity);
+        self.listener.close();
+        result
+    }
+
+    fn remove_owned(&self, identity: (u64, u64)) -> io::Result<()> {
         let parent = self
             .path
             .parent()
@@ -61,8 +74,9 @@ impl Socket {
             .unwrap_or_else(|| Path::new("."));
         let directory = fs::File::open(parent)?;
         directory.lock()?;
+        self.listener.close();
         match fs::symlink_metadata(&self.path) {
-            Ok(metadata) if (metadata.dev(), metadata.ino()) == self.identity => {
+            Ok(metadata) if (metadata.dev(), metadata.ino()) == identity => {
                 fs::remove_file(&self.path)
             }
             Ok(_) => Ok(()),
@@ -75,7 +89,7 @@ impl Socket {
 pub(crate) fn run(args: &Args) -> io::Result<()> {
     let mut signals = Signals::new([SIGTERM, SIGINT])?;
     let socket = match Socket::bind(args.socket.clone()) {
-        Ok(socket) => socket,
+        Ok(socket) => Arc::new(socket),
         Err(BindError::InUse) => {
             writeln!(
                 io::stdout(),
@@ -95,20 +109,11 @@ pub(crate) fn run(args: &Args) -> io::Result<()> {
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .join("sessions");
-    let hooks = muxy_server_core::ShellIntegration::install(
-        &directory.with_file_name("shell-integration"),
-    )?;
-    let settings_path = args.settings.clone();
-    let registry = Arc::new(
-        Registry::persistent(settings, sender, &directory)?
-            .with_shell_integration(hooks)
-            .with_settings_persistence(move |settings| {
-                settings_file::save(&settings_path, settings)
-            }),
-    );
+    let legacy = crate::legacy::read(directory.parent().unwrap_or_else(|| Path::new(".")))?;
+    let registry = bootstrap_registry(args, settings, sender, &directory, legacy)?;
     let stopping = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let requested_stop = Arc::clone(&stopping);
-    let requested_listener = Arc::clone(&socket.listener);
+    let requested_socket = Arc::clone(&socket);
     let clients = Clients::default();
     let subscribers = Arc::clone(&clients);
     let sessions = Arc::clone(&registry);
@@ -117,18 +122,18 @@ pub(crate) fn run(args: &Args) -> io::Result<()> {
         .spawn(move || {
             broadcast(&events, &subscribers, &sessions, || {
                 requested_stop.store(true, std::sync::atomic::Ordering::Release);
-                requested_listener.close();
+                requested_socket.close();
             });
         })?;
     let signal_handle = signals.handle();
-    let listener = Arc::clone(&socket.listener);
+    let closing_socket = Arc::clone(&socket);
     let stopped = Arc::clone(&stopping);
     let signal = thread::Builder::new()
         .name("server-signals".into())
         .spawn(move || {
             if signals.forever().next().is_some() {
                 stopped.store(true, std::sync::atomic::Ordering::Release);
-                listener.close();
+                closing_socket.close();
             }
         });
     let mut workers = Vec::new();
@@ -142,7 +147,7 @@ pub(crate) fn run(args: &Args) -> io::Result<()> {
         }),
         Err(error) => Err(io::Error::other(error.to_string())),
     };
-    socket.listener.close();
+    socket.close();
     registry.shutdown();
     let broadcast_result = broadcast
         .join()
@@ -173,6 +178,26 @@ pub(crate) fn run(args: &Args) -> io::Result<()> {
         .and(broadcast_result)
         .and(worker_result)
         .and(signal_result)
+}
+
+fn bootstrap_registry(
+    args: &Args,
+    settings: muxy_server_core::ServerSettings,
+    sender: Sender<ServerEvent>,
+    directory: &Path,
+    legacy: muxy_server_core::LegacyImport,
+) -> io::Result<Arc<Registry>> {
+    let hooks = muxy_server_core::ShellIntegration::install(
+        &directory.with_file_name("shell-integration"),
+    )?;
+    let settings_path = args.settings.clone();
+    Ok(Arc::new(
+        Registry::persistent_with_import(settings, sender, directory, legacy)?
+            .with_shell_integration(hooks)
+            .with_settings_persistence(move |settings| {
+                settings_file::save(&settings_path, settings)
+            }),
+    ))
 }
 
 fn accept(
@@ -277,11 +302,12 @@ fn lock(clients: &Clients) -> MutexGuard<'_, BTreeMap<u64, Client>> {
 
 fn validate_socket(path: &Path) -> io::Result<()> {
     let bytes = path.as_os_str().as_encoded_bytes().len();
-    if bytes >= 104 {
+    let limit = if cfg!(target_os = "linux") { 108 } else { 104 };
+    if bytes >= limit {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!(
-                "socket path is {bytes} bytes; macOS limit is 104 bytes including the terminating NUL (maximum path: 103 bytes): {}",
+                "socket path is {bytes} bytes; platform limit is {limit} bytes including the terminating NUL: {}",
                 path.display()
             ),
         ));
@@ -295,8 +321,29 @@ mod tests {
 
     #[test]
     fn socket_length_counts_bytes_and_reserves_the_terminator() {
-        assert!(validate_socket(Path::new(&"a".repeat(103))).is_ok());
-        assert!(validate_socket(Path::new(&"a".repeat(104))).is_err());
-        assert!(validate_socket(Path::new(&"é".repeat(52))).is_err());
+        let limit = if cfg!(target_os = "linux") { 108 } else { 104 };
+        assert!(validate_socket(Path::new(&"a".repeat(limit - 1))).is_ok());
+        assert!(validate_socket(Path::new(&"a".repeat(limit))).is_err());
+        assert!(validate_socket(Path::new(&"é".repeat(limit / 2))).is_err());
+    }
+
+    #[test]
+    fn closed_socket_cleanup_does_not_remove_its_replacement() -> io::Result<()> {
+        let directory =
+            Path::new("/tmp").join(format!("muxy-socket-{}", muxy_protocol::OperationId::new()));
+        fs::create_dir(&directory)?;
+        let path = directory.join("server.sock");
+        for _ in 0..32 {
+            let previous = Socket::bind(path.clone()).map_err(io::Error::other)?;
+            previous.listener.close();
+            previous.remove()?;
+            assert!(!path.exists());
+            let replacement = Socket::bind(path.clone()).map_err(io::Error::other)?;
+            previous.remove()?;
+            drop(previous);
+            assert!(std::os::unix::net::UnixStream::connect(&path).is_ok());
+            drop(replacement);
+        }
+        fs::remove_dir(directory)
     }
 }
