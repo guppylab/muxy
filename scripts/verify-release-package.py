@@ -16,6 +16,8 @@ import tempfile
 import time
 import zipfile
 
+import runtime_tests
+
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -125,15 +127,10 @@ cp "$VERIFY_DOWNLOADS/${URL##*/}" "$OUTPUT"
                 server.wait()
                 raise
         if args.runtime_tests:
-            if platform.system() == 'Linux':
-                os.environ['MUXY_ZIG'] = shutil.which('zig')
-                os.environ['PATH'] = str(ROOT / 'scripts/zig') + os.pathsep + os.environ['PATH']
-                run('cargo', 'clean', '-p', 'libghostty-vt-sys', cwd=ROOT)
-            test_env = {**os.environ, 'MUXY_TEST_RUNTIME': str(destination / 'muxy'),
-                        'MUXY_TEST_SERVER_PROFILE': 'beta',
-                        'MUXY_TEST_SERVER': str(destination / 'muxy-server')}
-            run('cargo', 'test', '--locked', '-p', 'muxy-cli', '--test', 'commands', '--test', 'tui', env=test_env, cwd=ROOT)
-            run('cargo', 'test', '--locked', '-p', 'muxy-server', '--test', 'lifecycle', env=test_env, cwd=ROOT)
+            tests = args.test_binaries or work / 'tests'
+            if not args.test_binaries:
+                runtime_tests.build(tests)
+            runtime_tests.run(tests, destination / 'muxy', profile='beta', env=env)
         print(json.dumps({'archive': args.archive.name, 'version': args.version, 'native': platform.machine(),
                           'installer': 'passed without Rust/Zig or desktop', 'live_server_preserved': True,
                           'dmg_bytes_match': bool(args.dmg), 'notarization_checked': args.notarized}), flush=True)
@@ -146,7 +143,10 @@ if __name__ == '__main__':
     parser.add_argument('--dmg', type=Path)
     parser.add_argument('--notarized', action='store_true')
     parser.add_argument('--runtime-tests', action='store_true')
+    parser.add_argument('--test-binaries', type=Path, help='reuse integration tests built on the oldest supported OS')
     options = parser.parse_args()
+    if options.test_binaries and not options.runtime_tests:
+        parser.error('--test-binaries requires --runtime-tests')
     options.archive = options.archive.resolve()
     if options.dmg:
         options.dmg = options.dmg.resolve()

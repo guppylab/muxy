@@ -2,9 +2,18 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    branches: [main, codex/simplify-release-20260913]
   pull_request:
   workflow_call:
+    inputs:
+      release:
+        description: Linux checks run in the release build jobs
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-ci-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -15,6 +24,7 @@ env:
 
 jobs:
   check:
+    if: ${{ inputs.release }}
     runs-on: macos-15
     timeout-minutes: 60
     steps:
@@ -45,14 +55,13 @@ jobs:
           RUSTDOCFLAGS: -D warnings
 
   headless:
+    if: ${{ !inputs.release }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - runner: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-          - runner: ubuntu-22.04-arm
-            target: aarch64-unknown-linux-gnu
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
@@ -73,12 +82,11 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: headless-${{ matrix.target }}
-          path: |
-            target/release/muxy
-            target/release/muxy-server
+          path: target/headless/
           if-no-files-found: error
 
   headless-newer:
+    if: ${{ !inputs.release }}
     needs: headless
     strategy:
       fail-fast: false
@@ -86,24 +94,11 @@ jobs:
         include:
           - runner: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
-          - runner: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config zsh fish binutils vim-tiny less
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.92.0
-          components: rustfmt, clippy
-      - uses: mlugg/setup-zig@v2
-        with:
-          version: 0.15.2
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-          key: headless-${{ matrix.target }}-newer-baseline
+      - run: sudo apt-get update && sudo apt-get install -y zsh fish binutils vim-tiny less
       - uses: actions/download-artifact@v4
         with:
           name: headless-${{ matrix.target }}

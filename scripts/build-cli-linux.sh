@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-if [[ $# -ne 2 ]]; then
-    echo "Usage: $0 <arm64|x86_64> <2.0.0-beta-N>" >&2
+if [[ $# -lt 2 || $# -gt 3 || ( $# -eq 3 && "$3" != --no-build ) ]]; then
+    echo "Usage: $0 <arm64|x86_64> <2.0.0-beta-N> [--no-build]" >&2
     exit 1
 fi
 ARCH="$1"
@@ -19,18 +19,20 @@ if [[ "$(uname -s)" != Linux || "$(uname -m)" != "$MACHINE" || "$(getconf GNU_LI
     exit 1
 fi
 export CARGO_TARGET_DIR="$ROOT/target"
-export LIBGHOSTTY_VT_SYS_OPTIMIZE=ReleaseFast
-export MUXY_ZIG="$(command -v zig)"
-export PATH="$ROOT/scripts/zig:$PATH"
 OUTPUT="$CARGO_TARGET_DIR/beta/$VERSION/linux-$ARCH"
 if [[ -e "$OUTPUT" ]]; then
     echo "Error: output already exists: $OUTPUT" >&2
     exit 1
 fi
 cd "$ROOT"
-# A cached native Zig object may otherwise depend on the previous runner's CPU.
-cargo clean -p libghostty-vt-sys
-cargo build --locked --release --target "$TARGET" -p muxy-cli -p muxy-server
+if [[ "${3:-}" != --no-build ]]; then
+    export LIBGHOSTTY_VT_SYS_OPTIMIZE=ReleaseFast
+    export MUXY_ZIG="$(command -v zig)"
+    export PATH="$ROOT/scripts/zig:$PATH"
+    # A cached native Zig object may otherwise depend on the previous runner's CPU.
+    cargo clean -p libghostty-vt-sys
+    cargo build --locked --release --target "$TARGET" -p muxy-cli -p muxy-server
+fi
 mkdir -p "$(dirname "$OUTPUT")"
 STAGING="$(mktemp -d "$(dirname "$OUTPUT")/.linux-${ARCH}.XXXXXX")"
 trap 'rm -rf "$STAGING"' EXIT

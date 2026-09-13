@@ -2,15 +2,10 @@ name: Release (Beta)
 
 on:
   push:
-    branches: [2.x]
+    branches: [codex/simplify-release-20260913]
 
 permissions:
   contents: read
-
-# Different commits can finish independently; reruns of one commit cannot race.
-concurrency:
-  group: release-beta-${{ github.sha }}
-  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -20,6 +15,8 @@ env:
 jobs:
   checks:
     uses: ./.github/workflows/ci.yml
+    with:
+      release: true
 
   validate:
     if: github.repository == 'muxy-app/muxy' && !github.event.deleted
@@ -47,6 +44,9 @@ jobs:
           fi
 
   build:
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-macos-${{ matrix.arch }}
+      cancel-in-progress: true
     needs: [checks, validate]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
@@ -160,6 +160,9 @@ jobs:
           rm -f "$RUNNER_TEMP/muxy-beta-certificate.p12"
 
   build-linux:
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-linux-${{ matrix.arch }}
+      cancel-in-progress: true
     needs: [checks, validate]
     strategy:
       fail-fast: false
@@ -184,6 +187,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.92.0
+          components: clippy
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.15.2
@@ -192,13 +196,19 @@ jobs:
           cache-on-failure: true
           key: beta-${{ matrix.target }}-glibc-2.35-baseline
       - run: python3 scripts/beta_release.py stamp "$VERSION"
-      - name: Build and audit the native glibc 2.35 pair
-        run: bash scripts/build-cli-linux.sh "$ARCH" "$VERSION"
+      - name: Check, build and package the native glibc 2.35 pair
+        run: python3 scripts/check-headless.py --target "${{ matrix.target }}" --release-version "$VERSION"
       - name: Verify packaged pair and standalone installation
         run: >-
           python3 scripts/verify-release-package.py
           "target/beta/$VERSION/linux-$ARCH/muxy-$VERSION-linux-$ARCH.tar.gz"
-          --version "$VERSION" --runtime-tests
+          --version "$VERSION" --runtime-tests --test-binaries target/headless/tests
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beta-runtime-tests-${{ matrix.arch }}
+          path: target/headless/tests/
+          if-no-files-found: error
+          retention-days: 7
       - uses: actions/upload-artifact@v4
         with:
           name: beta-distribution-linux-${{ matrix.arch }}
@@ -215,6 +225,9 @@ jobs:
           retention-days: 30
 
   verify-linux-newer:
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-newer-linux-${{ matrix.arch }}
+      cancel-in-progress: true
     needs: [validate, build-linux]
     strategy:
       fail-fast: false
@@ -233,28 +246,23 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
-      - run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config zsh fish binutils vim-tiny less
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.92.0
-      - uses: mlugg/setup-zig@v2
-        with:
-          version: 0.15.2
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-          key: beta-newer-${{ matrix.arch }}-baseline
-      - run: python3 scripts/beta_release.py stamp "$VERSION"
+      - run: sudo apt-get update && sudo apt-get install -y zsh fish binutils vim-tiny less
       - uses: actions/download-artifact@v4
         with:
           name: beta-distribution-linux-${{ matrix.arch }}
           path: artifacts
+      - uses: actions/download-artifact@v4
+        with:
+          name: beta-runtime-tests-${{ matrix.arch }}
+          path: runtime-tests
       - name: Verify the exact floor-built archive on newer userspace
         run: >-
           python3 scripts/verify-release-package.py
-          "artifacts/muxy-$VERSION-linux-$ARCH.tar.gz" --version "$VERSION" --runtime-tests
+          "artifacts/muxy-$VERSION-linux-$ARCH.tar.gz" --version "$VERSION"
+          --runtime-tests --test-binaries runtime-tests
 
   release:
+    if: false
     concurrency:
       group: muxy-beta-2.x-feed
       cancel-in-progress: false
