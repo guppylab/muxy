@@ -327,6 +327,22 @@ fn samples_cover_every_message_variant_once_and_use_the_right_channel() {
 
             Message::CatalogChanged { .. } => ("CatalogChanged", ChannelKind::Control),
             Message::Request {
+                body: RequestBody::SyncSessionReferences { .. },
+                ..
+            } => ("SyncSessionReferences", ChannelKind::Control),
+            Message::Request {
+                body: RequestBody::CloseSession { .. },
+                ..
+            } => ("CloseSession", ChannelKind::Control),
+            Message::Reply {
+                body: ReplyBody::SessionReferencesSynced,
+                ..
+            } => ("SessionReferencesSynced", ChannelKind::Control),
+            Message::Reply {
+                body: ReplyBody::SessionClosed,
+                ..
+            } => ("SessionClosed", ChannelKind::Control),
+            Message::Request {
                 body: RequestBody::StopServerIfIdle,
                 ..
             } => ("StopServerIfIdle", ChannelKind::Control),
@@ -436,6 +452,10 @@ fn samples_cover_every_message_variant_once_and_use_the_right_channel() {
         seen,
         BTreeSet::from([
             "CatalogChanged",
+            "SyncSessionReferences",
+            "CloseSession",
+            "SessionReferencesSynced",
+            "SessionClosed",
             "ReadCatalog",
             "MutateProject",
             "ListProjectSessions",
