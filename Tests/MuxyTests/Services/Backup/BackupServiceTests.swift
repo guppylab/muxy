@@ -16,8 +16,9 @@ struct BackupServiceTests {
         try data.write(to: directory.appendingPathComponent(name), options: .atomic)
     }
 
-    private func withSettingsFileSnapshot(_ body: () async throws -> Void) async throws {
-        let url = await SettingsJSONStore.userSettingsURL
+    @MainActor
+    private func withSettingsFileSnapshot(_ body: @MainActor () async throws -> Void) async throws {
+        let url = SettingsJSONStore.userSettingsURL
         let snapshot = try? Data(contentsOf: url)
         let existed = FileManager.default.fileExists(atPath: url.path)
         defer {
@@ -114,7 +115,7 @@ struct BackupServiceTests {
     @Test("export proceeds when the settings file is already in sync")
     func exportProceedsWhenSettingsUnchanged() async throws {
         try await withSettingsFileSnapshot {
-            await SettingsJSONStore.syncUserSettingsFileWithCurrentSettings()
+            SettingsJSONStore.syncUserSettingsFileWithCurrentSettings()
             let archive = tempDirectory().appendingPathComponent("backup.muxy")
             try await BackupService(baseDirectory: tempDirectory()).exportCurrent(to: archive)
             #expect(FileManager.default.fileExists(atPath: archive.path))
