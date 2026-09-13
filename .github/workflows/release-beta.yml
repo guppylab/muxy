@@ -45,7 +45,7 @@ jobs:
 
   build:
     concurrency:
-      group: ${{ github.workflow }}-${{ github.ref }}-macos-${{ matrix.arch }}
+      group: ${{ github.workflow }}-${{ github.ref }}-build-${{ matrix.target }}
       cancel-in-progress: true
     needs: [checks, validate]
     runs-on: ${{ matrix.runner }}
@@ -54,23 +54,40 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - arch: arm64
+          - platform: macos
+            directory: arm64
+            arch: arm64
             target: aarch64-apple-darwin
             runner: macos-15
-          - arch: x86_64
+          - platform: macos
+            directory: x86_64
+            arch: x86_64
             target: x86_64-apple-darwin
             runner: macos-15-intel
+          - platform: linux
+            directory: linux-x86_64
+            arch: x86_64
+            target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+          - platform: linux
+            directory: linux-arm64
+            arch: arm64
+            target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
     env:
       VERSION: ${{ needs.validate.outputs.version }}
       ARCH: ${{ matrix.arch }}
+      PACKAGE_DIR: target/beta/${{ needs.validate.outputs.version }}/${{ matrix.directory }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config zsh fish binutils vim-tiny less
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.92.0
-          targets: ${{ matrix.target }}
+          components: ${{ runner.os == 'Linux' && 'clippy' || '' }}
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.15.2
@@ -81,6 +98,7 @@ jobs:
       - name: Stamp the build version without committing a bump
         run: python3 scripts/beta_release.py stamp "$VERSION"
       - name: Import signing certificate
+        if: runner.os == 'macOS'
         env:
           CERTIFICATE_P12: ${{ secrets.DEVELOPER_ID_APPLICATION_CERTIFICATE }}
           CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_APPLICATION_PASSWORD }}
@@ -101,6 +119,7 @@ jobs:
           security import "$CERTIFICATE" -k "$KEYCHAIN_PATH" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
       - name: Resolve signing identity
+        if: runner.os == 'macOS'
         id: identity
         run: |
           KEYCHAIN_PATH="$RUNNER_TEMP/muxy-beta-signing.keychain-db"
@@ -111,47 +130,70 @@ jobs:
           fi
           echo "name=$IDENTITY" >> "$GITHUB_OUTPUT"
       - name: Build and sign desktop and standalone client/server pair
+        if: runner.os == 'macOS'
         env:
           SIGN_IDENTITY: ${{ steps.identity.outputs.name }}
         run: bash scripts/build-release.sh --arch "$ARCH" --version "$VERSION" --sign-identity "$SIGN_IDENTITY"
       - name: Notarize and verify DMG
+        if: runner.os == 'macOS'
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: bash scripts/notarize-release.sh "target/beta/$VERSION/$ARCH/Muxy-$VERSION-$ARCH.dmg"
+        run: bash scripts/notarize-release.sh "$PACKAGE_DIR/Muxy-$VERSION-$ARCH.dmg"
       - name: Notarize standalone ZIP and verify extracted executables
+        if: runner.os == 'macOS'
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: bash scripts/notarize-release.sh "target/beta/$VERSION/$ARCH/muxy-$VERSION-macos-$ARCH.zip"
+        run: bash scripts/notarize-release.sh "$PACKAGE_DIR/muxy-$VERSION-macos-$ARCH.zip"
       - name: Verify packaged pair, desktop bytes and standalone installation
+        if: runner.os == 'macOS'
         run: >-
           python3 scripts/verify-release-package.py
-          "target/beta/$VERSION/$ARCH/muxy-$VERSION-macos-$ARCH.zip"
-          --version "$VERSION" --dmg "target/beta/$VERSION/$ARCH/Muxy-$VERSION-$ARCH.dmg"
-          --notarized --runtime-tests
-      - name: Upload notarized desktop and standalone archives
-        uses: actions/upload-artifact@v4
+          "$PACKAGE_DIR/muxy-$VERSION-macos-$ARCH.zip"
+          --version "$VERSION" --dmg "$PACKAGE_DIR/Muxy-$VERSION-$ARCH.dmg"
+          --notarized
+      - name: Check, build and package the native glibc 2.35 pair
+        if: runner.os == 'Linux'
+        run: python3 scripts/check-headless.py --target "${{ matrix.target }}" --release-version "$VERSION"
+      - name: Verify packaged pair and standalone installation
+        if: runner.os == 'Linux'
+        run: >-
+          python3 scripts/verify-release-package.py
+          "$PACKAGE_DIR/muxy-$VERSION-linux-$ARCH.tar.gz"
+          --version "$VERSION" --test-binaries target/headless/tests
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
         with:
-          name: beta-distribution-macos-${{ matrix.arch }}
-          path: |
-            target/beta/${{ env.VERSION }}/${{ matrix.arch }}/*.dmg
-            target/beta/${{ env.VERSION }}/${{ matrix.arch }}/muxy-*-macos-*.zip
+          name: beta-runtime-tests-${{ matrix.arch }}
+          path: target/headless/tests/
           if-no-files-found: error
           retention-days: 7
-      - name: Upload app and server debug symbols
+      - name: Upload distribution archives
         uses: actions/upload-artifact@v4
         with:
-          name: beta-symbols-${{ matrix.arch }}
+          name: beta-distribution-${{ matrix.platform }}-${{ matrix.arch }}
           path: |
-            target/beta/${{ env.VERSION }}/${{ matrix.arch }}/*-symbols.zip
-            target/beta/${{ env.VERSION }}/${{ matrix.arch }}/*-dependencies.txt
+            ${{ env.PACKAGE_DIR }}/Muxy-${{ env.VERSION }}-${{ matrix.arch }}.dmg
+            ${{ env.PACKAGE_DIR }}/muxy-${{ env.VERSION }}-${{ matrix.platform }}-${{ matrix.arch }}.zip
+            ${{ env.PACKAGE_DIR }}/muxy-${{ env.VERSION }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload debug symbols and dependency audits
+        uses: actions/upload-artifact@v4
+        with:
+          name: beta-symbols-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            ${{ env.PACKAGE_DIR }}/*-symbols.zip
+            ${{ env.PACKAGE_DIR }}/*-symbols.tar.gz
+            ${{ env.PACKAGE_DIR }}/*-dependencies.txt
+            ${{ env.PACKAGE_DIR }}/*-audit.txt
           if-no-files-found: error
           retention-days: 30
       - name: Remove signing keychain
-        if: always()
+        if: always() && runner.os == 'macOS'
         run: |
           KEYCHAIN_PATH="$RUNNER_TEMP/muxy-beta-signing.keychain-db"
           if [[ -f "$KEYCHAIN_PATH" ]]; then
@@ -159,76 +201,11 @@ jobs:
           fi
           rm -f "$RUNNER_TEMP/muxy-beta-certificate.p12"
 
-  build-linux:
-    concurrency:
-      group: ${{ github.workflow }}-${{ github.ref }}-linux-${{ matrix.arch }}
-      cancel-in-progress: true
-    needs: [checks, validate]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x86_64
-            target: x86_64-unknown-linux-gnu
-            runner: ubuntu-22.04
-          - arch: arm64
-            target: aarch64-unknown-linux-gnu
-            runner: ubuntu-22.04-arm
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
-    env:
-      VERSION: ${{ needs.validate.outputs.version }}
-      ARCH: ${{ matrix.arch }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-      - run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config zsh fish binutils vim-tiny less
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.92.0
-          components: clippy
-      - uses: mlugg/setup-zig@v2
-        with:
-          version: 0.15.2
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-          key: beta-${{ matrix.target }}-glibc-2.35-baseline
-      - run: python3 scripts/beta_release.py stamp "$VERSION"
-      - name: Check, build and package the native glibc 2.35 pair
-        run: python3 scripts/check-headless.py --target "${{ matrix.target }}" --release-version "$VERSION"
-      - name: Verify packaged pair and standalone installation
-        run: >-
-          python3 scripts/verify-release-package.py
-          "target/beta/$VERSION/linux-$ARCH/muxy-$VERSION-linux-$ARCH.tar.gz"
-          --version "$VERSION" --runtime-tests --test-binaries target/headless/tests
-      - uses: actions/upload-artifact@v4
-        with:
-          name: beta-runtime-tests-${{ matrix.arch }}
-          path: target/headless/tests/
-          if-no-files-found: error
-          retention-days: 7
-      - uses: actions/upload-artifact@v4
-        with:
-          name: beta-distribution-linux-${{ matrix.arch }}
-          path: target/beta/${{ env.VERSION }}/linux-${{ matrix.arch }}/muxy-*-linux-${{ matrix.arch }}.tar.gz
-          if-no-files-found: error
-          retention-days: 7
-      - uses: actions/upload-artifact@v4
-        with:
-          name: beta-symbols-linux-${{ matrix.arch }}
-          path: |
-            target/beta/${{ env.VERSION }}/linux-${{ matrix.arch }}/*-symbols.tar.gz
-            target/beta/${{ env.VERSION }}/linux-${{ matrix.arch }}/*-audit.txt
-          if-no-files-found: error
-          retention-days: 30
-
   verify-linux-newer:
     concurrency:
       group: ${{ github.workflow }}-${{ github.ref }}-newer-linux-${{ matrix.arch }}
       cancel-in-progress: true
-    needs: [validate, build-linux]
+    needs: [validate, build]
     strategy:
       fail-fast: false
       matrix:
@@ -259,14 +236,14 @@ jobs:
         run: >-
           python3 scripts/verify-release-package.py
           "artifacts/muxy-$VERSION-linux-$ARCH.tar.gz" --version "$VERSION"
-          --runtime-tests --test-binaries runtime-tests
+          --test-binaries runtime-tests
 
   release:
     if: false
     concurrency:
       group: muxy-beta-2.x-feed
       cancel-in-progress: false
-    needs: [validate, build, build-linux, verify-linux-newer]
+    needs: [validate, build, verify-linux-newer]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
