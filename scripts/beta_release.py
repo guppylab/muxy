@@ -97,6 +97,8 @@ def update_metadata(version, repository, directory):
     platforms = {}
     for platform, arch in (("macos-aarch64", "arm64"), ("macos-x86_64", "x86_64")):
         filename = f"Muxy-{version}-{arch}.dmg"
+        if arch == "x86_64" and not (directory / filename).exists():
+            continue
         size = (directory / filename).stat().st_size
         if not 0 < size <= 2 * 1024**3:
             raise ValueError(f"invalid update size for {arch}")

@@ -40,8 +40,16 @@ check_source
 
 cd "$ARTIFACTS"
 ASSETS=(install-muxy.sh)
+MACOS_ARCHITECTURES='Apple Silicon (`arm64`)'
 for ARCH in arm64 x86_64; do
-    ASSETS+=("Muxy-${VERSION}-${ARCH}.dmg" "muxy-${VERSION}-macos-${ARCH}.zip" "muxy-${VERSION}-linux-${ARCH}.tar.gz")
+    ASSETS+=("muxy-${VERSION}-linux-${ARCH}.tar.gz")
+    if [[ "$ARCH" == x86_64 && ! -e "Muxy-${VERSION}-${ARCH}.dmg" && ! -e "muxy-${VERSION}-macos-${ARCH}.zip" ]]; then
+        continue
+    fi
+    ASSETS+=("Muxy-${VERSION}-${ARCH}.dmg" "muxy-${VERSION}-macos-${ARCH}.zip")
+    if [[ "$ARCH" == x86_64 ]]; then
+        MACOS_ARCHITECTURES+=' or Intel (`x86_64`)'
+    fi
 done
 for ASSET in "${ASSETS[@]}"; do
     if [[ ! -f "$ASSET" || ! -s "$ASSET" || -L "$ASSET" ]]; then
@@ -67,13 +75,13 @@ else
     cat > release-notes.md <<EOF
 Experimental Rust/GPUI beta from the \`2.x\` branch. Not intended for production use.
 
-- macOS 14 or newer. Choose \`arm64\` for Apple Silicon or \`x86_64\` for Intel.
+- macOS 14 or newer on $MACOS_ARCHITECTURES.
 - Drag \`Muxy Beta.app\` to Applications. The app bundles the matching \`muxy\` CLI/TUI and \`muxy-server\`. Use **Install Command Line Tool** to expose the bundled CLI on PATH.
 - Installs alongside Muxy, with separate settings and sessions in \`~/Library/Application Support/Muxy Beta\`.
 - Newer 2.x betas download automatically. Use **Check for Updates…** or **Restart to Update…** to install. Compatible servers keep running during updates; incompatible updates wait for the existing restart flow.
 - When replacing a beta manually, stop its server in Settings before replacing the app.
 
-Standalone CLI/TUI and server: macOS 14+ or Linux with glibc 2.35+, on ARM64 or x86_64. Install the exact matching pair without a desktop app, Rust, or Zig:
+Standalone CLI/TUI and server: macOS 14+ on $MACOS_ARCHITECTURES, or Linux with glibc 2.35+ on ARM64 or x86_64. Install the exact matching pair without a desktop app, Rust, or Zig:
 
 \`\`\`sh
 curl -fsSL https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/install-muxy.sh | sh -s -- --version $VERSION

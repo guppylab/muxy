@@ -256,8 +256,32 @@ class ReleaseScriptTests(unittest.TestCase):
         self.assertNotEqual(self.publish().returncode, 0)
         self.assertEqual([call[2] for call in self.calls("gh")], ["view", "create", "upload"])
 
-    def test_missing_intel_artifact_prevents_release(self):
+    def test_publishes_without_intel_macos_when_both_artifacts_are_absent(self):
+        intel_assets = [f"Muxy-{VERSION}-x86_64.dmg", f"muxy-{VERSION}-macos-x86_64.zip"]
+        for asset in intel_assets:
+            (self.directory / asset).unlink()
+        result = self.publish()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.version_release_calls()
+        self.assertEqual([call[2] for call in calls], ["view", "create", "upload", "view", "edit"])
+        for asset in intel_assets:
+            self.assertNotIn(asset, calls[2])
+        for arch in ("arm64", "x86_64"):
+            self.assertIn(f"muxy-{VERSION}-linux-{arch}.tar.gz", calls[2])
+        self.assertIn(f"Muxy-{VERSION}-arm64.dmg", calls[2])
+        self.assertIn(f"muxy-{VERSION}-macos-arm64.zip", calls[2])
+        metadata = json.loads((self.directory / "update.json").read_text())
+        self.assertEqual(set(metadata["platforms"]), {"macos-aarch64"})
+        self.assertEqual(len((self.directory / "SHA256SUMS").read_text().splitlines()), 6)
+        self.assertNotIn("Intel", (self.directory / "release-notes.md").read_text())
+
+    def test_incomplete_intel_artifacts_prevent_release(self):
         (self.directory / f"Muxy-{VERSION}-x86_64.dmg").unlink()
+        self.assertNotEqual(self.publish().returncode, 0)
+        self.assertEqual(self.calls("gh"), [])
+
+    def test_missing_arm64_dmg_prevents_release(self):
+        (self.directory / f"Muxy-{VERSION}-arm64.dmg").unlink()
         self.assertNotEqual(self.publish().returncode, 0)
         self.assertEqual(self.calls("gh"), [])
 
