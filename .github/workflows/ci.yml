@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [codex/last-tab-close-20260913]
+    branches: [codex/last-tab-close-socket-20260913]
   pull_request:
   workflow_dispatch:
   workflow_call:
