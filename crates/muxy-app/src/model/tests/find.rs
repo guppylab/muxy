@@ -294,15 +294,14 @@ fn walkthrough(cx: &mut TestAppContext) -> Result {
     cx.simulate_keystrokes("escape");
     cx.run_until_parked();
     shell(cx, "exit");
-    wait_exited(cx, &view)?;
+    wait_empty(cx, &view)?;
     signal_test_server(&directory, "-TERM")?;
     wait(cx, &view, |model, _| {
         model.connection == ConnectionState::Disconnected
     })?;
     reload_model(cx, &view)?;
-    wait_exited(cx, &view)?;
-    query(cx, &view, "4999")?;
-    report("21.4: exited pane searched successfully after server restart")?;
+    wait_empty(cx, &view)?;
+    report("21.4: exited search pane stayed closed after server restart")?;
     signal_test_server(&directory, "-TERM")?;
     report("Phase 21 GPUI/live-server walkthrough: PASS")
 }

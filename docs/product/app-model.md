@@ -67,10 +67,10 @@ connections need no indicator. Terminal panes retain their last available
 content. Existing project edits and closes remain available while disconnected
 and replay in order on reconnection.
 
-An ended terminal pane stays open, marked as exited, and accepts no input.
-Its saved screen and history remain available for scrolling, search, selection,
-and copy, including after relaunch. Missing saved content is explained in the
-pane. An ended or discarded session is never automatically restarted. See the
+When a terminal session ends, every client immediately removes its panes,
+including those in inactive tabs and projects. Closing the last pane closes
+its tab; other panes remain. Relaunching or reconnecting removes references
+to sessions that have ended or been discarded, without restarting them. See the
 [server model](./server-model.md#closing-panes) for close and retention rules.
 
 Quitting or detaching leaves sessions running. **End All Sessions and Quit**
@@ -103,4 +103,4 @@ Server settings show pending server updates.
 An incompatible beta update may wait for all sessions to end. This schedules
 installation and app restart while the app runs; users can cancel it. Updating
 immediately requires confirmation that all terminal processes on the device
-will end. Tabs and saved output remain.
+will end and their terminal panes will close.

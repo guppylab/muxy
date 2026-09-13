@@ -260,6 +260,67 @@ impl State {
             .collect()
     }
 
+    pub(crate) fn close_sessions(&mut self, sessions: &BTreeSet<SessionId>) {
+        for project in self.projects.values_mut() {
+            for index in (0..project.tabs.len()).rev() {
+                let tab = &mut project.tabs[index];
+                let removed: Vec<_> = tab
+                    .panes
+                    .iter()
+                    .filter(|(_, pane)| {
+                        pane.session
+                            .is_some_and(|session| sessions.contains(&session))
+                    })
+                    .map(|(id, _)| *id)
+                    .collect();
+                for id in removed {
+                    let neighbor = [
+                        Direction::Right,
+                        Direction::Left,
+                        Direction::Down,
+                        Direction::Up,
+                    ]
+                    .into_iter()
+                    .find_map(|direction| tab.layout.neighbor(id, direction));
+                    tab.panes.remove(&id);
+                    tab.layout.remove(id);
+                    if tab.focus == id {
+                        tab.focus = neighbor
+                            .or_else(|| tab.panes.keys().next().copied())
+                            .unwrap_or(id);
+                        tab.zoom = false;
+                    }
+                }
+                if tab.panes.is_empty() {
+                    project.tabs.remove(index);
+                    if index < project.active {
+                        project.active -= 1;
+                    }
+                }
+            }
+            project.active = project.active.min(project.tabs.len().saturating_sub(1));
+        }
+    }
+
+    pub(crate) fn close_ended_sessions(
+        &mut self,
+        ended: &BTreeSet<SessionId>,
+    ) -> BTreeSet<SessionId> {
+        let references: BTreeSet<_> = self.session_references().into_iter().collect();
+        let mut closed = BTreeSet::new();
+        for session in ended {
+            let discard = Discard::Session(*session);
+            if !references.contains(session) || self.discards.contains(&discard) {
+                closed.insert(*session);
+            } else if self.discards.len() < MAX_PANES {
+                self.discards.push(discard);
+                closed.insert(*session);
+            }
+        }
+        self.close_sessions(&closed);
+        closed
+    }
+
     fn prepare_closes(&mut self) {
         self.close_operations
             .retain(|session, _| self.discards.contains(&Discard::Session(*session)));
@@ -542,6 +603,101 @@ fn persist(path: &Path, state: &State) -> io::Result<()> {
 mod tests {
     use super::*;
     use muxy_protocol::ProjectDescriptor;
+
+    #[test]
+    fn automatic_close_overflow_survives_relaunch_and_retries_when_cleanup_has_space() -> Result {
+        let directory = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let catalog = catalog();
+        let mut store = Store::load(directory.path(), &catalog)?;
+        let sessions: BTreeSet<_> = [10_000, 10_001]
+            .into_iter()
+            .map(|id| SessionId::new(id).ok_or_else(|| "session".to_string()))
+            .collect::<Result<_>>()?;
+        store.change(|state| {
+            state.reconcile(&catalog)?;
+            let mut sessions = sessions.iter().copied();
+            let first = state.tab().ok_or("tab")?.focus;
+            let pane = state.pane_mut(first).ok_or("pane")?;
+            pane.session = sessions.next();
+            pane.creation = None;
+            state.new_pane(None, ServerPath(b"/tmp".to_vec()), sessions.next())?;
+            state.discards = (1..MAX_PANES)
+                .map(|id| {
+                    SessionId::new(id as u64)
+                        .map(Discard::Session)
+                        .ok_or_else(|| "session".to_string())
+                })
+                .collect::<Result<_>>()?;
+            Ok(())
+        })?;
+        let closed = store.change(|state| Ok(state.close_ended_sessions(&sessions)))?;
+        assert_eq!(closed.len(), 1);
+        assert_eq!(store.state.discards.len(), MAX_PANES);
+        let pending: BTreeSet<_> = sessions.difference(&closed).copied().collect();
+        let mut visible = store.state.clone();
+        visible.close_sessions(&pending);
+        assert!(visible.tab().is_none());
+
+        let mut restored = Store::load(directory.path(), &catalog)?;
+        assert_eq!(
+            restored.state.session_references(),
+            pending.iter().copied().collect::<Vec<_>>()
+        );
+        assert!(
+            restored
+                .change(|state| Ok(state.close_ended_sessions(&pending)))?
+                .is_empty()
+        );
+        restored.change(|state| {
+            state.discards.remove(0);
+            Ok(())
+        })?;
+        assert_eq!(
+            restored.change(|state| Ok(state.close_ended_sessions(&pending)))?,
+            pending
+        );
+        let saved = Store::load(directory.path(), &catalog)?;
+        assert!(saved.state.tab().is_none());
+        assert_eq!(saved.state.discards.len(), MAX_PANES);
+        for session in sessions {
+            assert!(saved.state.discards.contains(&Discard::Session(session)));
+            assert!(saved.state.close_operations.contains_key(&session));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn dead_sessions_close_across_projects_without_changing_live_focus() -> Result {
+        let catalog = catalog();
+        let mut state = State::new(&catalog);
+        state.reconcile(&catalog)?;
+        let directory = ServerPath(b"/tmp".to_vec());
+        let dead = SessionId::new(1).ok_or("session")?;
+        let live = SessionId::new(2).ok_or("session")?;
+        let first = state.tab().ok_or("tab")?.focus;
+        let pane = state.pane_mut(first).ok_or("pane")?;
+        pane.session = Some(dead);
+        pane.creation = None;
+        state.new_pane(None, directory.clone(), Some(dead))?;
+        let focused = state.new_pane(Some(Direction::Right), directory.clone(), Some(live))?;
+        state.tab_mut().ok_or("tab")?.zoom = true;
+        let hidden = ProjectId::new();
+        state.projects.insert(hidden, Project::default());
+        state.active = hidden;
+        state.new_pane(None, directory, Some(dead))?;
+        state.active = catalog.home;
+        state.close_sessions(&BTreeSet::from([dead]));
+        assert_eq!(state.active, catalog.home);
+        assert!(state.projects[&hidden].tabs.is_empty());
+        assert_eq!(state.projects[&catalog.home].tabs.len(), 1);
+        assert_eq!(state.tab().ok_or("tab")?.focus, focused);
+        assert!(state.tab().ok_or("tab")?.zoom);
+        assert_eq!(state.tab().ok_or("tab")?.layout.leaves(), vec![focused]);
+        state.validate()?;
+        state.close_sessions(&BTreeSet::from([live]));
+        assert!(state.tab().is_none());
+        state.validate()
+    }
 
     fn catalog() -> CatalogPage {
         let home = ProjectId::new();

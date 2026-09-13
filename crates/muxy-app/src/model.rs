@@ -13,7 +13,7 @@ use muxy_app_core::{
     restore, store,
 };
 use muxy_client::{ClientEvent, RunGrid};
-use muxy_protocol::{ExitReason, SessionId, SessionInfo, Size};
+use muxy_protocol::{SessionId, SessionInfo, Size};
 
 use crate::boot::{Boot, Update, Work, Worker, missing_session};
 use crate::views::overlays::Overlay;
@@ -1138,7 +1138,16 @@ impl AppModel {
     fn apply_restore(&mut self, sessions: &[SessionInfo], cx: &mut Context<Self>) {
         self.restore_quick_terminal(sessions, cx);
         let plan = restore::plan(&self.state, sessions);
-        self.retained = plan.retain.iter().map(|(pane, _)| *pane).collect();
+        let active = self.active_pane();
+        for (pane, _) in plan.close {
+            if let Err(error) = self.state.close_session_pane(pane) {
+                self.fail(error.to_string(), cx);
+                return;
+            }
+        }
+        self.focus_requested |= active != self.active_pane();
+        self.save(cx);
+        self.discard_pending(cx);
         self.loaded.clear();
         self.pending.clear();
         for (id, pane) in &self.grids {
@@ -1379,9 +1388,7 @@ impl AppModel {
                 pane,
                 session,
                 error,
-            } => {
-                self.receive_attach_failed(pane, session, &error, cx);
-            }
+            } => self.receive_attach_failed(pane, session, &error, cx),
             Update::Saved { pane, result } => self.receive_saved(pane, result, cx),
             Update::History {
                 pane,
@@ -1425,6 +1432,7 @@ impl AppModel {
             }
             Update::Flushed if self.quitting == Quitting::Update => self.flush_before_update(cx),
             Update::ReferencesSynced(Ok(())) | Update::Flushed => {}
+            Update::CloseSessionPanes(session) => self.close_ended_session(session, cx),
             Update::Event(event) => self.receive_event(event, cx),
             Update::Error(error) => self.fail(error, cx),
         }
@@ -1487,8 +1495,9 @@ impl AppModel {
             return;
         }
         if missing_session(error) {
-            self.mark_exited(pane, None, cx);
-            self.ensure_visible(cx);
+            if let Some(session) = self.pane_session(pane) {
+                self.close_ended_session(session, cx);
+            }
         } else {
             self.fail(error.to_string(), cx);
         }
@@ -1587,22 +1596,10 @@ impl AppModel {
                     self.send(Work::Ack(channel, seq), cx);
                 }
             }
-            ClientEvent::SessionEnded { session, reason } => {
+            ClientEvent::SessionEnded { session, .. } => {
                 self.updates.sessions = self.updates.sessions.saturating_sub(1);
-                if self
-                    .state
-                    .quick_terminal()
-                    .is_some_and(|pane| self.pane_session(pane.id) == Some(session))
-                {
-                    self.close_quick_terminal(cx);
-                }
-                let panes: Vec<_> = self.state.projects().iter().flat_map(|project| &project.tabs).flat_map(|tab| &tab.panes)
-                    .filter(|pane| matches!(pane.content, PaneContent::Terminal { session: Some(id) } if id == session))
-                    .map(|pane| pane.id).collect();
-                for pane in panes {
-                    self.mark_exited(pane, Some(reason), cx);
-                }
-                self.ensure_visible(cx);
+                self.close_ended_session(session, cx);
+                self.refresh_session_picker(cx);
                 self.reconcile_server_update(cx);
             }
             ClientEvent::ServerRestarting => self.expect_server_restart(),
@@ -1620,21 +1617,35 @@ impl AppModel {
         }
     }
 
-    fn mark_exited(&mut self, id: PaneId, reason: Option<ExitReason>, cx: &mut Context<Self>) {
-        self.retained.insert(id);
-        self.loaded.remove(&id);
-        if let Some(pane) = self.terminal(&id) {
-            pane.view.update(cx, |pane, cx| {
-                pane.set_state(
-                    PaneState::Exited {
-                        reason,
-                        unavailable: false,
-                    },
-                    cx,
-                );
-            });
+    fn close_ended_session(&mut self, session: SessionId, cx: &mut Context<Self>) {
+        if !self.state.session_references().contains(&session) {
+            return;
         }
-        cx.notify();
+        if self
+            .state
+            .quick_terminal()
+            .is_some_and(|pane| self.pane_session(pane.id) == Some(session))
+        {
+            self.close_quick_terminal(cx);
+        }
+        let active = self.active_pane();
+        if let Err(error) = self.state.close_session_panes(session) {
+            self.fail(error.to_string(), cx);
+            return;
+        }
+        if self.close_request.as_ref().is_some_and(|request| {
+            request
+                .panes
+                .iter()
+                .any(|pane| self.pane_tab(*pane).is_none())
+        }) {
+            self.close_request = None;
+            self.pending_close = None;
+            self.close_prompt = None;
+        }
+        self.focus_requested |= active != self.active_pane();
+        self.changed(cx);
+        self.discard_pending(cx);
     }
 
     fn receive_search(
@@ -1735,6 +1746,7 @@ impl Drop for AppModel {
 
 #[cfg(test)]
 mod tests {
+    use muxy_protocol::ExitReason;
     mod clipboard;
     mod colors;
     mod find;
@@ -1868,9 +1880,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn exit_before_first_attachment_preserves_the_session_and_saved_output(
-        cx: &mut TestAppContext,
-    ) {
+    fn exit_before_first_attachment_closes_and_persists_the_tab(cx: &mut TestAppContext) {
         let (boot, requests) = stub_boot(AppState::bootstrap().expect("state"));
         let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
         view.update(cx, |model, cx| {
@@ -1891,15 +1901,18 @@ mod tests {
                 ),
                 cx,
             );
-            assert_eq!(model.pane_session(pane), Some(session));
-            assert!(model.retained.contains(&pane));
+            assert!(model.state.home().tabs.is_empty());
+            assert!(model.terminal(&pane).is_none());
             let work: Vec<_> = requests.try_iter().map(|(_, work)| work).collect();
             assert!(
-                work.iter().any(
-                    |work| matches!(work, Work::ReadSaved { session: id, .. } if *id == session)
-                )
+                !work
+                    .iter()
+                    .any(|work| matches!(work, Work::ReadSaved { .. }))
             );
-            assert!(!work.iter().any(|work| matches!(work, Work::Discard(_, _))));
+            assert!(
+                work.iter()
+                    .any(|work| matches!(work, Work::Discard(id, _) if *id == session))
+            );
             model.receive(
                 (
                     1,
@@ -1910,12 +1923,26 @@ mod tests {
                 ),
                 cx,
             );
+            model.receive(
+                (
+                    1,
+                    Update::Attached {
+                        pane,
+                        session,
+                        attachment: attachment(),
+                        created: false,
+                    },
+                ),
+                cx,
+            );
+            assert!(model.state.home().tabs.is_empty());
             let restored = store::load(&model.path).expect("saved state");
-            let plan = restore::plan(&restored, &[]);
-            assert!(plan.create.is_empty());
-            assert_eq!(plan.retain, vec![(pane, session)]);
+            assert!(restored.home().tabs.is_empty());
+            assert_eq!(
+                restore::plan(&restored, &[]),
+                restore::RestorePlan::default()
+            );
         });
-        assert!(screen(&view, cx).contains("final marker"));
     }
 
     #[gpui::test]
@@ -2611,9 +2638,9 @@ mod tests {
     }
 
     #[gpui::test]
-    fn restore_retains_content_and_rejects_stale_connections(cx: &mut TestAppContext) {
+    fn restore_closes_dead_tabs_and_rejects_stale_connections(cx: &mut TestAppContext) {
         let mut state = AppState::bootstrap().expect("state");
-        let first = state.open_terminal_tab(state.home().id).expect("tab");
+        state.open_terminal_tab(state.home().id).expect("tab");
         let pane = state.home().tabs[0].panes[0].id;
         let session = SessionId::new(42).expect("ID");
         state
@@ -2624,54 +2651,137 @@ mod tests {
         view.update(cx, |model, cx| {
             model.receive((1, Update::Connected(vec![])), cx);
             acknowledge_catalog(model, cx);
-            model.receive(
-                (
-                    1,
-                    Update::Saved {
-                        pane,
-                        result: Ok(saved_screen()),
-                    },
-                ),
-                cx,
+            assert!(model.state.home().tabs.is_empty());
+            assert!(
+                store::load(&model.path)
+                    .expect("saved state")
+                    .home()
+                    .tabs
+                    .is_empty()
             );
-        });
-        cx.run_until_parked();
-        let _ = requests.try_iter().count();
-        type_text(cx, "must not reach a terminal");
-        cx.simulate_resize(size(px(500.0), px(350.0)));
-        cx.run_until_parked();
-        assert!(
-            !requests
-                .try_iter()
-                .any(|(_, work)| matches!(work, Work::Input(..) | Work::Resize(..)))
-        );
-        assert!(screen(&view, cx).contains("final marker"));
-        view.update(cx, |model, cx| {
-            model.new_tab(cx);
-            model.select_tab(first, cx);
             model.receive((1, Update::Event(ClientEvent::Disconnected)), cx);
             model.connect(cx);
             model.receive((1, Update::ConnectFailed("stale".into())), cx);
             assert!(model.connection == ConnectionState::Connecting);
             model.receive((2, Update::Connected(vec![])), cx);
             acknowledge_catalog(model, cx);
+            assert!(model.connection == ConnectionState::Ready);
+            assert!(model.state.home().tabs.is_empty());
+            assert!(model.grids.is_empty());
+        });
+        assert!(
+            !requests
+                .try_iter()
+                .any(|(_, work)| matches!(work, Work::Attach { .. } | Work::ReadSaved { .. }))
+        );
+    }
+
+    #[gpui::test]
+    fn restore_closes_only_the_pane_with_invalid_session_membership(cx: &mut TestAppContext) {
+        let mut state = AppState::bootstrap().expect("state");
+        let home = state.home().id;
+        let session = SessionId::new(42).expect("session");
+        state.open_terminal_tab(home).expect("tab");
+        let valid = state.window().active_pane.expect("pane");
+        state
+            .set_pane_session(valid, Some(session))
+            .expect("session");
+        let other = state.add_project(std::env::temp_dir()).expect("project");
+        state.open_terminal_tab(other).expect("tab");
+        let invalid = state.window().active_pane.expect("pane");
+        state
+            .set_pane_session(invalid, Some(session))
+            .expect("session");
+        let (boot, _requests) = stub_boot(state);
+        let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
+        view.update(cx, |model, cx| {
+            model.apply_restore(
+                &[SessionInfo {
+                    project: home,
+                    id: session,
+                    directory: muxy_protocol::ServerPath(b"/tmp".to_vec()),
+                }],
+                cx,
+            );
+            assert_eq!(model.pane_session(valid), Some(session));
+            assert!(model.pane_tab(invalid).is_none());
+            assert!(!model.state.pending_discards().contains(&session));
+        });
+    }
+
+    #[gpui::test]
+    fn session_exit_closes_duplicate_and_hidden_panes_preserving_live_splits(
+        cx: &mut TestAppContext,
+    ) {
+        let mut state = AppState::bootstrap().expect("state");
+        let home = state.home().id;
+        let dead = SessionId::new(42).expect("ID");
+        let live = SessionId::new(43).expect("ID");
+        state.open_terminal_tab(home).expect("tab");
+        let first = state.window().active_pane.expect("pane");
+        state.set_pane_session(first, Some(dead)).expect("session");
+        let neighbor = state.split_pane(first, Direction::Right).expect("split");
+        state
+            .set_pane_session(neighbor, Some(live))
+            .expect("session");
+        state.open_terminal_tab(home).expect("tab");
+        state
+            .set_pane_session(state.window().active_pane.expect("pane"), Some(dead))
+            .expect("session");
+        let hidden = state.add_project(std::env::temp_dir()).expect("project");
+        state.open_terminal_tab(hidden).expect("tab");
+        state
+            .set_pane_session(state.window().active_pane.expect("pane"), Some(dead))
+            .expect("session");
+        state
+            .select_tab(home, state.home().tabs[0].id)
+            .expect("select");
+        let (boot, _) = stub_boot(state);
+        let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
+        view.update(cx, |model, cx| {
+            let active = model.active_pane();
+            model.receive((1, Update::CloseSessionPanes(dead)), cx);
+            assert_eq!(model.active_pane(), active);
+            assert_eq!(model.state.home().tabs.len(), 1);
+            assert_eq!(model.state.home().tabs[0].layout.leaves(), vec![neighbor]);
+            assert!(
+                model
+                    .state
+                    .project(hidden)
+                    .expect("project")
+                    .tabs
+                    .is_empty()
+            );
+            assert_eq!(model.state.session_references(), vec![live]);
+            assert_eq!(
+                store::load(&model.path)
+                    .expect("saved state")
+                    .session_references(),
+                vec![live]
+            );
             model.receive(
                 (
-                    2,
-                    Update::Saved {
-                        pane,
-                        result: Ok(saved_screen()),
-                    },
+                    1,
+                    Update::Event(ClientEvent::SessionEnded {
+                        session: dead,
+                        reason: ExitReason::Exited(0),
+                    }),
                 ),
                 cx,
             );
-            assert!(model.connection == ConnectionState::Ready);
-            assert_eq!(model.state.home().tabs[0].id, first);
-            let terminal = model.terminal(&pane).expect("terminal").view.read(cx);
-            assert!(terminal.channel().is_none());
-            assert!(matches!(terminal.state, PaneState::Exited { .. }));
+            model.receive(
+                (
+                    1,
+                    Update::Event(ClientEvent::SessionEnded {
+                        session: live,
+                        reason: ExitReason::Ended,
+                    }),
+                ),
+                cx,
+            );
+            assert!(model.state.home().tabs.is_empty());
+            assert!(model.active_pane().is_none());
         });
-        assert!(screen(&view, cx).contains("final marker"));
     }
 
     #[gpui::test]
@@ -3134,7 +3244,7 @@ mod tests {
         report(
             "13.2: Cmd-Q action, model teardown and Boot reload preserved all IDs, order, selection and bounds; top continued; shell stayed in /tmp; WHILE_CLOSED was saved with no app connection",
         )?;
-        verify_retained_exit(cx, &view)?;
+        verify_automatic_exit(cx, &view)?;
         verify_server_restarts(cx, &view, &directory)?;
         verify_discard_and_end_all(cx, &view, &directory)?;
         Ok(())
@@ -3183,40 +3293,28 @@ mod tests {
         })
     }
 
-    fn wait_exited(cx: &mut VisualTestContext, view: &Entity<AppModel>) -> Result {
-        wait(cx, view, |model, cx| {
-            model
-                .active_pane()
-                .and_then(|id| model.terminal(&id))
-                .is_some_and(|pane| {
-                    matches!(
-                        pane.view.read(cx).state,
-                        PaneState::Exited {
-                            unavailable: false,
-                            ..
-                        }
-                    ) && !model.pending.contains(&model.active_pane().expect("pane"))
-                })
+    fn wait_empty(cx: &mut VisualTestContext, view: &Entity<AppModel>) -> Result {
+        wait(cx, view, |model, _| {
+            model.connection == ConnectionState::Ready && model.state.home().tabs.is_empty()
         })
     }
 
-    fn verify_retained_exit(cx: &mut VisualTestContext, view: &Entity<AppModel>) -> Result {
-        shell(cx, "printf 'phase-13 final output\\n'; exit");
-        wait_exited(cx, view)?;
-        wait_text(cx, view, "phase-13 final output")?;
-        let final_screen = screen(view, cx);
-        type_text(cx, "no terminal input allowed");
-        cx.simulate_keystrokes("enter cmd-3 cmd-2");
-        wait_exited(cx, view)?;
-        cx.simulate_resize(size(px(800.0), px(600.0)));
-        cx.run_until_parked();
-        assert_eq!(screen(view, cx), final_screen);
+    fn verify_automatic_exit(cx: &mut VisualTestContext, view: &Entity<AppModel>) -> Result {
+        let exited = view
+            .read_with(cx, |model, _| model.active_tab())
+            .ok_or("tab")?;
+        shell(cx, "exit");
+        wait(cx, view, |model, _| {
+            !model.state.home().tabs.iter().any(|tab| tab.id == exited)
+        })?;
         reload_model(cx, view)?;
-        wait_exited(cx, view)?;
-        assert_eq!(screen(view, cx), final_screen);
-        report(&format!(
-            "13.3: Session exited; typing, tab switches, resize and Boot reload preserved:\n{final_screen}"
-        ))
+        wait_live(cx, view)?;
+        assert!(!view.read_with(cx, |model, _| {
+            model.state.home().tabs.iter().any(|tab| tab.id == exited)
+        }));
+        report(
+            "13.3: Session exit closed its tab immediately and it stayed closed after Boot reload",
+        )
     }
 
     fn signal_test_server(directory: &std::path::Path, signal: &str) -> Result {
@@ -3235,29 +3333,15 @@ mod tests {
         view: &Entity<AppModel>,
         directory: &std::path::Path,
     ) -> Result {
-        let before = view.read_with(cx, |model, _| model.state.clone());
         signal_test_server(directory, "-TERM")?;
         wait(cx, view, |model, _| {
             model.connection == ConnectionState::Disconnected
         })?;
-        assert!(screen(view, cx).contains("phase-13 final output"));
         view.update(cx, AppModel::connect);
-        wait_exited(cx, view)?;
-        view.read_with(cx, |model, _| {
-            assert_eq!(model.state.projects(), before.projects());
-            assert_eq!(model.state.window(), before.window());
-            assert_eq!(model.state.pending_discards(), before.pending_discards());
-            assert!(model.state.catalog_revision() >= before.catalog_revision());
-        });
+        wait_empty(cx, view)?;
         let probe = Client::connect(&directory.join("server.sock"))?;
         assert!(probe.list_sessions()?.is_empty());
-        for index in 0..3 {
-            cx.simulate_keystrokes(&format!("cmd-{}", index + 1));
-            wait_exited(cx, view)?;
-        }
-        report(
-            "13.4: SIGTERM produced Server disconnected; Connect restarted server; same three tabs show Session exited; list_sessions = []",
-        )?;
+        report("13.4: SIGTERM and reconnect closed every ended terminal tab")?;
         cx.simulate_keystrokes("cmd-t");
         wait_live(cx, view)?;
         shell(cx, "printf 'CRASH_%s\\n' CHECKPOINT");
@@ -3281,10 +3365,9 @@ mod tests {
             model.connection == ConnectionState::Disconnected
         })?;
         reload_model(cx, view)?;
-        wait_exited(cx, view)?;
-        wait_text(cx, view, "CRASH_CHECKPOINT")?;
+        wait_empty(cx, view)?;
         report(
-            "13.5: SIGKILL and Boot/server restart recovered completed checkpoint CRASH_CHECKPOINT; no replacement process",
+            "13.5: SIGKILL and Boot/server restart removed the dead terminal without a replacement process",
         )
     }
 
@@ -3294,16 +3377,6 @@ mod tests {
         directory: &std::path::Path,
     ) -> Result {
         let probe = Client::connect(&directory.join("server.sock"))?;
-        let exited = view
-            .read_with(cx, |model, _| {
-                model.pane_session(model.active_pane().expect("pane"))
-            })
-            .expect("session");
-        cx.simulate_keystrokes("cmd-w");
-        wait(cx, view, |model, _| {
-            model.state.home().tabs.len() == 3 && model.state.pending_discards().is_empty()
-        })?;
-        assert!(probe.read_saved_screen(exited).is_err());
         cx.simulate_keystrokes("cmd-t");
         wait_live(cx, view)?;
         wait(cx, view, |model, cx| {
@@ -3316,18 +3389,18 @@ mod tests {
             .expect("session");
         cx.simulate_keystrokes("cmd-w");
         wait(cx, view, |model, _| {
-            model.state.home().tabs.len() == 3 && model.state.pending_discards().is_empty()
+            model.state.home().tabs.is_empty() && model.state.pending_discards().is_empty()
         })?;
         assert!(probe.list_sessions()?.is_empty());
         assert!(probe.read_saved_screen(live).is_err());
         reload_model(cx, view)?;
-        wait_exited(cx, view)?;
+        wait_empty(cx, view)?;
         assert_eq!(
             view.read_with(cx, |model, _| model.state.home().tabs.len()),
-            3
+            0
         );
         report(
-            "13.7: closing exited and live tabs discarded both records, terminated the live process, and neither tab returned after Boot reload",
+            "13.7: closing a live tab discarded its record, terminated the process, and the tab stayed closed after Boot reload",
         )?;
         for _ in 0..2 {
             cx.simulate_keystrokes("cmd-t");
@@ -3687,19 +3760,14 @@ mod tests {
         let saved = store::load(view.read_with(cx, |model, _| model.path.clone()))?;
         assert_eq!(saved.home().tabs.len(), 1);
         shell(cx, "exit");
-        wait(cx, view, |model, _| {
-            model
-                .active_pane()
-                .is_some_and(|pane| model.retained.contains(&pane))
-        })?;
-        cx.simulate_keystrokes("cmd-w");
+
         wait(cx, view, |model, _| model.state.home().tabs.is_empty())?;
         cx.simulate_keystrokes("cmd-t");
         wait(cx, view, |model, cx| {
             model.state.home().tabs.len() == 1 && active_grid(model, cx).is_some()
         })?;
         report(
-            "11b/11c: new/select/cycle/reorder/close, Terminal titles, state persistence, single visible grid, and SessionEnded tab retention until explicit close passed",
+            "11b/11c: new/select/cycle/reorder/close, Terminal titles, state persistence, single visible grid, and automatic SessionEnded tab closure passed",
         )
     }
 

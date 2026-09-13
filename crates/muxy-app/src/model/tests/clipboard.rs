@@ -161,18 +161,11 @@ fn run(cx: &mut TestAppContext) -> Result {
     verify_shell_paste(cx, &view, &directory)?;
     verify_vim(cx, &view, &directory)?;
     shell(cx, "exit");
-    wait_exited(cx, &view)?;
-    wait(cx, &view, |model, cx| {
-        active_grid(model, cx).is_some_and(|grid| grid.history_fresh)
-    })?;
-    let before = screen(&view, cx);
+    wait_empty(cx, &view)?;
     cx.simulate_keystrokes("cmd-v");
     cx.run_until_parked();
-    assert_eq!(before, screen(&view, cx));
-    verify_history(cx, &view)?;
-    report(
-        "16.extra: retained exited pane supports history selection and Cmd-C; Cmd-V leaves its screen unchanged",
-    )?;
+    assert!(view.read_with(cx, |model, _| model.state.home().tabs.is_empty()));
+    report("16.extra: an exited terminal closes and paste cannot recreate it")?;
     view.update(cx, AppModel::disconnect);
     signal_test_server(&directory, "-TERM")?;
     report("Phase 16 GPUI/live-server walkthrough: PASS")

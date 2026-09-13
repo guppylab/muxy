@@ -46,7 +46,8 @@ references before deciding whether to end it.
 Before ending a foreground program other than the shell, the user confirms
 once. Background jobs alone do not trigger confirmation. Ordinary shell jobs
 follow normal terminal exit behavior; independently detached work is not
-targeted. These close rules apply to saved content after a process exits too.
+targeted. When a process exits, clients close its panes automatically using these same
+reference and cleanup rules.
 
 Explicitly ending or discarding a session and
 [deleting its project](./product-model.md#failed-projects-and-deletion) affect

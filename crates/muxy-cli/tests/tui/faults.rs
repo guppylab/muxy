@@ -140,6 +140,44 @@ fn failed_close_save_sends_no_discard_and_failed_ack_save_replays_after_repair()
 }
 
 #[test]
+fn exit_during_resize_keeps_tab_selection_bound_to_the_displayed_pane() -> Result {
+    let fixture = Fixture::new()?;
+    let proxy = Proxy::new(&fixture)?;
+    let mut tui = Tui::start(&fixture, &[])?;
+    tui.ready()?;
+    let client = fixture.client()?;
+    let dead = client.list_sessions()?[0].id;
+    for index in 1..=2 {
+        tui.write(b"\x02c")?;
+        tui.output(&format!("{index}:"))?;
+        tui.ready()?;
+    }
+    let selected = tui.active_tab()?["focus"].clone();
+    proxy.arm(Point::ResizeReply);
+    tui.pty.resize(muxy_pty::PtySize { cols: 98, rows: 26 })?;
+    tui.wait(|_| Ok(proxy.reached()))?;
+    client.end_session(dead)?;
+    tui.wait(|tui| {
+        Ok(tui
+            .text()?
+            .iter()
+            .any(|row| row.starts_with(" Home ") && row.contains("1:") && !row.contains("2:")))
+    })?;
+    assert_eq!(tui.tabs()?.len(), 3);
+    tui.write(b"\x021")?;
+    for _ in 0..5 {
+        tui.pump()?;
+    }
+    proxy.release();
+    tui.wait(|tui| Ok(tui.tabs()?.len() == 2))?;
+    tui.write(b"\x02z")?;
+    tui.wait(|tui| Ok(tui.active_tab()?["zoom"] == true))?;
+    assert_eq!(tui.active_tab()?["focus"], selected);
+    tui.detach()?;
+    Ok(())
+}
+
+#[test]
 fn typing_and_frame_acknowledgements_continue_while_a_picker_request_waits() -> Result {
     let fixture = Fixture::new()?;
     let proxy = Proxy::new(&fixture)?;

@@ -104,7 +104,16 @@ impl AppModel {
         }
         match result {
             Ok(page) => {
-                picker.entries = page.sessions;
+                picker.entries = page
+                    .sessions
+                    .into_iter()
+                    .filter(|session| {
+                        matches!(
+                            session.status,
+                            SessionStatus::Live | SessionStatus::Starting
+                        )
+                    })
+                    .collect();
                 picker.next = page.next;
                 picker.revision = Some(page.revision);
                 let actions = if picker.next.is_some() {

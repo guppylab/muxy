@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, SyncSender};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -74,17 +74,50 @@ pub(crate) struct Shared {
     pub confirm: Option<PaneId>,
     pub focus: Option<ChannelId>,
     pub host_unfocused: bool,
+    pub ended: BTreeSet<SessionId>,
     pending: BTreeMap<ChannelId, Pending>,
     last_channel: u32,
 }
 
 impl Shared {
+    pub(crate) fn session_ended(&mut self, session: SessionId) {
+        self.ended.insert(session);
+        if let Some(state) = &mut self.state {
+            state.close_sessions(&self.ended);
+        }
+        self.sessions.retain(|entry| entry.info.id != session);
+        let removed: Vec<_> = self
+            .views
+            .iter()
+            .filter(|(_, view)| view.session == session)
+            .map(|(pane, view)| (*pane, view.channel))
+            .collect();
+        for (pane, channel) in removed {
+            self.views.remove(&pane);
+            if let Some(channel) = channel {
+                self.retire(channel);
+                if self.focus == Some(channel) {
+                    self.focus = None;
+                }
+            }
+            if self.confirm == Some(pane) {
+                self.confirm = None;
+            }
+        }
+    }
+
     pub(crate) fn retire(&mut self, channel: ChannelId) {
         self.last_channel = self.last_channel.max(channel.0);
         self.pending.remove(&channel);
     }
 
     pub(crate) fn insert(&mut self, id: PaneId, mut view: View) -> Option<(ChannelId, u64)> {
+        if self.ended.contains(&view.session) {
+            if let Some(channel) = view.channel {
+                self.retire(channel);
+            }
+            return None;
+        }
         let mut ack = None;
         if let Some(channel) = view.channel {
             self.last_channel = self.last_channel.max(channel.0);
@@ -166,14 +199,7 @@ pub(super) fn reader(client: Client, shared: Arc<Mutex<Shared>>) -> Result<JoinH
                     }
                     ClientEvent::CatalogChanged { .. } => state.refresh = true,
                     ClientEvent::SessionEnded { session, .. } => {
-                        for view in state
-                            .views
-                            .values_mut()
-                            .filter(|view| view.session == session)
-                        {
-                            view.ended = true;
-                            view.grid.cursor.visible = false;
-                        }
+                        state.session_ended(session);
                         state.refresh = true;
                     }
                     ClientEvent::Disconnected | ClientEvent::ServerRestarting => {

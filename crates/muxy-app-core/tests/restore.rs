@@ -43,7 +43,7 @@ fn existing_state_files_load_without_pending_cleanup() -> TestResult {
 }
 
 #[test]
-fn mixed_restore_preserves_every_tab_and_its_selection() -> TestResult {
+fn mixed_restore_identifies_dead_panes_without_mutating_selection() -> TestResult {
     let mut state = AppState::bootstrap()?;
     let home = state.home().id;
     for _ in 0..3 {
@@ -70,12 +70,12 @@ fn mixed_restore_preserves_every_tab_and_its_selection() -> TestResult {
         }],
     );
     assert_eq!(plan.attach, vec![(panes[0], live)]);
-    assert_eq!(plan.retain, vec![(panes[1], missing)]);
+    assert_eq!(plan.close, vec![(panes[1], missing)]);
     assert_eq!(plan.create, vec![panes[2]]);
     assert_eq!(state, before);
     let all_missing = restore::plan(&state, &[]);
     assert_eq!(
-        all_missing.retain,
+        all_missing.close,
         vec![(panes[0], live), (panes[1], missing)]
     );
     assert!(all_missing.attach.is_empty());
@@ -118,7 +118,7 @@ fn saved_bounds_and_ended_session_references_round_trip() -> TestResult {
     fs::remove_file(path)?;
     assert_eq!(loaded, state);
     let plan = restore::plan(&loaded, &[]);
-    assert_eq!(plan.retain, vec![(pane, session)]);
+    assert_eq!(plan.close, vec![(pane, session)]);
     assert!(plan.attach.is_empty());
     assert!(plan.create.is_empty());
     Ok(())
@@ -148,7 +148,7 @@ fn restore_covers_hidden_projects_without_creating_tabs_for_empty_projects() -> 
         }],
     );
     assert_eq!(plan.attach, [(panes[0], live)]);
-    assert_eq!(plan.retain, [(panes[1], ended)]);
+    assert_eq!(plan.close, [(panes[1], ended)]);
     assert_eq!(plan.create, [panes[2]]);
     assert!(loaded.current_project().tabs.is_empty());
     Ok(())

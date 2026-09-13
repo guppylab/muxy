@@ -20,6 +20,7 @@ pub(super) enum Point {
     DiscardRequest,
     DiscardReply,
     ListReply,
+    ResizeReply,
 }
 
 #[derive(Default)]
@@ -54,6 +55,10 @@ impl Gate {
                 body: ReplyBody::ProjectSessions(_),
                 ..
             } => Point::ListReply,
+            Message::Reply {
+                body: ReplyBody::Resized,
+                ..
+            } => Point::ResizeReply,
             _ => return false,
         };
         self.point

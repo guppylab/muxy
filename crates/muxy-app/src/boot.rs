@@ -183,6 +183,7 @@ pub(crate) enum Update {
     },
     EndedAll(Result<(), ClientError>),
     Flushed,
+    CloseSessionPanes(SessionId),
     Event(ClientEvent),
     Error(String),
 }

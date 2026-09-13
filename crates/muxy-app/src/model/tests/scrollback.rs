@@ -162,7 +162,7 @@ fn run(cx: &mut TestAppContext) -> Result {
     assert!(view.read_with(cx, |model, cx| pane(model, cx).scroll.view.is_none()));
     assert_eq!(screen(&view, cx), prompt);
     report("15.3: ScrollToBottom -> live view; no terminal input")?;
-    saved_history(cx, &view, &directory)?;
+    exit_closes_scrollback(cx, &view, &directory)?;
     report("Phase 15 GPUI/live-server walkthrough: PASS")
 }
 
@@ -206,68 +206,21 @@ fn concurrent_output(
     result
 }
 
-fn saved_history(
+fn exit_closes_scrollback(
     cx: &mut VisualTestContext,
     view: &Entity<AppModel>,
     directory: &std::path::Path,
 ) -> Result {
     shell(cx, "exit");
-    wait_exited(cx, view)?;
-    let original = view.read_with(cx, |model, cx| {
-        active_grid(model, cx).expect("grid").clone()
-    });
+    wait_empty(cx, view)?;
     signal_test_server(directory, "-TERM")?;
     wait(cx, view, |model, _| {
         model.connection == ConnectionState::Disconnected
     })?;
     reload_model(cx, view)?;
-    wait_exited(cx, view)?;
-    wheel(cx, 10000.0)?;
-    wait(cx, view, |model, cx| {
-        pane(model, cx)
-            .scroll
-            .view
-            .as_ref()
-            .is_some_and(|grid| grid.history_fresh && grid.history_cursor.is_none())
-    })?;
-    let frozen = view.read_with(cx, |model, cx| {
-        pane(model, cx)
-            .scroll
-            .view
-            .as_ref()
-            .expect("saved history")
-            .clone()
-    });
-    let rows = (0..frozen.history.len() + frozen.rows.len())
-        .map(|index| {
-            frozen
-                .content_row(index)
-                .expect("row")
-                .iter()
-                .map(|run| run.text.as_str())
-                .collect()
-        })
-        .collect::<Vec<String>>();
-    let numbers = numbered(&rows);
-    assert_eq!(
-        numbers.iter().take(5000).copied().collect::<Vec<_>>(),
-        (1..=5000).collect::<Vec<_>>()
-    );
-    assert_eq!(frozen.size, original.size);
-    cx.simulate_resize(size(px(520.0), px(400.0)));
-    cx.run_until_parked();
-    assert_eq!(
-        view.read_with(cx, |model, cx| pane(model, cx)
-            .scroll
-            .view
-            .as_ref()
-            .expect("saved history")
-            .clone()),
-        frozen
-    );
-    report(&format!(
-        "15.4: exit -> server restart -> saved history starts 1 2 3 4 5; all 5,000 rows recovered; resize to 520x400 preserved saved width {} and every row",
-        frozen.size.cols
-    ))?;
+    wait_empty(cx, view)?;
+    report(
+        "15.4: exit closed the terminal and server restart did not restore its scrollback pane",
+    )?;
     signal_test_server(directory, "-TERM")
 }

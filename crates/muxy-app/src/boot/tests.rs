@@ -196,6 +196,27 @@ fn deferred_lifecycle_events_are_bounded() {
     assert_eq!(delivery.complete(None).len(), accepted);
 }
 
+#[test]
+fn exit_closes_known_panes_immediately_and_follows_its_pending_attachment() -> TestResult {
+    let mut delivery = delivery::Delivery::default();
+    delivery.pending = 2;
+    let session = SessionId::from(std::num::NonZeroU64::MIN);
+    let event = ClientEvent::SessionEnded {
+        session,
+        reason: muxy_protocol::ExitReason::Ended,
+    };
+    assert!(
+        matches!(delivery.event(event.clone())?.as_slice(), [Update::CloseSessionPanes(id)] if *id == session)
+    );
+    let updates = delivery.complete(Some(attachment_update(ChannelId(1))?));
+    assert!(
+        matches!(updates.as_slice(), [Update::Attached { .. }, Update::Event(ended)] if *ended == event)
+    );
+    assert_eq!(delivery.pending, 1);
+    assert!(delivery.complete(None).is_empty());
+    Ok(())
+}
+
 fn attachment_update(channel: ChannelId) -> Result<Update, Box<dyn Error + Send + Sync>> {
     let snapshot = Message::samples()
         .into_iter()
@@ -245,14 +266,15 @@ fn a_full_event_buffer_preserves_the_only_disconnect_after_history_completion() 
     let mut delivery = delivery::Delivery::default();
     delivery.pending = 1;
     for id in 1..=1024 {
-        assert!(
+        assert!(matches!(
             delivery
                 .event(ClientEvent::SessionEnded {
                     session: SessionId::from(std::num::NonZeroU64::new(id).ok_or("zero session")?),
                     reason: muxy_protocol::ExitReason::Ended,
                 })?
-                .is_empty()
-        );
+                .as_slice(),
+            [Update::CloseSessionPanes(_)]
+        ));
     }
     assert!(delivery.event(ClientEvent::Disconnected)?.is_empty());
     assert!(delivery.flush().is_empty());

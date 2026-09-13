@@ -48,8 +48,12 @@ impl Delivery {
         if self.deferred.len() == MAX_DEFERRED_EVENTS {
             return Err("too many events arrived before request completion");
         }
+        let updates = match &event {
+            ClientEvent::SessionEnded { session, .. } => vec![Update::CloseSessionPanes(*session)],
+            _ => Vec::new(),
+        };
         self.deferred.push(event);
-        Ok(Vec::new())
+        Ok(updates)
     }
 
     pub(super) fn complete(&mut self, update: Option<Update>) -> Vec<Update> {
@@ -57,9 +61,21 @@ impl Delivery {
         if let Some(Update::Attached { attachment, .. }) = &update {
             self.installed_through = self.installed_through.max(attachment.channel.0);
         }
+        let attached = match &update {
+            Some(
+                Update::Attached { session, .. }
+                | Update::AttachFailed {
+                    session: Some(session),
+                    ..
+                },
+            ) => Some(*session),
+            _ => None,
+        };
         let mut updates: Vec<_> = update.into_iter().collect();
         for event in std::mem::take(&mut self.deferred) {
-            if self.ready(&event) {
+            if self.ready(&event)
+                || matches!(&event, ClientEvent::SessionEnded { session, .. } if Some(*session) == attached)
+            {
                 updates.push(Update::Event(event));
             } else {
                 self.deferred.push(event);

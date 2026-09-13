@@ -11,6 +11,88 @@ mod support;
 use fixture::{Fixture, Result, Tui};
 
 #[test]
+fn shell_exit_closes_the_tab_in_every_connected_tui() -> Result {
+    let fixture = Fixture::new()?;
+    let mut first = Tui::start(&fixture, &[])?;
+    first.ready()?;
+    let mut second = Tui::start(&fixture, &[])?;
+    second.ready()?;
+    first.write(b"exit\r")?;
+    first.output("No tabs.")?;
+    second.output("No tabs.")?;
+    first.wait(|tui| Ok(tui.tabs()?.is_empty()))?;
+    first.detach()?;
+    second.detach()?;
+    let mut restored = Tui::start(&fixture, &[])?;
+    restored.output("No tabs.")?;
+    assert!(fixture.client()?.list_sessions()?.is_empty());
+    restored.detach()?;
+    Ok(())
+}
+
+#[test]
+fn external_exit_removes_hidden_tabs_and_preserves_the_live_split() -> Result {
+    let fixture = Fixture::new()?;
+    let mut tui = Tui::start(&fixture, &[])?;
+    tui.ready()?;
+    let client = fixture.client()?;
+    let hidden = client.list_sessions()?[0].id;
+    tui.write(b"\x02c")?;
+    tui.wait(|tui| Ok(tui.tabs()?.len() == 2 && client.list_sessions()?.len() == 2))?;
+    tui.ready()?;
+    let active = tui.active_tab()?["focus"].clone();
+    client.end_session(hidden)?;
+    tui.wait(|tui| Ok(tui.tabs()?.len() == 1))?;
+    assert_eq!(tui.active_tab()?["focus"], active);
+    tui.write(b"\x02%")?;
+    tui.wait(|tui| {
+        Ok(tui.active_tab()?["panes"].as_object().is_some_and(|panes| {
+            panes.len() == 2 && panes.values().all(|pane| !pane["session"].is_null())
+        }) && client.list_sessions()?.len() == 2)
+    })?;
+    let split = tui.active_tab()?;
+    let focused = split["focus"].as_str().ok_or("focused pane")?;
+    let session = muxy_protocol::SessionId::new(
+        split["panes"][focused]["session"]
+            .as_u64()
+            .ok_or("session")?,
+    )
+    .ok_or("session ID")?;
+    client.end_session(session)?;
+    tui.wait(|tui| {
+        Ok(tui.active_tab()?["panes"]
+            .as_object()
+            .is_some_and(|panes| panes.len() == 1))
+    })?;
+    assert_eq!(tui.active_tab()?["focus"], active);
+    tui.write(b"printf '\nSURVIVING_SPLIT\n'\r")?;
+    tui.output("SURVIVING_SPLIT")?;
+    tui.detach()?;
+    Ok(())
+}
+
+#[test]
+fn relaunch_prunes_sessions_that_died_while_detached_including_hidden_tabs() -> Result {
+    let fixture = Fixture::new()?;
+    let mut tui = Tui::start(&fixture, &[])?;
+    tui.ready()?;
+    tui.write(b"\x02c")?;
+    let client = fixture.client()?;
+    tui.wait(|tui| Ok(tui.tabs()?.len() == 2 && client.list_sessions()?.len() == 2))?;
+    tui.ready()?;
+    tui.detach()?;
+    for session in client.list_sessions()? {
+        client.end_session(session.id)?;
+    }
+    let mut restored = Tui::start(&fixture, &[])?;
+    restored.output("No tabs.")?;
+    assert!(restored.tabs()?.is_empty());
+    assert!(client.list_sessions()?.is_empty());
+    restored.detach()?;
+    Ok(())
+}
+
+#[test]
 fn keyboard_layout_restores_without_respawning_and_detach_preserves_sessions() -> Result {
     let fixture = Fixture::new()?;
     let mut tui = Tui::start(&fixture, &[])?;
@@ -318,11 +400,11 @@ fn projects_existing_terminals_and_other_client_changes_share_sessions_without_s
     assert!(directory.is_dir());
     let remaining = client.list_sessions()?[0].id;
     client.end_session(remaining)?;
-    tui.output("Ended")?;
+    tui.output("No tabs.")?;
     tui.detach()?;
     let state = fixture.state()?;
     let mut restored = Tui::start(&fixture, &[])?;
-    restored.output("Ended")?;
+    restored.output("No tabs.")?;
     assert_eq!(fixture.state()?, state);
     assert!(client.list_sessions()?.is_empty());
     restored.detach()?;
@@ -461,7 +543,12 @@ fn open_session_picker_refreshes_other_clients_creation_end_and_discard() -> Res
     )?;
     tui.output(&format!("{}  Live", session.id.get()))?;
     client.end_session(session.id)?;
-    tui.output(&format!("{}  Ended", session.id.get()))?;
+    tui.wait(|tui| {
+        Ok(!tui
+            .text()?
+            .iter()
+            .any(|row| row.contains(&format!("{}  ", session.id.get()))))
+    })?;
     client.discard_session(session.id)?;
     tui.wait(|tui| {
         Ok(!tui

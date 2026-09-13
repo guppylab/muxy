@@ -437,6 +437,33 @@ impl AppState {
         self.remove_pane(pane)
     }
 
+    pub fn close_session_panes(&mut self, session: SessionId) -> Result<(), AppError> {
+        let panes: Vec<_> = self.projects.iter().flat_map(|project| &project.tabs)
+            .flat_map(|tab| &tab.panes)
+            .filter(|pane| matches!(pane.content, PaneContent::Terminal { session: Some(id) } if id == session))
+            .map(|pane| pane.id).collect();
+        for pane in panes {
+            self.remove_pane(pane)?;
+        }
+        if !self.session_references().contains(&session) {
+            self.queue_discard(session);
+        }
+        Ok(())
+    }
+
+    pub fn close_session_pane(&mut self, pane: PaneId) -> Result<(), AppError> {
+        let content = self.pane_mut(pane)?.content.clone();
+        self.remove_pane(pane)?;
+        if let PaneContent::Terminal {
+            session: Some(session),
+        } = content
+            && !self.session_references().contains(&session)
+        {
+            self.queue_discard(session);
+        }
+        Ok(())
+    }
+
     pub fn clear_terminal_panes(&mut self) -> Result<(), AppError> {
         self.close_quick_terminal();
         let terminals: Vec<_> = self

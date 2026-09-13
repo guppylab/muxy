@@ -95,6 +95,9 @@ fn migration_walkthrough(cx: &mut TestAppContext, server_first: bool) -> Result 
             && !model.catalog.pending
             && model.state.catalog_revision() > 0
     })?;
+    for session in state.session_references() {
+        state.close_session_panes(session)?;
+    }
     view.read_with(cx, |model, _| {
         assert_eq!(model.state.projects(), state.projects());
         let mut expected = state.window().clone();
@@ -129,7 +132,7 @@ fn migration_walkthrough(cx: &mut TestAppContext, server_first: bool) -> Result 
     );
     assert!(restarted.list_sessions()?.is_empty());
     crate::server::stop_server(&restarted, &socket)?;
-    report("Catalog legacy migration, retained panes, shared deletion and restart: PASS")
+    report("Catalog legacy migration, dead pane cleanup, shared deletion and restart: PASS")
 }
 
 fn two_projects() -> (AppState, ProjectId, ProjectId, PaneId, PaneId) {

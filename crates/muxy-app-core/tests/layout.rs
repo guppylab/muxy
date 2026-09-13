@@ -134,7 +134,7 @@ fn restore_accounts_for_each_leaf_even_when_zoomed() -> Result {
         }],
     );
     assert_eq!(plan.attach, [(first, live)]);
-    assert_eq!(plan.retain, [(second, ended)]);
+    assert_eq!(plan.close, [(second, ended)]);
     assert_eq!(plan.create, [third]);
     Ok(())
 }

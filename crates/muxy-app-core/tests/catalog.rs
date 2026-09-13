@@ -135,6 +135,6 @@ fn foreign_session_membership_is_never_inferred_from_directory() -> Result {
     );
     assert!(plan.attach.is_empty());
     assert!(plan.create.is_empty());
-    assert_eq!(plan.retain, [(pane, session)]);
+    assert_eq!(plan.close, [(pane, session)]);
     Ok(())
 }

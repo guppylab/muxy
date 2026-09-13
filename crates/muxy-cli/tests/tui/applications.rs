@@ -103,17 +103,16 @@ fn input_modes_encode_child_keys_paste_and_requested_focus_reports() -> Result {
 }
 
 #[test]
-fn server_restart_restores_ended_content_without_creating_another_shell() -> Result {
+fn server_restart_closes_dead_tabs_without_creating_another_shell() -> Result {
     let fixture = Fixture::new()?;
     let mut tui = Tui::start(&fixture, &[])?;
     tui.ready()?;
     tui.write(b"printf '\\nBEFORE_SERVER_RESTART\\n'\r")?;
     tui.output("BEFORE_SERVER_RESTART")?;
-    let saved = fixture.state()?;
     let before = fixture.client()?;
     let instance = before.server_info().instance;
     before.stop_server()?;
-    tui.output("Ended")?;
+    tui.output("No tabs.")?;
     tui.wait(|_| {
         // A draining listener can still accept a connection without answering.
         // Keep each probe within the PTY wait budget and require a new server.
@@ -130,10 +129,11 @@ fn server_restart_restores_ended_content_without_creating_another_shell() -> Res
                     .is_ok_and(|sessions| sessions.is_empty())
         }))
     })?;
-    assert_eq!(fixture.state()?, saved);
+    tui.wait(|tui| Ok(tui.tabs()?.is_empty()))?;
     tui.detach()?;
+    let saved = fixture.state()?;
     let mut restored = Tui::start(&fixture, &[])?;
-    restored.output("Ended")?;
+    restored.output("No tabs.")?;
     assert_eq!(fixture.state()?, saved);
     assert!(fixture.client()?.list_sessions()?.is_empty());
     restored.detach()?;

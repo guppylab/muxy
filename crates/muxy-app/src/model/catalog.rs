@@ -155,6 +155,12 @@ impl AppModel {
             self.fail("Session belongs to a different project".into(), cx);
             return;
         }
+        if !matches!(
+            session.status,
+            muxy_protocol::SessionStatus::Live | muxy_protocol::SessionStatus::Starting
+        ) {
+            return;
+        }
         let previous = self.state.clone();
         let result = self.state.open_terminal_tab(project).and_then(|_| {
             let pane = self.state.window().active_pane.ok_or_else(|| {
@@ -163,23 +169,14 @@ impl AppModel {
             self.state.set_pane_session(pane, Some(session.info.id))?;
             Ok(pane)
         });
-        let pane = match result {
-            Ok(pane) => pane,
-            Err(error) => {
-                self.state = previous;
-                self.fail(error.to_string(), cx);
-                return;
-            }
-        };
+        if let Err(error) = result {
+            self.state = previous;
+            self.fail(error.to_string(), cx);
+            return;
+        }
         if !self.save(cx) {
             self.state = previous;
             return;
-        }
-        if !matches!(
-            session.status,
-            muxy_protocol::SessionStatus::Live | muxy_protocol::SessionStatus::Starting
-        ) {
-            self.retained.insert(pane);
         }
         self.dismiss_overlay(cx);
         self.sync_visible(cx);

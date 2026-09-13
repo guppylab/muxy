@@ -12,7 +12,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use muxy_app_core::{Direction, PaneId};
-use muxy_client::{Client, ClientError, RunGrid};
+use muxy_client::{Client, ClientError};
 use muxy_protocol::{
     CatalogPage, ErrorCode, ProjectId, ProjectSession, ServerIdentity, SessionId, Size,
 };
@@ -26,6 +26,7 @@ pub(crate) enum Action {
     Open(ProjectId),
     New(Option<Direction>),
     SelectTab(usize),
+    SelectPane(ProjectId, PaneId),
     CycleTab(bool),
     Focus(Direction),
     Resize(Direction),
@@ -102,6 +103,17 @@ impl Worker {
         {
             return Err("Server is disconnected; the action was not applied".into());
         }
+        let action = if let Action::SelectTab(index) = action {
+            let shared = lock(&self.shared);
+            let (project, pane) = shared
+                .state
+                .as_ref()
+                .and_then(|state| state.tab_selection(index))
+                .ok_or("Tab is no longer available")?;
+            Action::SelectPane(project, pane.ok_or("Tab has no pane")?)
+        } else {
+            action
+        };
         let ordered = !matches!(action, Action::ListSessions);
         let bytes = match &action {
             Action::Input(input) => input.length(),
@@ -225,11 +237,22 @@ impl Core {
         }
         self.store_mut()?
             .change(|state| state.reconcile(&catalog))?;
+        let references = self.store_mut()?.state.session_references();
+        let live = client.list_sessions().map_err(|error| error.to_string())?;
+        let ended: Vec<_> = references
+            .into_iter()
+            .filter(|id| !live.iter().any(|session| session.id == *id))
+            .collect();
+        for session in ended {
+            lock(&self.shared).session_ended(session);
+        }
+        self.close_ended_sessions(&catalog)?;
         self.publish(&catalog);
         lock(&self.shared).client = Some(client.clone());
         lock(&self.shared).refresh = true;
         self.message("");
         while !self.stop.load(Ordering::Acquire) && client.is_connected() {
+            self.close_ended_sessions(&catalog)?;
             let refresh = {
                 let mut shared = lock(&self.shared);
                 std::mem::take(&mut shared.refresh)
@@ -278,6 +301,7 @@ impl Core {
     }
 
     fn action(&mut self, action: Action, client: &Client, catalog: &CatalogPage) -> Result {
+        self.close_ended_sessions(catalog)?;
         if matches!(action, Action::CheckClose) {
             return self.check_close(client, catalog);
         }
@@ -289,11 +313,16 @@ impl Core {
         }
         self.input.flush()?;
         let host = hosting_session(catalog.server);
-        let selection = self.store_mut()?.state.selection();
-        let selected_tab = match action {
-            Action::SelectTab(index) => self.store_mut()?.state.tab_selection(index),
-            Action::CycleTab(forward) => self.store_mut()?.state.cycle_selection(forward),
-            _ => None,
+        let (selection, selected_tab) = {
+            let shared = lock(&self.shared);
+            let state = shared.state.as_ref().ok_or("TUI state is not ready")?;
+            let selected = match action {
+                Action::SelectPane(project, pane) => Some((project, Some(pane))),
+                Action::SelectTab(index) => state.tab_selection(index),
+                Action::CycleTab(forward) => state.cycle_selection(forward),
+                _ => None,
+            };
+            (state.selection(), selected)
         };
         self.store_mut()?.change(|state| {
             if !matches!(action, Action::Open(_)) {
@@ -312,6 +341,12 @@ impl Core {
                     state.new_pane(split, directory, None)?;
                 }
                 Action::Existing(session) => {
+                    if !matches!(
+                        session.status,
+                        muxy_protocol::SessionStatus::Live | muxy_protocol::SessionStatus::Starting
+                    ) {
+                        return Err("Terminal has ended".into());
+                    }
                     if Some(session.info.id) == host {
                         return Err("Cannot attach the terminal hosting this TUI".into());
                     }
@@ -337,7 +372,7 @@ impl Core {
                         tab.zoom = !tab.zoom;
                     }
                 }
-                Action::SelectTab(_) | Action::CycleTab(_) => {
+                Action::SelectPane(_, _) | Action::SelectTab(_) | Action::CycleTab(_) => {
                     if let Some(selected) = selected_tab {
                         state.select(selected)?;
                     }
@@ -413,6 +448,7 @@ impl Core {
         }
         let viewport = *lock(&self.viewport);
         self.create_pending(client, viewport)?;
+        self.close_ended_sessions(catalog)?;
         self.sync_references(client)?;
         let state = self.store_mut()?.state.clone();
         let regions = crate::render::regions(&state, viewport);
@@ -546,30 +582,9 @@ impl Core {
         let mut view = match client.attach(session, size) {
             Ok(attachment) => View::attached(session, size, attachment),
             Err(ClientError::Server(error)) if error.code == ErrorCode::UnknownSession => {
-                match client.read_saved_screen(session) {
-                    Ok(screen) => View {
-                        session,
-                        channel: None,
-                        grid: RunGrid::from_saved(screen),
-                        process: None,
-                        input: muxy_protocol::InputModes::default(),
-                        title: "Ended terminal".into(),
-                        viewport: size,
-                        ended: true,
-                    },
-                    Err(ClientError::Server(error))
-                        if error.code == ErrorCode::SavedContentUnavailable =>
-                    {
-                        self.store_mut()?.change(|state| {
-                            if let Some(pane) = state.pane_mut(id) {
-                                pane.error = Some("Terminal is no longer available".into());
-                            }
-                            Ok(())
-                        })?;
-                        return Ok(());
-                    }
-                    Err(error) => return Err(error.to_string()),
-                }
+                lock(&self.shared).session_ended(session);
+                self.close_ended_sessions(catalog)?;
+                return Ok(());
             }
             Err(error) => return Err(error.to_string()),
         };
@@ -639,11 +654,13 @@ impl Core {
                 .project_sessions(project, after, revision)
                 .map_err(|error| error.to_string())?;
             revision = Some(page.revision);
-            sessions.extend(
-                page.sessions
-                    .into_iter()
-                    .filter(|session| Some(session.info.id) != hosting_session(catalog.server)),
-            );
+            sessions.extend(page.sessions.into_iter().filter(|session| {
+                Some(session.info.id) != hosting_session(catalog.server)
+                    && matches!(
+                        session.status,
+                        muxy_protocol::SessionStatus::Live | muxy_protocol::SessionStatus::Starting
+                    )
+            }));
             if sessions.len() > 4096 {
                 return Err("Too many terminals for the picker".into());
             }
@@ -661,12 +678,30 @@ impl Core {
             .as_mut()
             .ok_or_else(|| "TUI state is not ready".into())
     }
+    fn close_ended_sessions(&mut self, catalog: &CatalogPage) -> Result {
+        let ended = lock(&self.shared).ended.clone();
+        if ended.is_empty() {
+            return Ok(());
+        }
+        let closed = self
+            .store_mut()?
+            .change(|state| Ok(state.close_ended_sessions(&ended)))?;
+        lock(&self.shared)
+            .ended
+            .retain(|session| !closed.contains(session));
+        self.publish(catalog);
+        Ok(())
+    }
     fn message(&self, text: &str) {
         lock(&self.shared).message = text.into();
     }
     fn publish(&self, catalog: &CatalogPage) {
         let mut shared = lock(&self.shared);
         shared.state = self.store.as_ref().map(|store| store.state.clone());
+        let ended = shared.ended.clone();
+        if let Some(state) = &mut shared.state {
+            state.close_sessions(&ended);
+        }
         shared.catalog = Some(catalog.clone());
     }
 }
