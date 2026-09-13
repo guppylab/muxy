@@ -340,7 +340,7 @@ fn wide_text_clipping_and_repainting_do_not_overwrite_the_neighboring_pane() -> 
             .as_object()
             .is_some_and(|panes| panes.len() == 2))
     })?;
-    tui.ready()?;
+    tui.wait(|tui| Ok(tui.cells()?[2][51..60].concat() == "tui-test>"))?;
     tui.write(b"\x02\x1b[D")?;
     tui.write("printf '\\033[2J\\033[H界e\u{301}👩‍💻END\\n'\r".as_bytes())?;
     tui.output("END")?;
