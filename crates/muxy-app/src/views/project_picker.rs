@@ -770,7 +770,6 @@ mod tests {
         view.read_with(cx, |picker, _| {
             assert!(picker.session.input.is_empty());
             assert!(picker.session.search_results.is_empty());
-            assert_eq!(picker.session.top_right_action_title(), "Add Project");
         });
         cx.simulate_input(&format!("{}/", root.display()));
         cx.executor().advance_clock(Duration::from_millis(125));

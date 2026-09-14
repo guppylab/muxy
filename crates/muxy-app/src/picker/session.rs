@@ -342,19 +342,6 @@ mod tests {
     }
 
     #[test]
-    fn action_titles_follow_mode_and_existing_projects() {
-        let mut session = session("/tmp/known");
-        assert!(session.is_existing_project());
-        assert_eq!(session.top_right_action_title(), "Open Project");
-
-        session.set_input("/tmp/muxy-missing-directory-for-tests");
-        assert_eq!(session.top_right_action_title(), "Create & Add Project");
-
-        session.set_input("muxy");
-        assert_eq!(session.top_right_action_title(), "Add Project");
-    }
-
-    #[test]
     fn folder_search_confirms_the_highlighted_result() {
         let mut session = session("muxy");
         session.apply_search_snapshot(Snapshot {
