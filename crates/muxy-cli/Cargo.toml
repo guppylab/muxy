@@ -27,8 +27,5 @@ ratatui = { version = "=0.30.2", default-features = false, features = ["crosster
 signal-hook = "0.4"
 
 [dev-dependencies]
-muxy-transport = { path = "../muxy-transport" }
-muxy-wire = { path = "../muxy-wire" }
-muxy-pty = { path = "../muxy-pty" }
 muxy-terminal = { path = "../muxy-terminal" }
 tempfile = "3"

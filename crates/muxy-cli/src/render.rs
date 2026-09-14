@@ -468,7 +468,7 @@ mod tests {
         grid(&mut buffer, Rect::new(0, 0, 4, 1), &source);
         let mut bytes = Vec::new();
         draw_buffer(&buffer, &mut previous, &mut bytes)?;
-        let mut host = muxy_terminal::Terminal::new(muxy_terminal::Size { cols: 12, rows: 2 }, 0)?;
+        let mut host = muxy_terminal::Terminal::new(Size { cols: 12, rows: 2 }, 0)?;
         host.feed(&bytes);
         let rows = host.screen()?;
         assert_eq!(
@@ -485,7 +485,7 @@ mod tests {
             first.style.bold && first.style.italic,
             "{first:?}; {bytes:?}"
         );
-        assert_eq!(first.style.underline, muxy_terminal::Underline::Single);
+        assert_eq!(first.style.underline, Underline::Single);
         source.rows = vec![vec![Run {
             text: "q".into(),
             width: 1,

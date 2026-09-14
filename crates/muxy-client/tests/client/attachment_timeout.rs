@@ -99,7 +99,7 @@ impl Read for ReplyFilter {
                     .map_err(io::Error::other)?;
                 continue;
             }
-            muxy_wire::encode(&message, channel, self.buffer.get_mut())
+            muxy_protocol::wire::encode(&message, channel, self.buffer.get_mut())
                 .map_err(io::Error::other)?;
             self.buffer.set_position(0);
         }

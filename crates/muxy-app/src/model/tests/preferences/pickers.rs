@@ -54,7 +54,7 @@ fn font_dropdown_filters_saves_and_cancels_without_expanding_the_settings_rows(
             model.terminal.font_families.first().map(String::as_str),
             Some(font.as_str())
         );
-        let saved = muxy_settings::TerminalSettings::load_with_seed(
+        let saved = muxy_app_core::settings::TerminalSettings::load_with_seed(
             &model.path.with_file_name("ghostty.conf"),
             None,
         )

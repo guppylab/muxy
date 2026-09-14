@@ -10,7 +10,7 @@ use muxy_core::shortcuts::ShortcutSettings;
 
 #[gpui::test]
 fn close_behavior_control_saves_and_rejects_failed_writes(cx: &mut TestAppContext) {
-    use muxy_settings::CloseBehavior;
+    use muxy_app_core::settings::CloseBehavior;
     let (boot, _requests) = stub_boot(AppState::bootstrap().expect("state"));
     let (view, cx) = settings_window(boot, cx);
     cx.run_until_parked();
@@ -19,7 +19,7 @@ fn close_behavior_control_saves_and_rejects_failed_writes(cx: &mut TestAppContex
         assert_eq!(model.settings.window.close_behavior, CloseBehavior::Detach);
         let path = model.path.with_file_name("settings.toml");
         assert_eq!(
-            muxy_settings::Settings::load(&path)
+            muxy_app_core::settings::Settings::load(&path)
                 .expect("settings")
                 .window
                 .close_behavior,
@@ -45,7 +45,7 @@ fn close_behavior_control_saves_and_rejects_failed_writes(cx: &mut TestAppContex
             CloseBehavior::CloseSession
         );
         assert_eq!(
-            muxy_settings::Settings::load(&model.path.with_file_name("settings.toml"))
+            muxy_app_core::settings::Settings::load(&model.path.with_file_name("settings.toml"))
                 .expect("settings")
                 .window
                 .close_behavior,
@@ -121,13 +121,13 @@ fn settings_shortcut_reuses_an_independent_window_without_a_server(cx: &mut Test
         assert!(!model.appearance.status_bar_visible);
         assert_eq!(model.terminal.font_size, 19.0);
         assert_eq!(
-            muxy_settings::Settings::load(&model.path.with_file_name("settings.toml"))
+            muxy_app_core::settings::Settings::load(&model.path.with_file_name("settings.toml"))
                 .expect("settings")
                 .appearance,
             model.appearance
         );
         assert_eq!(
-            muxy_settings::TerminalSettings::load_with_seed(
+            muxy_app_core::settings::TerminalSettings::load_with_seed(
                 &model.path.with_file_name("ghostty.conf"),
                 None
             )
@@ -174,7 +174,7 @@ fn live_preferences_update_every_terminal_and_rejected_values_stay_unapplied(
             assert_eq!(pane.terminal.font_size, 23.0);
             assert_eq!(
                 pane.terminal.cell_height,
-                muxy_settings::CellHeight::Percent(10.0)
+                muxy_app_core::settings::CellHeight::Percent(10.0)
             );
             assert!(pane.copy_on_select);
         }
@@ -225,7 +225,7 @@ fn recorder_intercepts_app_actions_and_rebinding_keeps_widget_shortcuts(cx: &mut
                 .settings
                 .keymap
                 .binding("new_tab")
-                .map(muxy_settings::KeyChord::as_str),
+                .map(muxy_app_core::settings::KeyChord::as_str),
             Some("cmd-n"),
             "{:?}",
             settings.read(cx).errors
@@ -261,7 +261,7 @@ fn recorder_intercepts_app_actions_and_rebinding_keeps_widget_shortcuts(cx: &mut
                 .settings
                 .keymap
                 .binding("new_tab")
-                .map(muxy_settings::KeyChord::as_str),
+                .map(muxy_app_core::settings::KeyChord::as_str),
             Some("cmd-t")
         );
     });
@@ -445,7 +445,10 @@ fn navigating_or_focusing_fields_cancels_recording_and_search_stays_control_size
     cx.simulate_keystrokes("cmd-a 1 2 0 0 enter");
     view.read_with(cx, |model, _| {
         assert_eq!(model.settings.window.default_size[0], 1200.0);
-        assert_eq!(model.settings.keymap, muxy_settings::Keymap::default());
+        assert_eq!(
+            model.settings.keymap,
+            muxy_app_core::settings::Keymap::default()
+        );
     });
     cx.update(|window, cx| {
         settings.update(cx, |pane, cx| pane.begin_recording("new_tab", window, cx));
@@ -453,7 +456,10 @@ fn navigating_or_focusing_fields_cancels_recording_and_search_stays_control_size
     click_preference(cx, "settings-search");
     cx.simulate_keystrokes("w i d t h");
     view.read_with(cx, |model, _| {
-        assert_eq!(model.settings.keymap, muxy_settings::Keymap::default());
+        assert_eq!(
+            model.settings.keymap,
+            muxy_app_core::settings::Keymap::default()
+        );
     });
     let search = cx.debug_bounds("settings-search").expect("search");
     let categories = cx
@@ -702,7 +708,7 @@ fn settings_controls_are_reachable_and_activated_with_the_keyboard(cx: &mut Test
     view.read_with(cx, |model, _| {
         assert_eq!(
             model.settings.window.close_behavior,
-            muxy_settings::CloseBehavior::Detach
+            muxy_app_core::settings::CloseBehavior::Detach
         );
     });
     cx.simulate_keystrokes("tab space");
@@ -881,8 +887,9 @@ fn quick_terminal_shortcut_choices_are_clickable_and_save_while_disabled(cx: &mu
         click_preference(cx, selector);
         view.read_with(cx, |model, _| {
             assert_eq!(model.settings.quick_terminal.shortcut, expected);
-            let saved = muxy_settings::Settings::load(&model.configuration_path("settings.toml"))
-                .expect("saved shortcut");
+            let saved =
+                muxy_app_core::settings::Settings::load(&model.configuration_path("settings.toml"))
+                    .expect("saved shortcut");
             assert_eq!(saved.quick_terminal.shortcut, expected);
             assert!(!saved.quick_terminal.enabled);
         });

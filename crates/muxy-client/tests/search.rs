@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use muxy_client::{Client, ClientEvent};
 use muxy_protocol::{HistoryCursor, SearchSource, SessionId, Size};
-use muxy_server_core::{Registry, ServerSettings, connection};
+use muxy_server::{Registry, ServerSettings, connection};
 
 type TestResult = Result<(), Box<dyn Error>>;
 

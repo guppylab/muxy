@@ -1,6 +1,6 @@
 use super::{Category, Change, PickerKind, SettingsEvent, SettingsView};
 use gpui::{AnyElement, Context, Window};
-use muxy_settings::NewPaneDirectory;
+use muxy_app_core::settings::NewPaneDirectory;
 use muxy_ui::controls::{self, Choice};
 
 pub(super) fn rows(

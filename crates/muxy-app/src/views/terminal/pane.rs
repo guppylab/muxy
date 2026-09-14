@@ -93,7 +93,7 @@ pub(crate) struct TerminalPane {
     viewport: Option<Size>,
     pub(crate) palette: Palette,
     pub(crate) background_opacity: f32,
-    pub(crate) terminal: muxy_settings::TerminalSettings,
+    pub(crate) terminal: muxy_app_core::settings::TerminalSettings,
     pub(crate) state: PaneState,
     pub(crate) process: Option<ForegroundProcess>,
     title: String,
@@ -107,7 +107,7 @@ impl EventEmitter<PaneEvent> for TerminalPane {}
 impl TerminalPane {
     pub(crate) fn new(
         palette: Palette,
-        terminal: muxy_settings::TerminalSettings,
+        terminal: muxy_app_core::settings::TerminalSettings,
         cx: &mut Context<Self>,
     ) -> Self {
         cx.on_release(|pane, cx| {
@@ -1272,7 +1272,7 @@ mod tests {
         let pane = cx.new(|cx| {
             TerminalPane::new(
                 Palette::new(true),
-                muxy_settings::TerminalSettings::default(),
+                muxy_app_core::settings::TerminalSettings::default(),
                 cx,
             )
         });
@@ -1291,7 +1291,7 @@ mod tests {
         let pane = cx.new(|cx| {
             TerminalPane::new(
                 Palette::new(true),
-                muxy_settings::TerminalSettings::default(),
+                muxy_app_core::settings::TerminalSettings::default(),
                 cx,
             )
         });
@@ -1344,7 +1344,7 @@ mod tests {
     fn searchable_pane(window: &mut Window, cx: &mut Context<TerminalPane>) -> TerminalPane {
         let mut pane = TerminalPane::new(
             Palette::new(true),
-            muxy_settings::TerminalSettings::default(),
+            muxy_app_core::settings::TerminalSettings::default(),
             cx,
         );
         let mut grid = grid();
@@ -1379,7 +1379,7 @@ mod tests {
         let pane = cx.new(|cx| {
             TerminalPane::new(
                 Palette::new(true),
-                muxy_settings::TerminalSettings::default(),
+                muxy_app_core::settings::TerminalSettings::default(),
                 cx,
             )
         });
@@ -1428,7 +1428,7 @@ mod tests {
         let pane = cx.new(|cx| {
             TerminalPane::new(
                 Palette::new(true),
-                muxy_settings::TerminalSettings::default(),
+                muxy_app_core::settings::TerminalSettings::default(),
                 cx,
             )
         });
@@ -1490,7 +1490,7 @@ mod tests {
         let pane = cx.new(|cx| {
             TerminalPane::new(
                 Palette::new(true),
-                muxy_settings::TerminalSettings::default(),
+                muxy_app_core::settings::TerminalSettings::default(),
                 cx,
             )
         });
@@ -1636,7 +1636,7 @@ mod tests {
         let (pane, cx) = cx.add_window_view(|_, cx| {
             TerminalPane::new(
                 Palette::new(true),
-                muxy_settings::TerminalSettings::default(),
+                muxy_app_core::settings::TerminalSettings::default(),
                 cx,
             )
         });
@@ -1724,7 +1724,7 @@ mod tests {
         let (pane, cx) = cx.add_window_view(|_, cx| {
             TerminalPane::new(
                 Palette::new(true),
-                muxy_settings::TerminalSettings::default(),
+                muxy_app_core::settings::TerminalSettings::default(),
                 cx,
             )
         });
@@ -1786,7 +1786,7 @@ mod tests {
         let pane = cx.new(|cx| {
             TerminalPane::new(
                 Palette::new(true),
-                muxy_settings::TerminalSettings::default(),
+                muxy_app_core::settings::TerminalSettings::default(),
                 cx,
             )
         });
@@ -1862,7 +1862,7 @@ mod tests {
         let (pane, cx) = cx.add_window_view(|_, cx| {
             TerminalPane::new(
                 Palette::new(true),
-                muxy_settings::TerminalSettings::default(),
+                muxy_app_core::settings::TerminalSettings::default(),
                 cx,
             )
         });
@@ -1944,7 +1944,7 @@ mod tests {
         let (pane, cx) = cx.add_window_view(|_, cx| {
             TerminalPane::new(
                 Palette::new(true),
-                muxy_settings::TerminalSettings::default(),
+                muxy_app_core::settings::TerminalSettings::default(),
                 cx,
             )
         });
@@ -2005,7 +2005,7 @@ mod tests {
         let pane = cx.new(|cx| {
             TerminalPane::new(
                 Palette::new(true),
-                muxy_settings::TerminalSettings::default(),
+                muxy_app_core::settings::TerminalSettings::default(),
                 cx,
             )
         });
@@ -2054,7 +2054,7 @@ mod tests {
         let pane = cx.new(|cx| {
             TerminalPane::new(
                 Palette::new(true),
-                muxy_settings::TerminalSettings::default(),
+                muxy_app_core::settings::TerminalSettings::default(),
                 cx,
             )
         });
@@ -2084,7 +2084,7 @@ mod tests {
         let (pane, cx) = cx.add_window_view(|_, cx| {
             TerminalPane::new(
                 Palette::new(true),
-                muxy_settings::TerminalSettings::default(),
+                muxy_app_core::settings::TerminalSettings::default(),
                 cx,
             )
         });
@@ -2139,7 +2139,7 @@ mod tests {
         let (pane, cx) = cx.add_window_view(|_, cx| {
             TerminalPane::new(
                 Palette::new(true),
-                muxy_settings::TerminalSettings::default(),
+                muxy_app_core::settings::TerminalSettings::default(),
                 cx,
             )
         });
@@ -2266,7 +2266,7 @@ mod tests {
         let (pane, cx) = cx.add_window_view(|window, cx| {
             let mut pane = TerminalPane::new(
                 Palette::new(true),
-                muxy_settings::TerminalSettings::default(),
+                muxy_app_core::settings::TerminalSettings::default(),
                 cx,
             );
             pane.grid = Some(grid());
@@ -2291,7 +2291,7 @@ mod tests {
         let (pane, cx) = cx.add_window_view(|_, cx| {
             TerminalPane::new(
                 Palette::new(true),
-                muxy_settings::TerminalSettings::default(),
+                muxy_app_core::settings::TerminalSettings::default(),
                 cx,
             )
         });
@@ -2358,7 +2358,7 @@ mod tests {
         let (pane, cx) = cx.add_window_view(|_, cx| {
             TerminalPane::new(
                 Palette::new(true),
-                muxy_settings::TerminalSettings::default(),
+                muxy_app_core::settings::TerminalSettings::default(),
                 cx,
             )
         });
@@ -2432,7 +2432,7 @@ mod tests {
         let pane = cx.new(|cx| {
             TerminalPane::new(
                 Palette::new(true),
-                muxy_settings::TerminalSettings::default(),
+                muxy_app_core::settings::TerminalSettings::default(),
                 cx,
             )
         });
@@ -2473,7 +2473,7 @@ mod tests {
         let (pane, cx) = cx.add_window_view(|_, cx| {
             TerminalPane::new(
                 Palette::new(true),
-                muxy_settings::TerminalSettings::default(),
+                muxy_app_core::settings::TerminalSettings::default(),
                 cx,
             )
         });
@@ -2551,7 +2551,7 @@ mod tests {
         let (pane, cx) = cx.add_window_view(|_, cx| {
             TerminalPane::new(
                 Palette::new(true),
-                muxy_settings::TerminalSettings::default(),
+                muxy_app_core::settings::TerminalSettings::default(),
                 cx,
             )
         });

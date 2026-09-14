@@ -13,7 +13,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-muxy-core = { path = "../muxy-core" }
+postcard = { version = "1", default-features = false, features = ["use-std"] }
 serde = { version = "1", features = ["derive", "rc"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 unicode-segmentation = "1"

@@ -2,8 +2,8 @@
 
 Clients and the server talk over a reliable, ordered local byte stream. This
 contract covers projects, terminal sessions, and server capabilities. Exact
-types, kind numbers, and limits live in the protocol and wire crates and their
-fixtures; this document says what they mean.
+types, kind numbers, and limits live in the protocol crate and its fixtures;
+this document says what they mean.
 
 ## Versions
 

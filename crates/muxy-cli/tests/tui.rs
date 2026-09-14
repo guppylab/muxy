@@ -450,13 +450,14 @@ fn wide_text_clipping_and_repainting_do_not_overwrite_the_neighboring_pane() -> 
             .collect::<Vec<_>>(),
         neighbor
     );
-    tui.pty.resize(muxy_pty::PtySize { cols: 2, rows: 2 })?;
+    tui.pty
+        .resize(muxy_terminal::pty::PtySize { cols: 2, rows: 2 })?;
     tui.screen
         .resize(muxy_terminal::Size { cols: 2, rows: 2 })?;
     for _ in 0..5 {
         tui.pump()?;
     }
-    tui.pty.resize(muxy_pty::PtySize {
+    tui.pty.resize(muxy_terminal::pty::PtySize {
         cols: 100,
         rows: 26,
     })?;

@@ -3,7 +3,7 @@ use std::io::{self, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
-use muxy_server_core::ServerSettings;
+use muxy_server::ServerSettings;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize)]

@@ -2,8 +2,8 @@ use std::error::Error;
 use std::fmt;
 use std::io;
 
+use muxy_protocol::wire::WireError;
 use muxy_protocol::{ErrorCode, ErrorReply, ReplyBody};
-use muxy_wire::WireError;
 
 #[derive(Debug)]
 pub enum ClientError {

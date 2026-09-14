@@ -19,7 +19,7 @@ use gpui::{
     InteractiveElement, IntoElement, ParentElement, Render, Styled, Subscription, Window, canvas,
     div, px,
 };
-use muxy_settings::{Settings, TerminalSettings};
+use muxy_app_core::settings::{Settings, TerminalSettings};
 use muxy_ui::controls::{self, Style};
 use muxy_ui::form;
 use muxy_ui::text_input::{InputEvent, InputStyle, TextInput};
@@ -59,16 +59,16 @@ impl Category {
 
 #[derive(Clone, Debug)]
 pub(crate) enum Change {
-    QuickTerminal(muxy_settings::QuickTerminalSettings),
+    QuickTerminal(muxy_app_core::settings::QuickTerminalSettings),
     Theme(bool, String),
     Sidebar(bool),
     StatusBar(bool),
     ConfirmProcess(bool),
-    CloseBehavior(muxy_settings::CloseBehavior),
+    CloseBehavior(muxy_app_core::settings::CloseBehavior),
     CopyOnSelect(bool),
-    Directory(muxy_settings::NewPaneDirectory),
+    Directory(muxy_app_core::settings::NewPaneDirectory),
     Field(&'static str, String),
-    Binding(String, Option<muxy_settings::KeyChord>),
+    Binding(String, Option<muxy_app_core::settings::KeyChord>),
     ShellIntegration(bool),
 }
 

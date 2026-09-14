@@ -177,7 +177,7 @@ fn detach_shortcut_is_unassigned_and_can_be_configured(cx: &mut TestAppContext) 
     assert!(
         boot.settings
             .keymap
-            .chord(muxy_settings::Action::DetachTerminal)
+            .chord(muxy_core::shortcuts::ShortcutId::DetachTerminal)
             .is_none()
     );
     cx.update(|cx| crate::views::workspace::bind_keys(&boot.settings.keymap, cx));
@@ -236,7 +236,7 @@ fn verify_live_detach_mode(
     })?;
     view.update(cx, |model, cx| {
         if close_tab {
-            model.settings.window.close_behavior = muxy_settings::CloseBehavior::Detach;
+            model.settings.window.close_behavior = muxy_app_core::settings::CloseBehavior::Detach;
             model.close_tab(model.active_tab().expect("live tab"), cx);
         } else {
             model.detach_terminal(model.active_pane().expect("live terminal"), cx);
@@ -285,7 +285,7 @@ fn verify_live_detach_mode(
     shell(cx, "printf '\\nDETACH_REATTACHED\\n'");
     wait_text(cx, view, "DETACH_REATTACHED")?;
     view.update(cx, |model, cx| {
-        model.settings.window.close_behavior = muxy_settings::CloseBehavior::CloseSession;
+        model.settings.window.close_behavior = muxy_app_core::settings::CloseBehavior::CloseSession;
         model.close_tab(model.active_tab().expect("reattached tab"), cx);
     });
     wait(cx, view, |model, _| {

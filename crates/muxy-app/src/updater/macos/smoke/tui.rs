@@ -1,6 +1,6 @@
 use super::*;
-use muxy_pty::{Pty, PtyEvent, PtySize, ReaderHandle, SpawnRequest};
 use muxy_terminal::Terminal;
+use muxy_terminal::pty::{Pty, PtyEvent, PtySize, ReaderHandle, SpawnRequest};
 use std::sync::mpsc::{self, Receiver};
 
 pub(super) struct Tui {
@@ -33,7 +33,7 @@ impl Tui {
             reader: Some(reader),
             events,
             screen: Terminal::new(
-                muxy_terminal::Size {
+                Size {
                     cols: 100,
                     rows: 26,
                 },

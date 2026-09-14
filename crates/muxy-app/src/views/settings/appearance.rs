@@ -1,6 +1,6 @@
 use super::{Category, Change, PickerKind, SettingsEvent, SettingsView};
 use gpui::{AnyElement, Context};
-use muxy_settings::CloseBehavior;
+use muxy_app_core::settings::CloseBehavior;
 use muxy_ui::controls::{self, Choice};
 
 pub(super) fn rows(

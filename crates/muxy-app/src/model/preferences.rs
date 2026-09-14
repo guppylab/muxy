@@ -2,7 +2,7 @@ use gpui::{
     AppContext, Bounds, Context, Entity, TitlebarOptions, Window, WindowBounds, WindowHandle,
     WindowOptions, point, px, size,
 };
-use muxy_settings::CellHeight;
+use muxy_app_core::settings::CellHeight;
 
 use super::{AppModel, ConnectionState, Quitting};
 use crate::boot::Work;
@@ -47,7 +47,7 @@ impl AppModel {
         }
         self.settings_window = None;
         let snapshot = self.preferences_snapshot();
-        let included_keys = muxy_settings::TerminalSettings::included_keys(
+        let included_keys = muxy_app_core::settings::TerminalSettings::included_keys(
             &self.path.with_file_name("ghostty.conf"),
         )
         .unwrap_or_default();
@@ -317,7 +317,7 @@ impl AppModel {
                 cx.notify();
             });
         }
-        let included_keys = muxy_settings::TerminalSettings::included_keys(
+        let included_keys = muxy_app_core::settings::TerminalSettings::included_keys(
             &self.path.with_file_name("ghostty.conf"),
         )?;
         if let Some(settings) = &self.settings_window {

@@ -45,7 +45,7 @@ impl QuickTerminalRuntime {
     }
 
     pub(super) fn new(
-        settings: &muxy_settings::QuickTerminalSettings,
+        settings: &muxy_app_core::settings::QuickTerminalSettings,
         cx: &mut Context<AppModel>,
     ) -> Self {
         let mut shortcuts = QuickTerminalShortcutService::new(
@@ -439,7 +439,7 @@ impl AppModel {
 
     pub(crate) fn apply_quick_settings(
         &mut self,
-        settings: muxy_settings::QuickTerminalSettings,
+        settings: muxy_app_core::settings::QuickTerminalSettings,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
         settings.validate().map_err(|error| error.to_string())?;
@@ -476,7 +476,7 @@ impl AppModel {
 
     pub(super) fn validate_quick_conflict(
         &self,
-        chord: &muxy_settings::KeyChord,
+        chord: &muxy_app_core::settings::KeyChord,
     ) -> Result<(), String> {
         if let Some(combo) = combo_from_chord(chord.as_str())
             && self
@@ -508,7 +508,7 @@ fn combo_from_chord(chord: &str) -> Option<KeyCombo> {
     (!rest.is_empty()).then(|| KeyCombo::new(rest, flags).canonicalized())
 }
 
-fn shortcut_conflicts(keymap: &muxy_settings::Keymap) -> Vec<ConflictCandidate> {
+fn shortcut_conflicts(keymap: &muxy_app_core::settings::Keymap) -> Vec<ConflictCandidate> {
     muxy_core::shortcuts::ALL
         .iter()
         .flat_map(|shortcut| {

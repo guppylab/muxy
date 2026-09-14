@@ -1,7 +1,7 @@
-//! Transport-independent, versioned contracts shared by the app and server.
+//! Shared protocol contracts, screen types, framing, and local transport.
 //!
-//! This crate owns message meaning and validation, but never framing, I/O,
-//! persistence, UI, PTYs, or runtime policy.
+//! Client and server runtime policy, persistence, UI, and native terminal
+//! execution stay with their owners.
 
 mod build;
 pub use build::{BuildInfo, COMPATIBILITY, ServerInfo};
@@ -47,3 +47,7 @@ pub use project::{
     ProjectId, ProjectIntent, ProjectKind, ProjectMutation, ProjectPatch, ProjectSession,
     ProjectSessions, ServerIdentity, SessionStatus,
 };
+
+pub mod wire;
+
+pub mod transport;

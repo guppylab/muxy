@@ -41,6 +41,10 @@ flowchart LR
   the shared startup lock. Neither client links the server implementation.
 - Both clients connect locally. Remote transport is outside this phase.
 
+The server package contains its library and executable. The protocol package
+owns shared screen types, wire codecs, and local transport. PTY adapters live
+with the terminal backend; client settings live with the headless app model.
+
 ## Session thread
 
 ```mermaid

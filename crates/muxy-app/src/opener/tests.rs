@@ -53,9 +53,9 @@ fn builtins_route_without_launching_apps_and_preserve_unavailable_preferences() 
             vec![OsString::from("/tmp/a 'quoted'.rs")],
         ),
     ] {
-        let settings = muxy_settings::OpenerSettings {
+        let settings = muxy_app_core::settings::OpenerSettings {
             file: id.into(),
-            ..muxy_settings::OpenerSettings::default()
+            ..muxy_app_core::settings::OpenerSettings::default()
         };
         open_with(
             &request,
@@ -68,10 +68,10 @@ fn builtins_route_without_launching_apps_and_preserve_unavailable_preferences() 
         )
         .expect("open");
     }
-    let settings = muxy_settings::OpenerSettings {
+    let settings = muxy_app_core::settings::OpenerSettings {
         file: "extension:unavailable".into(),
         project_target: Some(FINDER.into()),
-        ..muxy_settings::OpenerSettings::default()
+        ..muxy_app_core::settings::OpenerSettings::default()
     };
     open_with(
         &request,
@@ -125,9 +125,9 @@ fn editor_selection_and_failed_launch_fall_back_without_losing_context() {
         ("preferred", "/Applications/Preferred.app"),
         ("missing", "/Applications/First.app"),
     ] {
-        let settings = muxy_settings::OpenerSettings {
+        let settings = muxy_app_core::settings::OpenerSettings {
             project_target: Some(preference.into()),
-            ..muxy_settings::OpenerSettings::default()
+            ..muxy_app_core::settings::OpenerSettings::default()
         };
         let mut calls = 0;
         open_with(
@@ -162,7 +162,7 @@ fn editor_selection_and_failed_launch_fall_back_without_losing_context() {
     assert!(
         open_with(
             &remote,
-            &muxy_settings::OpenerSettings::default(),
+            &muxy_app_core::settings::OpenerSettings::default(),
             || &editors,
             |_| panic!("remote file must not launch")
         )

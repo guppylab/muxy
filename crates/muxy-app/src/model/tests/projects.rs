@@ -682,7 +682,8 @@ fn existing_shortcuts_dispatch_the_original_action_when_project_defaults_collide
         let settings_path = directory.join("settings.toml");
         std::fs::write(&settings_path, format!("[keymap]\nnew_tab = '{chord}'\n"))
             .expect("settings");
-        boot.settings = muxy_settings::Settings::load(&settings_path).expect("legacy keymap");
+        boot.settings =
+            muxy_app_core::settings::Settings::load(&settings_path).expect("legacy keymap");
         cx.update(|cx| crate::views::workspace::bind_keys(&boot.settings.keymap, cx));
         let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
         view.update(cx, |model, _| model.connection = ConnectionState::Ready);

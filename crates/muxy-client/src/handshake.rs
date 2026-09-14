@@ -1,5 +1,5 @@
+use muxy_protocol::wire::WireError;
 use muxy_protocol::{CONTROL, ChannelId, Message, SUPPORTED, Version, validate_versions};
-use muxy_wire::WireError;
 
 use crate::ClientError;
 
@@ -118,7 +118,7 @@ mod tests {
         ));
         let legacy_reply = [9, 0, 0, 0, 1, 0, 0, 0, 0, 0, 4, 1, 1];
         assert!(matches!(
-            accept(muxy_wire::Decoder::new(legacy_reply.as_slice()).next()),
+            accept(muxy_protocol::wire::Decoder::new(legacy_reply.as_slice()).next()),
             Err(ClientError::VersionUnsupported)
         ));
         let rejected = Message::Fatal(ErrorReply {

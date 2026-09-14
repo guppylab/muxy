@@ -13,9 +13,9 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+toml = "1.1"
 muxy-core = { path = "../muxy-core" }
 muxy-protocol = { path = "../muxy-protocol" }
-muxy-settings = { path = "../muxy-settings" }
 serde = { version = "1", features = ["derive"] }
 serde_json.workspace = true
 uuid = { version = "1", features = ["v4", "serde"] }

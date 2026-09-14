@@ -10,12 +10,12 @@ use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use muxy_protocol::transport::{StreamCancellation, connect};
+use muxy_protocol::wire::{Decoder, Encoder, WireError};
 use muxy_protocol::{
     CONTROL, ChannelId, ExitReason, Message, ReplyBody, RequestBody, RequestId, SUPPORTED,
     ServerPath, SessionId, Size,
 };
-use muxy_transport::{StreamCancellation, connect};
-use muxy_wire::{Decoder, Encoder, WireError};
 
 type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 const TIMEOUT: Duration = Duration::from_secs(10);

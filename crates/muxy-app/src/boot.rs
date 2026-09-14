@@ -23,8 +23,8 @@ pub(crate) type Worker = Sender<(u64, Work)>;
 pub(crate) struct Boot {
     pub(crate) state: AppState,
     pub(crate) state_path: PathBuf,
-    pub(crate) settings: muxy_settings::Settings,
-    pub(crate) terminal: muxy_settings::TerminalSettings,
+    pub(crate) settings: muxy_app_core::settings::Settings,
+    pub(crate) terminal: muxy_app_core::settings::TerminalSettings,
     pub(crate) work: Worker,
     pub(crate) updates: async_channel::Receiver<(u64, Update)>,
 }
@@ -33,9 +33,11 @@ impl Boot {
     pub(crate) fn load() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let state_path = store::default_path()?;
         let state = store::load(&state_path)?;
-        let settings = muxy_settings::Settings::load(&state_path.with_file_name("settings.toml"))?;
-        let terminal =
-            muxy_settings::TerminalSettings::load(&state_path.with_file_name("ghostty.conf"))?;
+        let settings =
+            muxy_app_core::settings::Settings::load(&state_path.with_file_name("settings.toml"))?;
+        let terminal = muxy_app_core::settings::TerminalSettings::load(
+            &state_path.with_file_name("ghostty.conf"),
+        )?;
         let (work, updates) = bridge(state_path.with_file_name("server.sock"))?;
         work.send((1, Work::Connect))?;
         Ok(Self {

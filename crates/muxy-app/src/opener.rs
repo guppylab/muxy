@@ -82,14 +82,14 @@ fn registry() -> &'static Registry<Handler> {
 
 pub(crate) fn open(
     request: &OpenRequest,
-    settings: &muxy_settings::OpenerSettings,
+    settings: &muxy_app_core::settings::OpenerSettings,
 ) -> io::Result<()> {
     open_with(request, settings, editors, launch)
 }
 
 fn open_with<'a>(
     request: &OpenRequest,
-    settings: &muxy_settings::OpenerSettings,
+    settings: &muxy_app_core::settings::OpenerSettings,
     editors: impl FnOnce() -> &'a [Editor],
     mut launch: impl FnMut(&Launch) -> io::Result<()>,
 ) -> io::Result<()> {

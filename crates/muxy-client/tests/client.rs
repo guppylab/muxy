@@ -24,10 +24,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use muxy_client::{Attachment, Client, ClientError, ClientEvent, RunGrid};
+use muxy_protocol::transport::{ByteStream, StreamCancellation};
+use muxy_protocol::wire::{Decoder, Encoder, WireError};
 use muxy_protocol::{CONTROL, ChannelId, ErrorCode, ExitReason, Message, ScreenFrame, Size};
-use muxy_server_core::{Registry, ServerEvent, ServerSettings, connection::serve};
-use muxy_transport::{ByteStream, StreamCancellation};
-use muxy_wire::{Decoder, Encoder, WireError};
+use muxy_server::{Registry, ServerEvent, ServerSettings, connection::serve};
 
 type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 const TIMEOUT: Duration = Duration::from_secs(10);

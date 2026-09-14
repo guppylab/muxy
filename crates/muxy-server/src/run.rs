@@ -8,8 +8,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use muxy_server_core::{Registry, ServerEvent, connection};
-use muxy_transport::{BindError, Listener, StreamCancellation, UnixSocketListener};
+use muxy_protocol::transport::{BindError, Listener, StreamCancellation, UnixSocketListener};
+use muxy_server::{Registry, ServerEvent, connection};
 use signal_hook::consts::{SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
 
@@ -182,14 +182,13 @@ pub(crate) fn run(args: &Args) -> io::Result<()> {
 
 fn bootstrap_registry(
     args: &Args,
-    settings: muxy_server_core::ServerSettings,
+    settings: muxy_server::ServerSettings,
     sender: Sender<ServerEvent>,
     directory: &Path,
-    legacy: muxy_server_core::LegacyImport,
+    legacy: muxy_server::LegacyImport,
 ) -> io::Result<Arc<Registry>> {
-    let hooks = muxy_server_core::ShellIntegration::install(
-        &directory.with_file_name("shell-integration"),
-    )?;
+    let hooks =
+        muxy_server::ShellIntegration::install(&directory.with_file_name("shell-integration"))?;
     let settings_path = args.settings.clone();
     Ok(Arc::new(
         Registry::persistent_with_import(settings, sender, directory, legacy)?

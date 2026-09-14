@@ -1,7 +1,7 @@
-//! Server-side terminal emulation, grid state, and retained history.
+//! Native terminal emulation, retained history, and PTY process I/O.
 //!
-//! This crate does not own PTY processes, protocol messages, transports, or
-//! application policy.
+//! Screen data uses the shared protocol types; session lifecycle and
+//! application policy stay with their owners.
 
 mod error;
 mod events;
@@ -23,3 +23,5 @@ mod graphics;
 pub use graphics::{
     CellSize, GraphicImage, GraphicPlacement, Graphics, MAX_GRAPHICS_BYTES, MAX_GRAPHICS_PLACEMENTS,
 };
+
+pub mod pty;

@@ -1,3 +1,4 @@
+use muxy_core::shortcuts::ShortcutId;
 mod drag;
 
 pub(crate) use drag::TabDragState;
@@ -8,7 +9,6 @@ use gpui::{
     SharedString, StatefulInteractiveElement, Styled, Window, div, px, relative,
 };
 use muxy_app_core::{Tab, TabId};
-use muxy_settings::Action;
 
 use super::titlebar;
 use crate::model::AppModel;
@@ -135,7 +135,7 @@ fn existing_terminals_button(
     let tooltip = model
         .settings
         .keymap
-        .chord(Action::ExistingTerminals)
+        .chord(ShortcutId::ExistingTerminals)
         .map_or_else(|| tooltip.clone(), |chord| format!("{tooltip} ({chord})"));
     div()
         .debug_selector(|| "existing-terminals-button".into())
@@ -168,7 +168,7 @@ fn settings_button(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
     let tooltip = model
         .settings
         .keymap
-        .chord(Action::OpenSettings)
+        .chord(ShortcutId::OpenSettings)
         .map_or_else(
             || "Settings".to_owned(),
             |chord| format!("Settings ({chord})"),
@@ -209,7 +209,7 @@ fn zoom_control(zoomed: bool, model: &AppModel, cx: &mut Context<AppModel>) -> A
     let tooltip = model
         .settings
         .keymap
-        .chord(Action::ToggleZoomPane)
+        .chord(ShortcutId::ToggleZoomPane)
         .map_or_else(|| label.to_owned(), |chord| format!("{label} ({chord})"));
     div()
         .debug_selector(move || {

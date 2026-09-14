@@ -6,13 +6,13 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::Duration;
 
+use muxy_protocol::transport::{ByteStream, StreamCancellation};
+use muxy_protocol::wire::{Decoder, Encoder, message_version};
 use muxy_protocol::{
     CONTROL, ChannelId, ErrorCode, ErrorReply, ForegroundProcess, HistoryCursor, HistoryPage,
     Message, MouseEvent, ReplyBody, RequestBody, SavedScreen, SearchPage, SearchSource, ServerPath,
     SessionId, SessionInfo, Size, TerminalColors, Version,
 };
-use muxy_transport::{ByteStream, StreamCancellation};
-use muxy_wire::{Decoder, Encoder, message_version};
 
 use crate::events::{self, ClientEvent};
 use crate::handshake;
@@ -71,7 +71,7 @@ impl Client {
         if timeout.is_zero() {
             return Err(ClientError::Timeout);
         }
-        Self::from_stream_with_timeout(muxy_transport::connect(socket)?, timeout)
+        Self::from_stream_with_timeout(muxy_protocol::transport::connect(socket)?, timeout)
     }
 
     pub fn from_stream(stream: Box<dyn ByteStream>) -> Result<Self, ClientError> {

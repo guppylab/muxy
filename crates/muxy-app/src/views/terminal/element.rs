@@ -158,7 +158,7 @@ fn viewport_size(bounds: gpui::Size<Pixels>, cell: gpui::Size<Pixels>) -> Size {
 }
 
 fn typography(
-    terminal: &muxy_settings::TerminalSettings,
+    terminal: &muxy_app_core::settings::TerminalSettings,
     palette: Palette,
     window: &Window,
 ) -> (gpui::Font, Pixels, gpui::Size<Pixels>) {
@@ -202,7 +202,7 @@ fn physical_cell(cell: gpui::Size<Pixels>, scale: f32) -> muxy_protocol::CellSiz
 }
 
 struct RowRenderer<'a> {
-    settings: &'a muxy_settings::FontOptions,
+    settings: &'a muxy_app_core::settings::FontOptions,
     cell: gpui::Size<Pixels>,
     palette: Palette,
     base_font: &'a gpui::Font,
@@ -537,7 +537,7 @@ fn append_run(
     styles.push(text_run(text.len() - start, run.style, palette, base_font));
 }
 
-fn font_parts(run: &Run, settings: &muxy_settings::FontOptions) -> Option<Vec<Run>> {
+fn font_parts(run: &Run, settings: &muxy_app_core::settings::FontOptions) -> Option<Vec<Run>> {
     if !run.text.is_ascii() || settings.codepoints.is_empty() {
         return None;
     }
@@ -570,7 +570,11 @@ fn font_parts(run: &Run, settings: &muxy_settings::FontOptions) -> Option<Vec<Ru
     Some(parts)
 }
 
-fn configure_font(font: &mut gpui::Font, run: &Run, settings: &muxy_settings::FontOptions) {
+fn configure_font(
+    font: &mut gpui::Font,
+    run: &Run,
+    settings: &muxy_app_core::settings::FontOptions,
+) {
     let families = match (run.style.bold, run.style.italic) {
         (true, true) => &settings.bold_italic,
         (true, false) => &settings.bold,
@@ -586,7 +590,11 @@ fn configure_font(font: &mut gpui::Font, run: &Run, settings: &muxy_settings::Fo
     configure_codepoint(font, run, settings);
 }
 
-fn configure_codepoint(font: &mut gpui::Font, run: &Run, settings: &muxy_settings::FontOptions) {
+fn configure_codepoint(
+    font: &mut gpui::Font,
+    run: &Run,
+    settings: &muxy_app_core::settings::FontOptions,
+) {
     if let Some(mapping) = settings.codepoints.iter().rev().find(|mapping| {
         run.text
             .chars()
@@ -782,7 +790,7 @@ mod tests {
         let (pane, cx) = cx.add_window_view(|_, cx| {
             TerminalPane::new(
                 Palette::new(true),
-                muxy_settings::TerminalSettings::default(),
+                muxy_app_core::settings::TerminalSettings::default(),
                 cx,
             )
         });
@@ -833,7 +841,7 @@ mod tests {
         let (pane, cx) = cx.add_window_view(|_, cx| {
             TerminalPane::new(
                 Palette::new(true),
-                muxy_settings::TerminalSettings::default(),
+                muxy_app_core::settings::TerminalSettings::default(),
                 cx,
             )
         });
@@ -882,7 +890,7 @@ mod tests {
         let (pane, cx) = cx.add_window_view(|_, cx| {
             TerminalPane::new(
                 Palette::new(true),
-                muxy_settings::TerminalSettings::default(),
+                muxy_app_core::settings::TerminalSettings::default(),
                 cx,
             )
         });
@@ -1090,7 +1098,7 @@ mod tests {
         let (pane, cx) = cx.add_window_view(|_, cx| {
             TerminalPane::new(
                 Palette::new(true),
-                muxy_settings::TerminalSettings::default(),
+                muxy_app_core::settings::TerminalSettings::default(),
                 cx,
             )
         });

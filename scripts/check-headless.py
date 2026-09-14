@@ -71,7 +71,7 @@ def main():
     run("cargo", "build", "--locked", "-p", "muxy-cli", "-p", "muxy-server")
     run("cargo", "test", "--locked", *package_args, "--all-features", "--no-fail-fast")
     run("cargo", "doc", "--locked", *package_args, "--no-deps", env={**os.environ, "RUSTDOCFLAGS": "-D warnings"})
-    run("cargo", "test", "--locked", "-p", "muxy-server-core", "fish_marks_prompts_and_preserves_user_configuration",
+    run("cargo", "test", "--locked", "-p", "muxy-server", "fish_marks_prompts_and_preserves_user_configuration",
         "--", "--ignored", env={**os.environ, "MUXY_TEST_FISH": "/usr/bin/fish"})
     if args.runtime_binary:
         binary = args.runtime_binary.resolve()

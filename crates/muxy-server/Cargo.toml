@@ -13,15 +13,17 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+muxy-terminal = { path = "../muxy-terminal" }
+getrandom = "0.3"
+postcard = { version = "1", default-features = false, features = ["use-std"] }
 muxy-protocol = { path = "../muxy-protocol" }
 serde_json.workspace = true
 log = { version = "0.4", features = ["std"] }
 muxy-core = { path = "../muxy-core" }
-muxy-server-core = { path = "../muxy-server-core" }
-muxy-transport = { path = "../muxy-transport" }
 serde = { version = "1", features = ["derive"] }
 signal-hook = "0.4"
 toml = "1.1"
 
-[dev-dependencies]
-muxy-wire = { path = "../muxy-wire" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libproc = "0.14.11"

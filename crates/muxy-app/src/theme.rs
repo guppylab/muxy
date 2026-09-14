@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 
 use gpui::{Window, WindowAppearance};
-use muxy_settings::Appearance;
+use muxy_app_core::settings::Appearance;
 use muxy_ui::theme::{ColorScheme, Theme};
 
 use crate::views::terminal::colors::Palette;

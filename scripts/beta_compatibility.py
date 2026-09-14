@@ -20,7 +20,7 @@ def current(root=ROOT):
     return {
         "identifier": identifier(root),
         "wire": {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
-                 for p in sorted((root / "crates/muxy-wire/tests/fixtures").iterdir()) if p.is_file()},
+                 for p in sorted((root / "crates/muxy-protocol/tests/fixtures").iterdir()) if p.is_file()},
     }
 
 

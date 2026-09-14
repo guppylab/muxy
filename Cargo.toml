@@ -3,15 +3,10 @@ resolver = "3"
 members = [
     "crates/muxy-core",
     "crates/muxy-protocol",
-    "crates/muxy-wire",
-    "crates/muxy-transport",
-    "crates/muxy-pty",
     "crates/muxy-terminal",
-    "crates/muxy-server-core",
     "crates/muxy-server",
     "crates/muxy-cli",
     "crates/muxy-app-core",
-    "crates/muxy-settings",
     "crates/muxy-client",
     "crates/muxy-app",
     "crates/muxy-ui",
@@ -21,32 +16,19 @@ members = [
 # this table and the affected crate-level documentation together.
 [workspace.metadata.architecture.allowed-dependencies]
 muxy-core = []
-muxy-protocol = ["muxy-core"]
-muxy-wire = ["muxy-protocol"]
-muxy-transport = []
-muxy-pty = []
-muxy-terminal = []
-muxy-server-core = [
-    "muxy-core",
-    "muxy-protocol",
-    "muxy-wire",
-    "muxy-transport",
-    "muxy-pty",
-    "muxy-terminal",
-]
-muxy-server = ["muxy-core", "muxy-protocol", "muxy-server-core", "muxy-transport"]
-muxy-settings = ["muxy-core"]
-muxy-app-core = ["muxy-core", "muxy-protocol", "muxy-settings"]
-muxy-client = ["muxy-core", "muxy-protocol", "muxy-wire", "muxy-transport"]
+muxy-protocol = []
+muxy-terminal = ["muxy-protocol"]
+muxy-server = ["muxy-core", "muxy-protocol", "muxy-terminal"]
+muxy-app-core = ["muxy-core", "muxy-protocol"]
+muxy-client = ["muxy-core", "muxy-protocol"]
 muxy-cli = ["muxy-core", "muxy-protocol", "muxy-client", "muxy-app-core"]
-muxy-app = ["muxy-core", "muxy-app-core", "muxy-client", "muxy-settings", "muxy-protocol", "muxy-ui"]
+muxy-app = ["muxy-core", "muxy-app-core", "muxy-client", "muxy-protocol", "muxy-ui"]
 muxy-ui = ["muxy-core"]
 
 [workspace.metadata.architecture.allowed-dev-dependencies]
-muxy-server = ["muxy-wire"]
-muxy-app = ["muxy-wire", "muxy-pty", "muxy-terminal"]
-muxy-client = ["muxy-server-core"]
-muxy-cli = ["muxy-transport", "muxy-wire", "muxy-pty", "muxy-terminal"]
+muxy-app = ["muxy-terminal"]
+muxy-client = ["muxy-server"]
+muxy-cli = ["muxy-terminal"]
 
 [workspace.package]
 version = "2.0.0-beta-0"

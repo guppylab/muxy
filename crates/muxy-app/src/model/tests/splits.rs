@@ -367,22 +367,22 @@ fn split_directory_inherits_only_when_configured_and_falls_back_to_project(
 ) {
     for (setting, reported, inherit) in [
         (
-            muxy_settings::NewPaneDirectory::Project,
+            muxy_app_core::settings::NewPaneDirectory::Project,
             b"/tmp".as_slice(),
             false,
         ),
         (
-            muxy_settings::NewPaneDirectory::Current,
+            muxy_app_core::settings::NewPaneDirectory::Current,
             b"/tmp".as_slice(),
             true,
         ),
         (
-            muxy_settings::NewPaneDirectory::Current,
+            muxy_app_core::settings::NewPaneDirectory::Current,
             b"".as_slice(),
             false,
         ),
         (
-            muxy_settings::NewPaneDirectory::Current,
+            muxy_app_core::settings::NewPaneDirectory::Current,
             b"relative".as_slice(),
             false,
         ),

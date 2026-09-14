@@ -6,7 +6,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 
 use muxy_protocol::{ProjectDescriptor, ProjectId, ProjectKind, ServerPath, SessionId};
-use muxy_server_core::LegacyImport;
+use muxy_server::LegacyImport;
 use serde::Deserialize;
 
 #[cfg(test)]

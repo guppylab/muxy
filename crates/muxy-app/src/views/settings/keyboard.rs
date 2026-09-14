@@ -19,7 +19,7 @@ pub(super) fn row(pane: &SettingsView, index: usize, cx: &mut Context<SettingsVi
     let label = if recording {
         "Press a shortcut…"
     } else {
-        chord.map_or("Not assigned", muxy_settings::KeyChord::as_str)
+        chord.map_or("Not assigned", muxy_app_core::settings::KeyChord::as_str)
     };
     let control = div()
         .flex()
@@ -87,7 +87,9 @@ impl SettingsView {
     }
 }
 
-fn recorded_chord(keystroke: &Keystroke) -> muxy_settings::Result<muxy_settings::KeyChord> {
+fn recorded_chord(
+    keystroke: &Keystroke,
+) -> muxy_app_core::settings::Result<muxy_app_core::settings::KeyChord> {
     let modifiers = keystroke.modifiers;
     let mut value = String::new();
     for (name, enabled) in [

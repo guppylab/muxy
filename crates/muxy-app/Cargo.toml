@@ -21,11 +21,8 @@ gpui = { version = "=0.2.2", default-features = false, features = ["font-kit"] }
 muxy-app-core = { path = "../muxy-app-core" }
 muxy-client = { path = "../muxy-client" }
 muxy-protocol = { path = "../muxy-protocol" }
-muxy-settings = { path = "../muxy-settings" }
 
 [dev-dependencies]
-muxy-wire = { path = "../muxy-wire" }
-muxy-pty = { path = "../muxy-pty" }
 muxy-terminal = { path = "../muxy-terminal" }
 gpui = { version = "=0.2.2", default-features = false, features = ["test-support"] }
 

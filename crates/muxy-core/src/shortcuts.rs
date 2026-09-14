@@ -155,6 +155,10 @@ pub enum ShortcutId {
 }
 
 impl ShortcutId {
+    pub fn name(self) -> &'static str {
+        self.definition().id
+    }
+
     pub fn definition(self) -> &'static Shortcut {
         &ALL[self as usize]
     }

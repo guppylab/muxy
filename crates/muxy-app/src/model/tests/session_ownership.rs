@@ -180,7 +180,7 @@ fn existing_terminals_shortcut_is_unassigned_configurable_and_resettable(cx: &mu
     assert!(
         boot.settings
             .keymap
-            .chord(muxy_settings::Action::ExistingTerminals)
+            .chord(muxy_core::shortcuts::ShortcutId::ExistingTerminals)
             .is_none()
     );
     cx.update(|cx| crate::views::workspace::bind_keys(&boot.settings.keymap, cx));

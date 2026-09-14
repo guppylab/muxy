@@ -1,5 +1,6 @@
-mod types;
-pub use types::*;
+pub use muxy_protocol::{
+    CellSize, GraphicImage, GraphicPlacement, Graphics, MAX_GRAPHICS_BYTES, MAX_GRAPHICS_PLACEMENTS,
+};
 
 use std::collections::BTreeMap;
 use std::io::Cursor;

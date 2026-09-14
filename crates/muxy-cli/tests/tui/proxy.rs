@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use muxy_protocol::wire::{Decoder, Encoder};
 use muxy_protocol::{Message, ReplyBody, RequestBody};
-use muxy_wire::{Decoder, Encoder};
 
 use super::fixture::{Fixture, Result};
 

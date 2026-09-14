@@ -1,7 +1,7 @@
-//! Product domain and persistence policy owned by the Muxy application.
+//! Headless client state, configuration, and persistence.
 //!
-//! Workspaces, cached project views, tabs, panes, and window state live here; server
-//! execution and UI toolkit code do not.
+//! Workspaces, cached project views, tabs, panes, and window state live here;
+//! server execution and UI toolkit code do not.
 
 mod error;
 mod home;
@@ -27,3 +27,5 @@ pub use tab::Tab;
 pub use window::{WindowBounds, WindowState};
 
 mod catalog;
+
+pub mod settings;

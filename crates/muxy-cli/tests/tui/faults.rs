@@ -154,7 +154,8 @@ fn exit_during_resize_keeps_tab_selection_bound_to_the_displayed_pane() -> Resul
     }
     let selected = tui.active_tab()?["focus"].clone();
     proxy.arm(Point::ResizeReply);
-    tui.pty.resize(muxy_pty::PtySize { cols: 98, rows: 26 })?;
+    tui.pty
+        .resize(muxy_terminal::pty::PtySize { cols: 98, rows: 26 })?;
     tui.wait(|_| Ok(proxy.reached()))?;
     client.end_session(dead)?;
     tui.wait(|tui| {

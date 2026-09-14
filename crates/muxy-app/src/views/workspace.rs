@@ -6,7 +6,7 @@ use gpui::{
     StatefulInteractiveElement, Styled, Window, actions, div, px, relative,
 };
 use muxy_app_core::Direction;
-use muxy_settings::{Action, Keymap};
+use muxy_app_core::settings::Keymap;
 use muxy_ui::components::IconGlyph;
 use muxy_ui::icon::Icon;
 
@@ -479,7 +479,7 @@ fn empty(model: &AppModel, cx: &mut Context<AppModel>) -> gpui::AnyElement {
                 .hover(|style| style.opacity(0.85))
                 .on_click(cx.listener(|model, _, _, cx| model.new_tab(cx)))
                 .child("New Tab")
-                .when_some(model.settings.keymap.chord(Action::NewTab), |element, chord| element.child(
+                .when_some(model.settings.keymap.chord(ShortcutId::NewTab), |element, chord| element.child(
                     div()
                         .text_size(m.font_footnote())
                         .font_weight(FontWeight::MEDIUM)

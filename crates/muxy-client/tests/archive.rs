@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use muxy_client::{Client, ClientError, ClientEvent};
 use muxy_protocol::{ErrorCode, ExitReason, Size};
-use muxy_server_core::{Registry, ServerSettings, connection};
+use muxy_server::{Registry, ServerSettings, connection};
 
 type TestResult = Result<(), Box<dyn Error>>;
 static NEXT: AtomicU64 = AtomicU64::new(0);

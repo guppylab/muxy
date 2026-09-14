@@ -3660,11 +3660,8 @@ dependencies = [
  "muxy-client",
  "muxy-core",
  "muxy-protocol",
- "muxy-pty",
- "muxy-settings",
  "muxy-terminal",
  "muxy-ui",
- "muxy-wire",
  "serde_json",
  "tempfile",
  "zed-reqwest",
@@ -3676,9 +3673,9 @@ version = "2.0.0-beta-0"
 dependencies = [
  "muxy-core",
  "muxy-protocol",
- "muxy-settings",
  "serde",
  "serde_json",
+ "toml 1.1.5+spec-1.1.0",
  "unicode-segmentation",
  "uuid",
 ]
@@ -3691,10 +3688,7 @@ dependencies = [
  "muxy-client",
  "muxy-core",
  "muxy-protocol",
- "muxy-pty",
  "muxy-terminal",
- "muxy-transport",
- "muxy-wire",
  "ratatui",
  "serde",
  "serde_json",
@@ -3708,9 +3702,7 @@ version = "2.0.0-beta-0"
 dependencies = [
  "muxy-core",
  "muxy-protocol",
- "muxy-server-core",
- "muxy-transport",
- "muxy-wire",
+ "muxy-server",
  "serde_json",
  "tempfile",
 ]
@@ -3729,37 +3721,14 @@ dependencies = [
 name = "muxy-protocol"
 version = "2.0.0-beta-0"
 dependencies = [
- "muxy-core",
+ "postcard",
  "serde",
  "unicode-segmentation",
  "uuid",
 ]
 
 [[package]]
-name = "muxy-pty"
-version = "2.0.0-beta-0"
-dependencies = [
- "portable-pty",
-]
-
-[[package]]
 name = "muxy-server"
-version = "2.0.0-beta-0"
-dependencies = [
- "log",
- "muxy-core",
- "muxy-protocol",
- "muxy-server-core",
- "muxy-transport",
- "muxy-wire",
- "serde",
- "serde_json",
- "signal-hook 0.4.4",
- "toml 1.1.5+spec-1.1.0",
-]
-
-[[package]]
-name = "muxy-server-core"
 version = "2.0.0-beta-0"
 dependencies = [
  "getrandom 0.3.4",
@@ -3767,21 +3736,11 @@ dependencies = [
  "log",
  "muxy-core",
  "muxy-protocol",
- "muxy-pty",
  "muxy-terminal",
- "muxy-transport",
- "muxy-wire",
  "postcard",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "muxy-settings"
-version = "2.0.0-beta-0"
-dependencies = [
- "muxy-core",
- "serde",
+ "signal-hook 0.4.4",
  "toml 1.1.5+spec-1.1.0",
 ]
 
@@ -3791,11 +3750,9 @@ version = "2.0.0-beta-0"
 dependencies = [
  "image",
  "libghostty-vt",
+ "muxy-protocol",
+ "portable-pty",
 ]
-
-[[package]]
-name = "muxy-transport"
-version = "2.0.0-beta-0"
 
 [[package]]
 name = "muxy-ui"
@@ -3814,15 +3771,6 @@ dependencies = [
  "objc2-quartz-core",
  "raw-window-handle",
  "unicode-segmentation",
-]
-
-[[package]]
-name = "muxy-wire"
-version = "2.0.0-beta-0"
-dependencies = [
- "muxy-protocol",
- "postcard",
- "serde",
 ]
 
 [[package]]

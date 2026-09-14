@@ -113,7 +113,7 @@ mod tests {
         let result = cx.add_window_view(|window, cx| {
             let mut pane = TerminalPane::new(
                 Palette::new(true),
-                muxy_settings::TerminalSettings::default(),
+                muxy_app_core::settings::TerminalSettings::default(),
                 cx,
             );
             pane.attach(attachment(), cx);

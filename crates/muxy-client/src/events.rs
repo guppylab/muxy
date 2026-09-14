@@ -1,11 +1,11 @@
 use std::io::Read;
 use std::sync::mpsc::Sender;
 
+use muxy_protocol::transport::StreamCancellation;
+use muxy_protocol::wire::{Decoder, message_version};
 use muxy_protocol::{
     CONTROL, ChannelId, ExitReason, Message, MetadataEvent, ScreenFrame, SessionId, Version,
 };
-use muxy_transport::StreamCancellation;
-use muxy_wire::{Decoder, message_version};
 
 use crate::ClientError;
 use crate::handshake;

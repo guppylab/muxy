@@ -5,7 +5,7 @@ use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
 use muxy_client::Client;
-use muxy_pty::{ExitStatus, Pty, PtyEvent, PtySize, ReaderHandle, SpawnRequest};
+use muxy_terminal::pty::{ExitStatus, Pty, PtyEvent, PtySize, ReaderHandle, SpawnRequest};
 use muxy_terminal::{Size, Terminal};
 use serde_json::Value;
 

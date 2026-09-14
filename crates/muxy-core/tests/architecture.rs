@@ -31,6 +31,46 @@ fn workspace_dependencies_follow_architecture_policy() -> Result<(), String> {
 }
 
 #[test]
+fn production_dependencies_preserve_client_and_headless_boundaries() -> Result<(), String> {
+    let metadata = load_metadata()?;
+    let (graph, _) = workspace_graph(&metadata)?;
+    let boundaries: &[(&str, &[&str])] = &[
+        ("muxy-app", &["muxy-server", "muxy-terminal"]),
+        (
+            "muxy-cli",
+            &["muxy-server", "muxy-terminal", "muxy-app", "muxy-ui"],
+        ),
+        (
+            "muxy-client",
+            &["muxy-server", "muxy-terminal", "muxy-app", "muxy-ui"],
+        ),
+        (
+            "muxy-app-core",
+            &["muxy-server", "muxy-terminal", "muxy-app", "muxy-ui"],
+        ),
+        ("muxy-server", &["muxy-app", "muxy-ui"]),
+    ];
+    for (root, forbidden) in boundaries {
+        let mut visited = BTreeSet::new();
+        let mut pending = vec![(*root).to_owned()];
+        while let Some(package) = pending.pop() {
+            if !visited.insert(package.clone()) {
+                continue;
+            }
+            assert!(
+                !forbidden.contains(&package.as_str()),
+                "{root} links forbidden production dependency {package}"
+            );
+            let dependencies = graph
+                .get(&package)
+                .ok_or_else(|| format!("missing workspace package {package}"))?;
+            pending.extend(dependencies.iter().cloned());
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn rejects_a_forbidden_dependency() {
     let actual = fixture(&[("app", &["server"]), ("server", &[])]);
     let allowed = fixture(&[("app", &[]), ("server", &[])]);

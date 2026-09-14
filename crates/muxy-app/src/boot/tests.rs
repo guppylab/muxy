@@ -5,8 +5,8 @@ use std::os::unix::net::UnixListener;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use muxy_protocol::wire::{Decoder, Encoder};
 use muxy_protocol::{CONTROL, Message, ReplyBody, RequestBody, SUPPORTED};
-use muxy_wire::{Decoder, Encoder};
 
 type TestResult = Result<(), Box<dyn Error + Send + Sync>>;
 

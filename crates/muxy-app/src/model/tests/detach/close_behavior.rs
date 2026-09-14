@@ -1,5 +1,5 @@
 use super::*;
-use muxy_settings::CloseBehavior;
+use muxy_app_core::settings::CloseBehavior;
 
 #[gpui::test]
 fn configured_close_detaches_a_whole_split_tab_or_only_the_shortcut_pane(cx: &mut TestAppContext) {

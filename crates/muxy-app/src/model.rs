@@ -57,7 +57,7 @@ struct CloseRequest {
     panes: Vec<PaneId>,
     checking: usize,
     whole_tab: bool,
-    behavior: muxy_settings::CloseBehavior,
+    behavior: muxy_app_core::settings::CloseBehavior,
 }
 
 pub(crate) struct AppModel {
@@ -69,9 +69,9 @@ pub(crate) struct AppModel {
     pub(crate) grids: HashMap<PaneId, PaneView>,
     pub(crate) error: Option<String>,
     pub(crate) focus: FocusHandle,
-    pub(crate) appearance: muxy_settings::Appearance,
-    pub(crate) settings: muxy_settings::Settings,
-    terminal: muxy_settings::TerminalSettings,
+    pub(crate) appearance: muxy_app_core::settings::Appearance,
+    pub(crate) settings: muxy_app_core::settings::Settings,
+    terminal: muxy_app_core::settings::TerminalSettings,
     server_preferences: preferences::ServerPreferences,
     pub(crate) settings_window: Option<preferences::SettingsWindowState>,
     font_sizes: HashMap<PaneId, f32>,
@@ -347,14 +347,15 @@ impl AppModel {
         let Some(source) = self.active_pane() else {
             return;
         };
-        let directory =
-            if self.settings.panes.new_pane_directory == muxy_settings::NewPaneDirectory::Current {
-                self.terminal(&source)
-                    .and_then(|pane| pane.view.read(cx).directory())
-                    .unwrap_or_else(|| self.state.current_project().directory.clone())
-            } else {
-                self.state.current_project().directory.clone()
-            };
+        let directory = if self.settings.panes.new_pane_directory
+            == muxy_app_core::settings::NewPaneDirectory::Current
+        {
+            self.terminal(&source)
+                .and_then(|pane| pane.view.read(cx).directory())
+                .unwrap_or_else(|| self.state.current_project().directory.clone())
+        } else {
+            self.state.current_project().directory.clone()
+        };
         let mut size = self
             .terminal(&source)
             .and_then(|pane| pane.view.read(cx).viewport())
@@ -666,7 +667,7 @@ impl AppModel {
 
     fn check_next_close(&mut self, cx: &mut Context<Self>) {
         while let Some(request) = &self.close_request {
-            if request.behavior == muxy_settings::CloseBehavior::Detach
+            if request.behavior == muxy_app_core::settings::CloseBehavior::Detach
                 || !self.settings.window.confirm_running_process
                 || request.checking == request.panes.len()
             {
@@ -795,7 +796,7 @@ impl AppModel {
             .iter()
             .filter_map(|pane| self.pane_session(*pane))
             .collect();
-        let detach = request.behavior == muxy_settings::CloseBehavior::Detach;
+        let detach = request.behavior == muxy_app_core::settings::CloseBehavior::Detach;
         let result = if detach {
             request
                 .panes
@@ -1917,8 +1918,8 @@ mod tests {
             Boot {
                 state,
                 state_path: directory.join("state.json"),
-                settings: muxy_settings::Settings::default(),
-                terminal: muxy_settings::TerminalSettings::default(),
+                settings: muxy_app_core::settings::Settings::default(),
+                terminal: muxy_app_core::settings::TerminalSettings::default(),
                 work,
                 updates,
             },
@@ -2453,8 +2454,10 @@ mod tests {
             assert_eq!(model.state.home().tabs.len(), 1);
             assert_eq!(model.active_tab(), Some(second));
             assert!(!model.settings.window.confirm_running_process);
-            let saved = muxy_settings::Settings::load(&model.path.with_file_name("settings.toml"))
-                .expect("saved settings");
+            let saved = muxy_app_core::settings::Settings::load(
+                &model.path.with_file_name("settings.toml"),
+            )
+            .expect("saved settings");
             assert!(!saved.window.confirm_running_process);
             model.close_tab(second, cx);
             assert!(model.state.home().tabs.is_empty());
@@ -3674,7 +3677,7 @@ mod tests {
             view.read_with(cx, |model, _| model.palette.background),
             0x12_34_56
         );
-        let settings = muxy_settings::Appearance::load(&directory.join("settings.toml"))?;
+        let settings = muxy_app_core::settings::Appearance::load(&directory.join("settings.toml"))?;
         assert!(settings.dark_theme == "Walkthrough" || settings.light_theme == "Walkthrough");
         cx.simulate_keystrokes("escape");
         cx.run_until_parked();
@@ -3703,7 +3706,8 @@ mod tests {
         cx.simulate_keystrokes("escape cmd-b");
         cx.run_until_parked();
         assert!(
-            muxy_settings::Appearance::load(&directory.join("settings.toml"))?.sidebar_expanded
+            muxy_app_core::settings::Appearance::load(&directory.join("settings.toml"))?
+                .sidebar_expanded
         );
         cx.simulate_keystrokes("cmd-b");
         report(

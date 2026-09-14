@@ -1,20 +1,6 @@
 use libghostty_vt::terminal::{Point, PointCoordinate, Terminal};
 
-pub const MAX_LINK_SPANS: usize = 1024;
-pub const MAX_LINK_URI: usize = 2048;
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LinkRow {
-    pub row: u16,
-    pub spans: Vec<LinkSpan>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LinkSpan {
-    pub start: u16,
-    pub end: u16,
-    pub uri: String,
-}
+pub use muxy_protocol::{LinkRow, LinkSpan, MAX_LINK_SPANS, MAX_LINK_URI};
 
 #[derive(Debug, Default)]
 pub(crate) struct CachedRow {
