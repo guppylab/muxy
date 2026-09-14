@@ -103,13 +103,13 @@ fn settings_theme_dropdowns_use_their_own_anchor_and_update_only_the_selected_mo
         (true, "settings-picker-dark-theme"),
         (false, "settings-picker-light-theme"),
     ] {
+        let before = view.read_with(cx, |model, _| model.appearance.clone());
         click_preference(cx, selector);
         let trigger = cx.debug_bounds(selector).expect("theme trigger");
         let dropdown = cx
             .debug_bounds("settings-dropdown")
             .expect("theme dropdown");
         assert!(dropdown.top() >= trigger.bottom());
-        assert_eq!(dropdown.right(), trigger.right());
         view.read_with(cx, |model, cx| {
             let Some(Overlay::Themes { source, .. }) = &settings_root(model, cx).overlay else {
                 panic!("settings theme picker")
@@ -131,7 +131,9 @@ fn settings_theme_dropdowns_use_their_own_anchor_and_update_only_the_selected_mo
                 "Picker Fixture"
             );
             if dark {
-                assert_eq!(model.appearance.light_theme, "Muxy Light");
+                assert_eq!(model.appearance.light_theme, before.light_theme);
+            } else {
+                assert_eq!(model.appearance.dark_theme, before.dark_theme);
             }
         });
     }

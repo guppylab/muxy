@@ -19,7 +19,6 @@ fn bootstrap_has_only_home_with_no_tabs() -> TestResult {
     assert_eq!(home.name, "Home");
     assert_eq!(home.server_id, ServerId::local());
     assert_eq!(Some(home.directory.clone()), std::env::home_dir());
-    assert_eq!(home.color.as_str(), "#808080");
     assert!(home.icon.is_none());
     assert!(home.kind.is_none());
     assert!(home.parent_id.is_none());

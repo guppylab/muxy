@@ -85,7 +85,13 @@ fn partial_settings_keep_defaults_and_appearance_saves_preserve_bindings() -> Re
     let path = fixture.write("settings.toml", "[appearance]\ndark_theme = 'Dracula'\n[window]\ndefault_size = [1000, 700]\n[keymap]\nnew_tab = 'cmd-n'\n")?;
     let settings = Settings::load(&path)?;
     assert_eq!(settings.window.default_size, [1000.0, 700.0]);
-    assert_eq!(settings.appearance.light_theme, "Muxy Light");
+    assert_eq!(
+        settings.appearance,
+        muxy_app_core::settings::Appearance {
+            dark_theme: "Dracula".into(),
+            ..Default::default()
+        }
+    );
     assert_eq!(
         settings
             .keymap

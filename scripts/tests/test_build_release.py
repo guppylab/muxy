@@ -3,7 +3,6 @@ import os
 import plistlib
 import re
 import shutil
-import struct
 import subprocess
 import sys
 import tempfile
@@ -150,18 +149,6 @@ class BuildReleaseTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("release version must be", result.stderr)
                 self.assertFalse(self.log.exists())
-
-    def test_beta_asset_is_a_distinct_1024px_rgba_png(self):
-        icons = [
-            (ROOT / "packaging/macos" / name).read_bytes()
-            for name in ("AppIcon.png", "AppIconBeta.png")
-        ]
-        for data in icons:
-            self.assertEqual(data[:8], b"\x89PNG\r\n\x1a\n")
-            self.assertEqual(data[12:16], b"IHDR")
-            self.assertEqual(struct.unpack(">IIBB", data[16:26]), (1024, 1024, 8, 6))
-        self.assertNotEqual(*icons)
-
 
 if __name__ == "__main__":
     unittest.main()

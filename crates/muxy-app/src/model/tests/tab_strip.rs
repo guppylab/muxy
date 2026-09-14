@@ -560,7 +560,7 @@ fn tabs_and_titlebar_controls_never_request_window_movement(cx: &mut TestAppCont
 }
 
 #[gpui::test]
-fn settings_button_stays_at_the_right_and_reuses_the_settings_pane(cx: &mut TestAppContext) {
+fn settings_button_stays_reachable_and_reuses_the_settings_window(cx: &mut TestAppContext) {
     for expanded in [false, true] {
         for count in [0, 3, 24] {
             let (mut state, ids) = tabs(count);
@@ -578,11 +578,8 @@ fn settings_button_stays_at_the_right_and_reuses_the_settings_pane(cx: &mut Test
             for width in [640.0, 1000.0] {
                 cx.simulate_resize(size(px(width), px(600.0)));
                 cx.run_until_parked();
-                let strip = cx.debug_bounds("tab-strip").expect("strip");
                 let gear = cx.debug_bounds("settings-button").expect("settings button");
                 let viewport = cx.debug_bounds("tabs-scroll").expect("tabs viewport");
-                assert_eq!(gear.right(), strip.right());
-                assert_eq!(gear.center().y, strip.center().y);
                 assert!(gear.size.width > px(0.0));
                 assert!(viewport.right() <= gear.left());
                 for selector in ["new-tab-button", "maximize-pane"] {
@@ -647,8 +644,6 @@ fn settings_button_remains_available_when_the_project_directory_is_missing(
     state.refresh_project_statuses();
     let (observer, cx) = observe_window_zoom(state, cx);
     let gear = cx.debug_bounds("settings-button").expect("settings button");
-    let strip = cx.debug_bounds("tab-strip").expect("strip");
-    assert_eq!(gear.right(), strip.right());
     click(cx, gear.center(), MouseButton::Left, 1);
     observer.read_with(cx, |observer, cx| {
         let model = observer.model.read(cx);

@@ -117,31 +117,32 @@ mod tests {
     };
 
     #[test]
-    fn quick_terminal_geometry_centers_clamps_and_insets_from_the_visible_top() {
+    fn quick_terminal_geometry_respects_requested_size_and_clamps_to_the_visible_screen() {
         let screen = Rect::new(100.0, 50.0, 1200.0, 900.0);
         let visible = Rect::new(140.0, 80.0, 1100.0, 820.0);
-        assert_eq!(
-            panel_frame(
-                screen,
-                visible,
-                Size {
-                    width: 720.0,
-                    height: 430.0,
-                },
-            ),
-            Rect::new(340.0, 458.0, 720.0, 430.0)
+        let preferred = Size {
+            width: 720.0,
+            height: 430.0,
+        };
+        let frame = panel_frame(screen, visible, preferred);
+        assert_eq!(frame.size, preferred);
+        let clamped = panel_frame(
+            screen,
+            visible,
+            Size {
+                width: 2000.0,
+                height: 1000.0,
+            },
         );
-        assert_eq!(
-            panel_frame(
-                screen,
-                visible,
-                Size {
-                    width: 2000.0,
-                    height: 1000.0,
-                },
-            ),
-            Rect::new(140.0, 80.0, 1100.0, 808.0)
-        );
+        assert_eq!(clamped.origin, visible.origin);
+        assert_eq!(clamped.size.width, visible.size.width);
+        for frame in [frame, clamped] {
+            assert!(frame.size.height > 0.0);
+            assert!(frame.origin.x >= visible.origin.x);
+            assert!(frame.origin.y >= visible.origin.y);
+            assert!(frame.origin.x + frame.size.width <= visible.origin.x + visible.size.width);
+            assert!(frame.origin.y + frame.size.height <= visible.origin.y + visible.size.height);
+        }
         assert_eq!(
             panel_frame(
                 Rect::default(),

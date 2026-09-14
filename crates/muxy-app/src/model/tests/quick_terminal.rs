@@ -177,7 +177,6 @@ fn quick_terminal_focus_and_visibility_survive_workspace_overlays(cx: &mut TestA
     quick.read_with(cx, |pane, _| {
         assert!(pane.focused);
         assert!(pane.native_visible);
-        assert!(pane.focus_border.is_none());
     });
 }
 

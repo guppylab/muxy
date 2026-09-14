@@ -106,16 +106,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn partial_appearance_keeps_defaults() -> Result<()> {
-        let appearance: Appearance = toml::from_str("dark_theme = 'Dracula'")?;
-        assert_eq!(appearance.dark_theme, "Dracula");
-        assert_eq!(appearance.light_theme, "Muxy Light");
-        assert!(appearance.status_bar_visible);
-        assert!(!appearance.sidebar_expanded);
-        Ok(())
-    }
-
-    #[test]
     fn updating_appearance_preserves_other_settings() -> Result<()> {
         let directory =
             std::env::temp_dir().join(format!("muxy-appearance-{}", std::process::id()));

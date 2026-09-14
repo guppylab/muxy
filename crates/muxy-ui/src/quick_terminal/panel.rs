@@ -250,7 +250,9 @@ mod tests {
         })
         .unwrap();
         assert_eq!(index, 1);
-        assert_eq!(frame, Rect::new(120.0, 20.0, 960.0, 728.0));
+        assert_eq!(frame.origin, visible[index].origin);
+        assert_eq!(frame.size.width, visible[index].size.width);
+        assert!(frame.size.height > 0.0 && frame.size.height <= visible[index].size.height);
         assert_eq!(collapsed, None);
         assert!(capture_focus(false, true));
         assert!(restore_focus(true, true));

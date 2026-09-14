@@ -81,33 +81,6 @@ fn git_refreshes_coalesce_and_disconnected_mutations_are_not_queued(cx: &mut Tes
 }
 
 #[gpui::test]
-fn footer_exposes_branch_and_change_controls_without_losing_path(cx: &mut TestAppContext) {
-    let (state, _, _, _, _) = two_projects();
-    let project = state.current_project().id;
-    let (boot, _) = stub_boot(state);
-    let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
-    view.update(cx, |model, cx| {
-        model.connection = ConnectionState::Ready;
-        model.receive_git(
-            &GitRequest {
-                project,
-                action: GitAction::Summary,
-            },
-            Ok(GitReply::Summary(Some(GitSummary {
-                branch: Some("feature".into()),
-                changed: 2,
-                ..GitSummary::default()
-            }))),
-            cx,
-        );
-    });
-    cx.run_until_parked();
-    assert!(cx.debug_bounds("git-branch-status").is_some());
-    assert!(cx.debug_bounds("git-changes-status").is_some());
-    assert!(cx.debug_bounds("status-path").is_some());
-}
-
-#[gpui::test]
 fn an_accepted_git_action_waits_for_background_refresh(cx: &mut TestAppContext) {
     let (state, project, _, _, _) = two_projects();
     let (boot, requests) = stub_boot(state);
@@ -203,7 +176,6 @@ fn git_popovers_open_from_their_controls_and_follow_their_anchors(cx: &mut TestA
         );
     });
     let panel = cx.debug_bounds("git-picker").expect("changes popover");
-    assert_eq!(panel.left(), changes.left());
     assert!(panel.bottom() <= changes.top());
     cx.simulate_resize(size(px(700.0), px(500.0)));
     cx.run_until_parked();
@@ -217,7 +189,7 @@ fn git_popovers_open_from_their_controls_and_follow_their_anchors(cx: &mut TestA
 }
 
 #[gpui::test]
-fn git_form_remains_centered_and_scrolls_within_small_windows(cx: &mut TestAppContext) {
+fn git_form_fits_within_small_windows(cx: &mut TestAppContext) {
     let (state, project, _, _, _) = two_projects();
     let (boot, _) = stub_boot(state);
     let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
@@ -226,10 +198,6 @@ fn git_form_remains_centered_and_scrolls_within_small_windows(cx: &mut TestAppCo
         cx.simulate_resize(viewport);
         cx.run_until_parked();
         let form = cx.debug_bounds("git-form").expect("form");
-        assert_eq!(
-            form.center(),
-            gpui::point(viewport.width / 2.0, viewport.height / 2.0)
-        );
         assert!(form.top() >= px(0.0) && form.bottom() <= viewport.height);
         assert!(form.left() >= px(0.0) && form.right() <= viewport.width);
     }

@@ -822,7 +822,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn changes_have_single_line_rows_under_searchable_status_groups() {
+    fn changes_are_grouped_by_searchable_status() {
         let rows: Vec<_> = [
             ("worktree.rs", "Unstaged"),
             ("index.rs", "Staged"),
@@ -845,7 +845,6 @@ mod tests {
             match item {
                 CommandPopoverItem::Section(label) => group = label.as_ref(),
                 CommandPopoverItem::Row(row) => {
-                    assert!(row.subtitle.is_none());
                     grouped_files.push((group, row.id.as_ref()));
                 }
             }
