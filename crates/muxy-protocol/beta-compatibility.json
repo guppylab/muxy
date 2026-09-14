@@ -1,5 +1,5 @@
 {
-  "identifier": 5,
+  "identifier": 7,
   "wire": {
     "CancelCreation.bin": "031bc6d86abd1ea3445835db6184a96951140b35449fdbd0e0782a05b6c87d26",
     "Catalog.bin": "02dace73c7b8d79c93c0e0f4cd15177764638901fdfc10fde3b8ed0454cd4c95",
@@ -18,8 +18,11 @@
     "fatal.bin": "a92018e31809f768abab3d8f250594ffc725bbc3cda7a72adbfbc1c34b5573b7",
     "frame.bin": "a766f5b091a800821eaa446309c3324ba49ec40ae21ae55c2e689820c6f7aa74",
     "frame_ack.bin": "2eca2d1f07f2ba6e687678f8f2f68477fc76bec00a8d9ba3b9c44606405f1fb7",
-    "hello.bin": "a96dabe9f4ff5bd50f00d49e960ba1126719b36ad0a293ac2139334380c6f2de",
-    "hello_reply.bin": "9e9dbc5760cf411c3c1c0382567a2ff895c12a018c168f197b83cb1f6729a9f0",
+    "git_changed.bin": "ef735c08af47ad09516c803c5385311516a2cf774e59614a979e9c23dd545003",
+    "git_reply.bin": "9c01a05402bec1e268f00ab107ac0cdcd4c24bdcc47a56cb68407da9beefacf5",
+    "git_request.bin": "56ad3fca98297fc98a2557b7e5038a69fa46a2b3e48a03ddb6bf8fca182afac2",
+    "hello.bin": "598722e018fc185525ec520a47712cf005498aa61b2f929fa276e22b52a540d1",
+    "hello_reply.bin": "7075ea6faab16bf26b31bad21d93b0508c150c9862f5cf856a8ff17af6d80b70",
     "history_metadata.bin": "fffff1f770355489db28b9f7fd7f13eaccece41a7dec86813394e3035d7dba64",
     "history_reply.bin": "f3061b12a4d1779645c7cd21662df438b5bc5dab22daf9d46cbbb7e0f6e82df5",
     "history_request.bin": "6c231c15b10f8254b6950d904c0e83a7df86ac0dfa00d0dda7d64283c2475eda",

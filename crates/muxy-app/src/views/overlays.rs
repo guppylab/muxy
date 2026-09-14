@@ -11,6 +11,8 @@ use super::{
 use crate::model::AppModel;
 
 pub(crate) enum Overlay {
+    Git(super::git::GitPicker),
+    GitForm(super::git::Form),
     Sessions(super::session_picker::SessionPicker),
     Menu(Menu),
     ProjectEditor(super::project_editor::Editor),
@@ -28,6 +30,7 @@ pub(crate) enum Overlay {
 
 impl AppModel {
     pub(crate) fn dismiss_overlay(&mut self, cx: &mut Context<Self>) {
+        self.git.interaction = self.git.interaction.wrapping_add(1);
         self.overlay = None;
         self.overlay_subscription = None;
         self.focus_requested = true;
@@ -108,6 +111,35 @@ pub(crate) fn layer(model: &AppModel, window: &Window, cx: &mut Context<AppModel
     let viewport = window.viewport_size();
     let content = match &model.overlay {
         None => return div().into_any_element(),
+        Some(Overlay::GitForm(form)) => div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(super::git::render_form(form, model, window, cx))
+            .into_any_element(),
+        Some(Overlay::Git(picker)) => {
+            let model = cx.entity().downgrade();
+            let dismiss = move |_: &mut Window, cx: &mut gpui::App| {
+                let _ = model.update(cx, AppModel::dismiss_overlay);
+            };
+            if picker.kind == super::git::Kind::Worktrees {
+                muxy_ui::popover::anchored_popover(
+                    picker.anchor.clone(),
+                    picker.picker.clone().into_any_element(),
+                    dismiss,
+                )
+            } else {
+                muxy_ui::popover::anchored_popover_above(
+                    picker.anchor.clone(),
+                    picker.picker.clone().into_any_element(),
+                    dismiss,
+                )
+            }
+        }
         Some(Overlay::Menu(menu)) => menu::render(menu, model, window, cx),
         Some(Overlay::ProjectEditor(editor)) => {
             super::project_editor::render(editor, model, window, cx)

@@ -36,6 +36,10 @@ impl Delivery {
             *previous = event;
             return Ok(Vec::new());
         }
+        if let ClientEvent::GitChanged { project } = &event
+            && self.deferred.iter().any(|pending| matches!(pending, ClientEvent::GitChanged { project: id } if id == project)) {
+            return Ok(Vec::new());
+        }
         if let ClientEvent::SessionsChanged { revision } = &event
             && let Some(ClientEvent::SessionsChanged { revision: previous }) = self
                 .deferred
@@ -129,7 +133,8 @@ impl Delivery {
                 ClientEvent::Frame { channel, .. } | ClientEvent::Metadata { channel, .. } => {
                     channel.0 <= self.installed_through
                 }
-                ClientEvent::SessionsChanged { .. }
+                ClientEvent::GitChanged { .. }
+                | ClientEvent::SessionsChanged { .. }
                 | ClientEvent::CatalogChanged { .. }
                 | ClientEvent::SessionEnded { .. }
                 | ClientEvent::ServerRestarting

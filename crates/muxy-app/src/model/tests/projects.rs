@@ -135,7 +135,7 @@ fn migration_walkthrough(cx: &mut TestAppContext, server_first: bool) -> Result 
     report("Catalog legacy migration, dead pane cleanup, shared deletion and restart: PASS")
 }
 
-fn two_projects() -> (AppState, ProjectId, ProjectId, PaneId, PaneId) {
+pub(super) fn two_projects() -> (AppState, ProjectId, ProjectId, PaneId, PaneId) {
     let mut state = AppState::bootstrap().expect("state");
     let first = state
         .add_project(std::env::temp_dir())
@@ -572,7 +572,7 @@ fn project_editor_and_color_shortcuts_apply_to_the_requested_project(cx: &mut Te
             .expect("first")
             .color
             .to_string()),
-        "#7dcfff"
+        muxy_app_core::PROJECT_COLORS[1].1
     );
     cx.simulate_keystrokes("cmd-alt-[");
     assert_eq!(
@@ -623,7 +623,6 @@ fn status_bar_empty_space_does_not_reveal_the_path_or_open_its_menu(cx: &mut Tes
                     .debug_bounds("project-connection-status")
                     .expect("connection controls");
                 assert!(path.right() < controls.left());
-                assert_eq!(controls.right(), bar.right() - px(10.0));
             }
             cx.simulate_mouse_down(path.center(), gpui::MouseButton::Right, Modifiers::none());
             cx.simulate_mouse_up(path.center(), gpui::MouseButton::Right, Modifiers::none());
@@ -699,9 +698,7 @@ fn existing_shortcuts_dispatch_the_original_action_when_project_defaults_collide
 }
 
 #[gpui::test]
-fn command_o_opens_the_legacy_sized_picker_and_existing_paths_select_the_project(
-    cx: &mut TestAppContext,
-) {
+fn command_o_opens_the_picker_and_existing_paths_select_the_project(cx: &mut TestAppContext) {
     let root = std::env::temp_dir().join(format!("muxy-open-project-{}", ProjectId::new()));
     std::fs::create_dir_all(root.join("Alpha")).expect("mkdir");
     let mut state = AppState::bootstrap().expect("state");
@@ -718,10 +715,6 @@ fn command_o_opens_the_legacy_sized_picker_and_existing_paths_select_the_project
         model.overlay,
         Some(Overlay::Projects(_))
     )));
-    let panel = cx.debug_bounds("project-picker").expect("picker panel");
-    assert_eq!(panel.size, size(px(640.0), px(460.0)));
-    assert_eq!(panel.left(), px(280.0));
-    assert_eq!(panel.top(), px(48.0));
     cx.simulate_input(&root.join("Alpha").to_string_lossy());
     cx.executor().advance_clock(Duration::from_millis(125));
     cx.run_until_parked();

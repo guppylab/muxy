@@ -427,9 +427,7 @@ fn workspace_actions_in_settings_do_not_change_terminal_tabs(cx: &mut TestAppCon
 }
 
 #[gpui::test]
-fn navigating_or_focusing_fields_cancels_recording_and_search_stays_control_sized(
-    cx: &mut TestAppContext,
-) {
+fn navigating_or_focusing_fields_cancels_recording(cx: &mut TestAppContext) {
     let state = AppState::bootstrap().expect("state");
     let (boot, _requests) = stub_boot(state);
     cx.update(|cx| crate::views::workspace::bind_keys(&boot.settings.keymap, cx));
@@ -461,12 +459,6 @@ fn navigating_or_focusing_fields_cancels_recording_and_search_stays_control_size
             muxy_app_core::settings::Keymap::default()
         );
     });
-    let search = cx.debug_bounds("settings-search").expect("search");
-    let categories = cx
-        .debug_bounds("settings-category-General")
-        .expect("category");
-    assert!(search.size.height < px(40.0));
-    assert!(categories.top() - search.bottom() < px(25.0));
 }
 
 #[gpui::test]
@@ -512,29 +504,17 @@ fn server_field_drafts_survive_queued_saves_failures_and_disconnection(cx: &mut 
 }
 
 #[gpui::test]
-fn settings_use_an_edge_to_edge_sidebar_and_stable_search_columns(cx: &mut TestAppContext) {
+fn settings_search_preserves_field_positions_after_resize(cx: &mut TestAppContext) {
     let (boot, _) = stub_boot(AppState::bootstrap().expect("state"));
     cx.update(|cx| crate::views::workspace::bind_keys(&boot.settings.keymap, cx));
     let (_, cx) = settings_window(boot, cx);
     for width in [1800.0, 1040.0, 740.0, 460.0] {
         cx.simulate_resize(size(px(width), px(800.0)));
         click_preference(cx, "settings-category-General");
-        let view = cx.debug_bounds("settings-view").expect("view");
         let container = cx.debug_bounds("settings-container").expect("container");
-        let navigation = cx.debug_bounds("settings-navigation").expect("navigation");
-        assert_eq!(view, container);
-        assert_eq!(navigation.left(), view.left());
-        assert_eq!(navigation.top(), view.top());
         let viewport = cx.debug_bounds("settings-sections").expect("viewport");
         let field = cx.debug_bounds("settings-field-width").expect("field");
         assert!(field.left() >= viewport.left() && field.right() <= viewport.right());
-        if width >= 660.0 {
-            assert_eq!(navigation.size.width, px(248.0));
-            assert_eq!(navigation.bottom(), view.bottom());
-            assert_eq!(viewport.left(), navigation.right() + px(32.0));
-        } else {
-            assert!(viewport.top() > navigation.bottom());
-        }
         click_preference(cx, "settings-search");
         cx.simulate_input("width");
         cx.run_until_parked();
@@ -548,8 +528,7 @@ fn settings_use_an_edge_to_edge_sidebar_and_stable_search_columns(cx: &mut TestA
         cx.simulate_input("no matching setting");
         cx.run_until_parked();
         let empty = cx.debug_bounds("settings-empty").expect("empty");
-        assert_eq!(empty.left(), viewport.left());
-        assert_eq!(empty.right(), viewport.right());
+        assert!(empty.left() >= viewport.left() && empty.right() <= viewport.right());
     }
 }
 

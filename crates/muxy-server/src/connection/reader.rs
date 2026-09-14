@@ -38,6 +38,8 @@ pub(super) fn run(
         registry: Arc::clone(registry),
         outbox: Arc::clone(outbox),
         workers: WorkerPool::new("connection-work", 1, 32)?,
+        git_workers: WorkerPool::new("connection-git", 1, 16)?,
+        git_watch: Arc::new(Mutex::new(None)),
         search_cache: Arc::new(Mutex::new(SearchCache::default())),
         version,
         last_channel: Arc::new(AtomicU32::new(0)),
@@ -123,6 +125,8 @@ struct Requests {
     registry: Arc<Registry>,
     outbox: Arc<Outbox>,
     workers: WorkerPool,
+    git_workers: WorkerPool,
+    git_watch: Arc<Mutex<Option<crate::git::watch::RepositoryWatch>>>,
     search_cache: Arc<Mutex<SearchCache>>,
     version: Version,
     last_channel: Arc<AtomicU32>,
@@ -144,6 +148,44 @@ impl Requests {
         let outbox = &self.outbox;
         match body {
             RequestBody::Ping => Ok(Some(ReplyBody::Pong)),
+            RequestBody::Git(request) => {
+                let watch = Arc::clone(&self.git_watch);
+                let registry = Arc::clone(&self.registry);
+                let output = Arc::clone(outbox);
+                self.git_workers
+                    .try_spawn(move || {
+                        if output.is_closed() {
+                            return;
+                        }
+                        let result = if request.action == muxy_protocol::GitAction::Watch {
+                            let mut watch = watch
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                            *watch = None;
+                            let events = Arc::downgrade(&output);
+                            let project = request.project;
+                            registry
+                                .watch_git(project, move || {
+                                    if let Some(events) = events.upgrade() {
+                                        events.push_control(Message::GitChanged { project });
+                                    }
+                                })
+                                .map(|new_watch| {
+                                    *watch = new_watch;
+                                    muxy_protocol::GitReply::Done
+                                })
+                        } else {
+                            registry.git(&request)
+                        };
+                        let body = match result {
+                            Ok(reply) => ReplyBody::Git(reply),
+                            Err(error) => ReplyBody::Error(error.to_reply()),
+                        };
+                        output.push_control(Message::Reply { id, body });
+                    })
+                    .map_err(|e| ServerError::new(ErrorCode::BadRequest, e.to_string()))?;
+                Ok(None)
+            }
             body => {
                 let registry = Arc::clone(&self.registry);
                 let output = Arc::clone(outbox);
@@ -227,6 +269,7 @@ fn ordered_request(
         | RequestBody::ReadCatalog { .. }
         | RequestBody::MutateProject(_)
         | RequestBody::ListProjectSessions { .. } => project_request(body, registry, outbox)?,
+        RequestBody::Git(request) => ReplyBody::Git(registry.git(&request)?),
         RequestBody::ListSessions => ReplyBody::Sessions(registry.list()),
         RequestBody::CreateSession {
             project,

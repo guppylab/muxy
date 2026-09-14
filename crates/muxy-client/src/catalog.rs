@@ -5,6 +5,19 @@ use muxy_protocol::{
 };
 
 impl Client {
+    pub fn git(
+        &self,
+        request: muxy_protocol::GitRequest,
+    ) -> Result<muxy_protocol::GitReply, ClientError> {
+        match self.request_with_timeout(
+            RequestBody::Git(request),
+            std::time::Duration::from_secs(300),
+        )? {
+            ReplyBody::Git(reply) => Ok(reply),
+            body => Err(ClientError::UnexpectedReply(Box::new(body))),
+        }
+    }
+
     pub fn cancel_creation(
         &self,
         operation: muxy_protocol::OperationId,

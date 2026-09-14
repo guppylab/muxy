@@ -1,4 +1,6 @@
+mod git;
 mod mutations;
+pub(crate) use git::GitReceipt;
 mod recovery;
 mod sessions;
 mod storage;
@@ -46,6 +48,8 @@ struct Receipt {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct State {
+    #[serde(default)]
+    git: BTreeMap<OperationId, GitReceipt>,
     version: u32,
     server: ServerIdentity,
     home: ProjectId,
@@ -85,6 +89,7 @@ impl State {
             parent_id: None,
         };
         Self {
+            git: BTreeMap::new(),
             version: 1,
             server: ServerIdentity::new(),
             home: id,
@@ -285,7 +290,7 @@ impl Catalog {
         self.revision.load(Ordering::Acquire)
     }
 
-    fn ensure_durable(&self) -> Result<(), ServerError> {
+    pub(crate) fn ensure_durable(&self) -> Result<(), ServerError> {
         let _write = self.write.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(path) = &self.path {
             storage::sync_parent(path).map_err(|error| storage_error(&error))?;

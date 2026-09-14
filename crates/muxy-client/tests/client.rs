@@ -176,6 +176,7 @@ impl Connection {
                 } if received == channel => return Ok(frame),
                 ClientEvent::Metadata { .. }
                 | ClientEvent::SessionsChanged { .. }
+                | ClientEvent::GitChanged { .. }
                 | ClientEvent::CatalogChanged { .. } => {}
                 other => return Err(format!("expected frame, got {other:?}").into()),
             }
@@ -214,6 +215,7 @@ impl Connection {
                 Ok(
                     ClientEvent::Metadata { .. }
                     | ClientEvent::SessionsChanged { .. }
+                    | ClientEvent::GitChanged { .. }
                     | ClientEvent::CatalogChanged { .. },
                 ) => {}
                 Err(RecvTimeoutError::Timeout) => return Ok(()),
@@ -232,6 +234,7 @@ impl Connection {
                 ClientEvent::Frame { .. }
                 | ClientEvent::Metadata { .. }
                 | ClientEvent::SessionsChanged { .. }
+                | ClientEvent::GitChanged { .. }
                 | ClientEvent::CatalogChanged { .. } => {}
                 other => return Err(format!("expected session ended, got {other:?}").into()),
             }
@@ -276,6 +279,7 @@ fn metadata_crosses_the_connection_and_is_included_in_the_next_attachment() -> T
             }
             ClientEvent::Frame { .. }
             | ClientEvent::SessionsChanged { .. }
+            | ClientEvent::GitChanged { .. }
             | ClientEvent::CatalogChanged { .. } => {}
             other => return Err(format!("unexpected event: {other:?}").into()),
         }
@@ -444,6 +448,7 @@ fn server_exit_disconnects_the_client() -> TestResult {
             ClientEvent::Frame { .. }
             | ClientEvent::Metadata { .. }
             | ClientEvent::SessionsChanged { .. }
+            | ClientEvent::GitChanged { .. }
             | ClientEvent::CatalogChanged { .. } => {}
             other @ ClientEvent::SessionEnded { .. } => {
                 return Err(format!("expected disconnect, got {other:?}").into());
@@ -748,6 +753,7 @@ fn wait_input_modes(
             } if channel == expected => return Ok(modes),
             ClientEvent::Metadata { .. }
             | ClientEvent::SessionsChanged { .. }
+            | ClientEvent::GitChanged { .. }
             | ClientEvent::CatalogChanged { .. } => {}
             ClientEvent::Frame { channel, frame } => connection.client.ack(channel, frame.seq)?,
             event => return Err(format!("expected input modes, got {event:?}").into()),

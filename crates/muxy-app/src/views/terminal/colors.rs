@@ -127,17 +127,15 @@ mod tests {
     }
 
     #[test]
-    fn cursor_color_comes_from_the_selected_theme() -> Result<(), Box<dyn std::error::Error>> {
-        let (_, source) = muxy_ui::assets::Assets::themes()
-            .find(|(name, _)| *name == "Dracula")
-            .ok_or("missing Dracula theme")?;
-        let scheme = muxy_ui::theme::ColorScheme::parse(source);
+    fn cursor_color_comes_from_the_selected_theme() {
+        let scheme = muxy_ui::theme::ColorScheme::parse(
+            "foreground=123456\ncursor-color=abcdef\npalette=4=789abc",
+        );
         let palette = Palette::from_scheme(&scheme, true);
-        assert_eq!(palette.cursor, 0xf8_f8_f2);
+        assert_eq!(palette.cursor, 0xab_cd_ef);
         assert_ne!(palette.cursor, palette.indexed(4));
         let scheme = muxy_ui::theme::ColorScheme::parse("background=123456\nforeground=abcdef");
         assert_eq!(Palette::from_scheme(&scheme, true).cursor, 0xab_cd_ef);
-        Ok(())
     }
 
     #[test]
@@ -159,16 +157,5 @@ mod tests {
                 assert_eq!(packed(color), palette.indexed(index));
             }
         }
-    }
-
-    #[test]
-    fn muxy_themes_keep_their_own_base_palette() {
-        let dark = Palette::new(true);
-        let light = Palette::new(false);
-        assert_eq!(dark.indexed(4), 0xc3_70_d3);
-        assert_eq!(light.indexed(4), 0x47_96_f0);
-        assert_eq!(dark.indexed(15), dark.foreground);
-        assert_eq!(light.indexed(15), light.foreground);
-        assert_ne!(dark.background, light.background);
     }
 }

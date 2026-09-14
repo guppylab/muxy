@@ -93,6 +93,7 @@ impl Message {
             } => Some(*snapshot.clone()),
             _ => None,
         });
+        samples.extend(git_samples());
         samples.extend(snapshot.into_iter().flat_map(history_samples));
         samples.extend(input_samples());
         samples.extend(search_samples(session, channel));
@@ -431,6 +432,32 @@ fn close_samples() -> Vec<Message> {
         Message::Reply {
             id: RequestId(99),
             body: ReplyBody::SessionClosed,
+        },
+    ]
+}
+
+fn git_samples() -> Vec<Message> {
+    vec![
+        Message::GitChanged {
+            project: crate::ProjectId::from_u128(1),
+        },
+        Message::Request {
+            id: RequestId(100),
+            body: RequestBody::Git(crate::GitRequest {
+                project: crate::ProjectId::from_u128(1),
+                action: crate::GitAction::Summary,
+            }),
+        },
+        Message::Reply {
+            id: RequestId(100),
+            body: ReplyBody::Git(crate::GitReply::Changes(vec![crate::GitFile {
+                path: ServerPath(b"file\xff".to_vec()),
+                original_path: None,
+                index: b'?',
+                worktree: b'?',
+                added: None,
+                removed: None,
+            }])),
         },
     ]
 }

@@ -36,8 +36,9 @@ pub enum ServerEvent {
 
 #[derive(Debug)]
 pub struct Registry {
-    catalog: Arc<crate::catalog::Catalog>,
-    operations: Mutex<()>,
+    pub(crate) catalog: Arc<crate::catalog::Catalog>,
+    pub(crate) git: crate::git::Git,
+    pub(crate) operations: Mutex<()>,
     connections: Mutex<Vec<Weak<crate::connection::Outbox>>>,
     pub(crate) attachment_changes: Arc<AtomicU64>,
     settings: Mutex<ServerSettings>,
@@ -55,6 +56,7 @@ impl Registry {
         Self {
             catalog: Arc::new(crate::catalog::Catalog::memory()),
             operations: Mutex::new(()),
+            git: crate::git::Git::default(),
             connections: Mutex::default(),
             attachment_changes: Arc::default(),
             archive: Archive::memory(settings.history_budget_bytes),
@@ -89,6 +91,7 @@ impl Registry {
             archive,
             ..Self::new(settings, events)
         };
+        registry.resume_git();
         registry.resume_cleanup().map_err(io::Error::other)?;
         Ok(registry)
     }
@@ -177,13 +180,19 @@ impl Registry {
             .operations
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
+        if let muxy_protocol::ProjectMutation::Create(project) = &intent.mutation
+            && project.kind == Some(muxy_protocol::ProjectKind::Worktree)
+            && !self.catalog.has_project_receipt(intent.operation)
+        {
+            self.validate_worktree_registration(project)?;
+        }
         if !self.catalog.begin_mutation(intent)? {
             self.resume_cleanup()?;
         }
         Ok(self.catalog.revision())
     }
 
-    fn resume_cleanup(&self) -> Result<(), ServerError> {
+    pub(crate) fn resume_cleanup(&self) -> Result<(), ServerError> {
         for session in self.catalog.discarding() {
             self.discard_owned(session)?;
         }
@@ -551,7 +560,7 @@ impl Registry {
         self.discard_owned(id)
     }
 
-    fn discard_owned(&self, id: SessionId) -> Result<(), ServerError> {
+    pub(crate) fn discard_owned(&self, id: SessionId) -> Result<(), ServerError> {
         self.catalog.begin_discard(id)?;
         if let Some(handle) = self.handle(id) {
             let _ = handle.send(session::SessionCommand::End);

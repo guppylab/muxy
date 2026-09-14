@@ -51,12 +51,16 @@ pub enum Message {
     Metadata(MetadataEvent),
     Mouse(MouseEvent),
     CellSize(crate::CellSize),
+    GitChanged {
+        project: crate::ProjectId,
+    },
 }
 
 impl Message {
     pub fn channel_kind(&self) -> ChannelKind {
         match self {
-            Self::SessionsChanged { .. }
+            Self::GitChanged { .. }
+            | Self::SessionsChanged { .. }
             | Self::CatalogChanged { .. }
             | Self::Hello { .. }
             | Self::Request { .. }

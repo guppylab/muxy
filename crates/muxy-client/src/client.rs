@@ -410,12 +410,20 @@ impl Client {
     }
 
     pub(crate) fn request(&self, body: RequestBody) -> Result<ReplyBody, ClientError> {
+        self.request_with_timeout(body, self.timeout)
+    }
+
+    pub(crate) fn request_with_timeout(
+        &self,
+        body: RequestBody,
+        timeout: Duration,
+    ) -> Result<ReplyBody, ClientError> {
         let (id, reply) = self.shared.pending.register()?;
         if let Err(error) = self.send(CONTROL, &Message::Request { id, body }) {
             self.shared.pending.forget(id);
             return Err(error);
         }
-        match reply.recv_timeout(self.timeout) {
+        match reply.recv_timeout(timeout) {
             Ok(ReplyBody::Error(error)) => Err(ClientError::Server(error)),
             Ok(body) => Ok(body),
             Err(RecvTimeoutError::Timeout) => {

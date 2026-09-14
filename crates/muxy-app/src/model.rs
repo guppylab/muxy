@@ -1,4 +1,5 @@
 mod catalog;
+pub(crate) mod git;
 mod links;
 mod preferences;
 mod quick_terminal;
@@ -61,6 +62,7 @@ struct CloseRequest {
 }
 
 pub(crate) struct AppModel {
+    pub(crate) git: git::GitState,
     catalog: catalog::Synchronization,
     pub(crate) existing_sessions: crate::views::session_picker::ExistingSessions,
     pub(crate) quick: quick_terminal::QuickTerminalRuntime,
@@ -206,6 +208,7 @@ impl AppModel {
 
     fn activation_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if window.is_window_active() {
+            self.refresh_git(cx);
             self.refresh_project_statuses(cx);
             self.refresh_quick_monitoring(cx);
         } else {
@@ -246,6 +249,7 @@ impl AppModel {
         let (theme, palette) = themes.resolve(&boot.settings.appearance, dark);
         let theme_error = (!themes.errors.is_empty()).then(|| themes.errors.join("; "));
         let mut model = Self {
+            git: git::GitState::default(),
             catalog: catalog::Synchronization::default(),
             existing_sessions: crate::views::session_picker::ExistingSessions::default(),
             quick: quick_terminal::QuickTerminalRuntime::new(&boot.settings.quick_terminal, cx),
@@ -1050,6 +1054,7 @@ impl AppModel {
     }
 
     fn sync_visible(&mut self, cx: &mut Context<Self>) {
+        self.sync_git(cx);
         self.sync_references(cx);
         self.refresh_existing_sessions(cx);
         let visible = self.attached_panes();
@@ -1380,6 +1385,7 @@ impl AppModel {
     }
 
     fn receive_connected(&mut self, sessions: &[SessionInfo], cx: &mut Context<Self>) {
+        self.git.reset_context();
         self.connection = ConnectionState::Ready;
         self.references = None;
         self.existing_sessions = crate::views::session_picker::ExistingSessions::default();
@@ -1405,6 +1411,7 @@ impl AppModel {
             return;
         }
         match update {
+            Update::Git { request, result } => self.receive_git(&request, result, cx),
             Update::ProjectSessions { project, result } => {
                 self.receive_session_page(project, result, cx);
             }
@@ -1654,6 +1661,7 @@ impl AppModel {
 
     fn receive_event(&mut self, event: ClientEvent, cx: &mut Context<Self>) {
         match event {
+            ClientEvent::GitChanged { project } => self.git_invalidated(project, cx),
             ClientEvent::SessionsChanged { revision } => {
                 self.existing_sessions.revision = self.existing_sessions.revision.max(revision);
                 self.refresh_existing_sessions(cx);
@@ -1769,6 +1777,10 @@ impl AppModel {
     }
 
     fn disconnect(&mut self, cx: &mut Context<Self>) {
+        self.git.reset_context();
+        for repository in self.git.projects.values_mut() {
+            repository.disconnect();
+        }
         self.connection = ConnectionState::Disconnected;
         self.references = None;
         self.existing_sessions = crate::views::session_picker::ExistingSessions::default();
@@ -1832,6 +1844,7 @@ mod tests {
     mod colors;
     mod detach;
     mod find;
+    mod git;
     mod links;
     mod mouse;
     mod preferences;

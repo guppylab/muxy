@@ -341,12 +341,13 @@ fn legacy_home_migrates_and_renamed_home_wins_over_another_home_name() -> TestRe
 #[test]
 fn project_customization_accepts_one_grapheme_and_cycles_approved_colors() -> TestResult {
     let mut state = AppState::bootstrap()?;
-    for index in 0..10 {
+    for (_, color) in muxy_app_core::PROJECT_COLORS
+        .iter()
+        .cycle()
+        .take(muxy_app_core::PROJECT_COLORS.len() * 2)
+    {
         let project = state.add_project(std::env::temp_dir())?;
-        assert_eq!(
-            state.current_project().color.as_str(),
-            muxy_app_core::PROJECT_COLORS[index % 8].1
-        );
+        assert_eq!(state.current_project().color.as_str(), *color);
         for icon in ["👩🏽‍💻", "🇩🇪", "e\u{301}"] {
             state.set_project_icon(project, Some(icon.into()))?;
             assert_eq!(state.current_project().icon.as_deref(), Some(icon));

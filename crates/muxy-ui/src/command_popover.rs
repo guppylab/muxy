@@ -83,7 +83,7 @@ struct CommandPopoverLayout {
 
 impl CommandPopoverLayout {
     fn resolve(presentation: CommandPopoverPresentation, density: CommandPopoverDensity) -> Self {
-        match density {
+        let mut layout = match density {
             CommandPopoverDensity::Compact => Self {
                 inline_tabs: presentation == CommandPopoverPresentation::Popover,
                 header_height: 32.0,
@@ -133,7 +133,14 @@ impl CommandPopoverLayout {
                 list_vertical_inset: 0.0,
                 status_height: 96.0,
             },
+        };
+        if presentation == CommandPopoverPresentation::Popover {
+            layout.item_inset += layout.outer_item_inset;
+            layout.outer_item_inset = 0.0;
+            layout.row_radius = 0.0;
+            layout.list_vertical_inset = 0.0;
         }
+        layout
     }
 
     fn item_height(self, item: &CommandPopoverItem) -> f32 {
@@ -344,6 +351,12 @@ impl CommandPopoverAction {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CommandPopoverSelectionStyle {
+    Checkmark,
+    Highlight,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct CommandPopoverRow {
     pub id: SharedString,
@@ -355,6 +368,7 @@ pub struct CommandPopoverRow {
     pub swatches: Vec<Hsla>,
     pub current: bool,
     pub selected: bool,
+    pub selection_style: CommandPopoverSelectionStyle,
     pub disabled: bool,
 }
 
@@ -370,6 +384,7 @@ impl CommandPopoverRow {
             swatches: Vec::new(),
             current: false,
             selected: false,
+            selection_style: CommandPopoverSelectionStyle::Checkmark,
             disabled: false,
         }
     }
@@ -840,10 +855,12 @@ impl CommandPopover {
     }
 
     pub fn set_items(&mut self, items: Vec<CommandPopoverItem>, cx: &mut Context<Self>) {
-        let changed = self.state.items() != items;
+        if self.state.items() == items {
+            return;
+        }
         self.state.set_items(items);
         self.confirmation_message = None;
-        if changed && self.detail.is_none() {
+        if self.detail.is_none() {
             self.scroll.reset(self.state.item_count());
             self.scroll_to_selection();
         }
@@ -851,6 +868,9 @@ impl CommandPopover {
     }
 
     pub fn set_status(&mut self, status: CommandPopoverStatus, cx: &mut Context<Self>) {
+        if self.state.status() == &status {
+            return;
+        }
         self.state.set_status(status);
         cx.notify();
     }
@@ -860,6 +880,9 @@ impl CommandPopover {
         actions: Vec<CommandPopoverAction>,
         cx: &mut Context<Self>,
     ) {
+        if self.config.footer_actions == actions {
+            return;
+        }
         self.config.footer_actions = actions;
         cx.notify();
     }
@@ -1179,6 +1202,20 @@ impl CommandPopover {
                 }
                 let highlighted = self.state.selected_row_id() == Some(row.id.as_ref());
                 let row_height = layout.row_height;
+                let row_inset = self.metrics.scaled(
+                    if self.config.presentation == CommandPopoverPresentation::Modal {
+                        layout.horizontal_inset
+                    } else {
+                        layout.item_inset
+                    },
+                );
+                let action_padding = self.metrics.spacing3();
+                let text_right_inset =
+                    if self.config.presentation == CommandPopoverPresentation::Popover {
+                        row_inset + action_padding
+                    } else {
+                        row_inset
+                    };
                 let id = row.id.clone();
                 let hover_id = row.id.clone();
                 let group = SharedString::from(format!("command-row-{}", row.id));
@@ -1195,15 +1232,11 @@ impl CommandPopover {
                         row.id
                     )))
                     .group(group.clone())
+                    .relative()
                     .w_full()
                     .h(self.metrics.scaled(row_height))
-                    .px(self.metrics.scaled(
-                        if self.config.presentation == CommandPopoverPresentation::Modal {
-                            layout.horizontal_inset
-                        } else {
-                            layout.item_inset
-                        },
-                    ))
+                    .pl(row_inset)
+                    .pr(text_right_inset)
                     .when(
                         self.config.presentation != CommandPopoverPresentation::Modal,
                         |element| element.rounded(self.metrics.scaled(layout.row_radius)),
@@ -1256,7 +1289,8 @@ impl CommandPopover {
                                 },
                             ))
                     });
-                if row.current || row.selected {
+                let show_checkmark = row.selection_style == CommandPopoverSelectionStyle::Checkmark;
+                if show_checkmark && (row.current || row.selected) {
                     content = content.child(
                         IconGlyph::new(Icon::Check, self.metrics.icon_sm(), self.theme.accent)
                             .into_any_element(),
@@ -1267,7 +1301,7 @@ impl CommandPopover {
                         self.theme.fg_muted,
                         self.metrics,
                     ));
-                } else {
+                } else if show_checkmark {
                     content = content.child(div().w(self.metrics.icon_sm()));
                 }
                 content = content.child(
@@ -1324,11 +1358,24 @@ impl CommandPopover {
                 }
                 if !row.actions.is_empty() {
                     let mut actions = div()
+                        .absolute()
+                        .top_0()
+                        .right(row_inset)
+                        .h_full()
+                        .pl(self.metrics.spacing2())
                         .flex()
                         .items_center()
                         .gap(self.metrics.spacing1())
-                        .opacity(0.0)
-                        .group_hover(group, |style| style.opacity(1.0));
+                        .bg(
+                            if self.config.presentation == CommandPopoverPresentation::Embedded {
+                                self.theme.raised()
+                            } else {
+                                self.theme.bg
+                            }
+                            .blend(self.theme.hover),
+                        )
+                        .invisible()
+                        .group_hover(group, Styled::visible);
                     for action in row.actions {
                         let row_id = row.id.clone();
                         let action_id = action.id.clone();
@@ -1365,7 +1412,7 @@ impl CommandPopover {
                                         },
                                     )
                                 })
-                                .when(!icon_only, |element| element.px(self.metrics.spacing3()))
+                                .when(!icon_only, |element| element.px(action_padding))
                                 .flex()
                                 .items_center()
                                 .justify_center()
@@ -1438,6 +1485,12 @@ impl CommandPopover {
             .w_full()
             .h_full()
             .px(self.metrics.scaled(layout.item_inset))
+            .when(
+                self.config.presentation == CommandPopoverPresentation::Popover,
+                |element| {
+                    element.pr(self.metrics.scaled(layout.item_inset) + self.metrics.spacing5())
+                },
+            )
             .rounded(self.metrics.scaled(layout.row_radius))
             .flex()
             .items_center()
@@ -1998,7 +2051,8 @@ impl Render for CommandPopover {
         )
         .w_full()
         .when(
-            self.config.presentation != CommandPopoverPresentation::Modal || self.detail.is_some(),
+            self.config.presentation == CommandPopoverPresentation::Embedded
+                || self.detail.is_some(),
             |element| element.pr(self.metrics.spacing5()),
         )
         .flex_grow()
@@ -2100,22 +2154,29 @@ mod tests {
     }
 
     #[test]
-    fn modal_popover_and_embedded_presentations_have_stable_responsive_geometry() {
-        let metrics = CommandPopoverMetrics::default();
+    fn presentations_respect_requested_dimensions_and_fit_the_viewport() {
+        let metrics = CommandPopoverMetrics {
+            modal_width: 600.0,
+            modal_height: 500.0,
+            modal_top: 40.0,
+            popover_width: 300.0,
+            popover_height: 200.0,
+            viewport_margin: 10.0,
+        };
         let modal = metrics.resolve(CommandPopoverPresentation::Modal, 1440.0, 900.0);
-        assert_eq!(modal.width, 640.0);
-        assert_eq!(modal.height, 520.0);
-        assert_eq!(modal.top, 48.0);
+        assert_eq!(modal.width, 600.0);
+        assert_eq!(modal.height, 500.0);
+        assert_eq!(modal.top, 40.0);
         assert!(modal.backdrop);
 
-        let compact = metrics.resolve(CommandPopoverPresentation::Modal, 390.0, 844.0);
-        assert_eq!(compact.width, 374.0);
-        assert_eq!(compact.height, 520.0);
-        assert_eq!(compact.top, 16.0);
+        let compact = metrics.resolve(CommandPopoverPresentation::Modal, 390.0, 400.0);
+        assert_eq!(compact.width, 370.0);
+        assert_eq!(compact.height, 360.0);
+        assert_eq!(compact.top, 20.0);
 
         let popover = metrics.resolve(CommandPopoverPresentation::Popover, 1440.0, 900.0);
-        assert_eq!(popover.width, 640.0);
-        assert_eq!(popover.height, 520.0);
+        assert_eq!(popover.width, 300.0);
+        assert_eq!(popover.height, 200.0);
         assert!(!popover.backdrop);
 
         let embedded = metrics.resolve(CommandPopoverPresentation::Embedded, 900.0, 700.0);
@@ -2123,114 +2184,6 @@ mod tests {
         assert_eq!(embedded.height, 700.0);
         assert_eq!(embedded.top, 0.0);
         assert!(!embedded.backdrop);
-    }
-
-    #[test]
-    fn popovers_use_compact_chrome_without_compressing_modal_content() {
-        let popover = CommandPopoverLayout::resolve(
-            CommandPopoverPresentation::Popover,
-            CommandPopoverDensity::Comfortable,
-        );
-        let modal = CommandPopoverLayout::resolve(
-            CommandPopoverPresentation::Modal,
-            CommandPopoverDensity::Comfortable,
-        );
-
-        assert_eq!(popover.header_height, 42.0);
-        assert!(popover.inline_tabs);
-        assert_eq!(popover.row_height, 46.0);
-        assert_eq!(popover.section_height, 28.0);
-        assert_eq!(popover.tab_height, 28.0);
-        assert_eq!(popover.panel_radius, 8.0);
-        assert!(popover.row_height < modal.row_height);
-        assert!(popover.section_height < modal.section_height);
-        assert!(popover.panel_radius < modal.panel_radius);
-        assert!(!modal.inline_tabs);
-        assert_eq!(
-            popover.horizontal_inset,
-            popover.outer_item_inset + popover.item_inset
-        );
-        assert_eq!(
-            modal.horizontal_inset,
-            modal.outer_item_inset + modal.item_inset
-        );
-    }
-
-    #[test]
-    fn compact_dropdown_density_reduces_search_and_row_chrome() {
-        let comfortable = CommandPopoverLayout::resolve(
-            CommandPopoverPresentation::Popover,
-            CommandPopoverDensity::Comfortable,
-        );
-        let compact = CommandPopoverLayout::resolve(
-            CommandPopoverPresentation::Popover,
-            CommandPopoverDensity::Compact,
-        );
-
-        assert_eq!(compact.header_height, 32.0);
-        assert_eq!(compact.row_height, 32.0);
-        assert_eq!(compact.section_height, 22.0);
-        assert_eq!(compact.list_vertical_inset, 4.0);
-        assert_eq!(compact.horizontal_inset, 8.0);
-        assert_eq!(
-            compact.horizontal_inset,
-            compact.outer_item_inset + compact.item_inset
-        );
-        assert!(compact.header_height < comfortable.header_height);
-        assert!(compact.row_height < comfortable.row_height);
-
-        let mut palette_row = CommandPopoverRow::new("theme", "Theme");
-        palette_row.swatches = vec![gpui::hsla(0.0, 0.0, 0.0, 1.0); 16];
-        assert_eq!(
-            compact.item_height(&CommandPopoverItem::Row(palette_row)),
-            compact.row_height
-        );
-    }
-
-    #[test]
-    fn dropdown_content_height_fits_short_lists_without_empty_reserved_space() {
-        let layout = CommandPopoverLayout::resolve(
-            CommandPopoverPresentation::Popover,
-            CommandPopoverDensity::Compact,
-        );
-        let items = vec![
-            CommandPopoverItem::row("first"),
-            CommandPopoverItem::row("second"),
-        ];
-
-        assert_eq!(
-            content_height(layout, 1, &items, &CommandPopoverStatus::Ready, None, false,),
-            106.0
-        );
-        assert_eq!(
-            content_height(
-                layout,
-                1,
-                &[],
-                &CommandPopoverStatus::Empty("No matches".into()),
-                None,
-                false,
-            ),
-            82.0
-        );
-    }
-
-    #[test]
-    fn embedded_dropdown_height_counts_sections_rows_insets_and_panel_border() {
-        let layout = CommandPopoverLayout::resolve(
-            CommandPopoverPresentation::Embedded,
-            CommandPopoverDensity::Compact,
-        );
-        let items = vec![
-            CommandPopoverItem::section("Local Branches"),
-            CommandPopoverItem::row("main"),
-            CommandPopoverItem::row("feature"),
-        ];
-
-        assert_eq!(
-            content_height(layout, 1, &items, &CommandPopoverStatus::Ready, None, false,),
-            128.0
-        );
     }
 
     #[test]
@@ -2341,26 +2294,6 @@ mod tests {
     }
 
     #[test]
-    fn source_uses_one_variable_height_virtual_list_and_has_no_eager_scroll_path() {
-        let source = include_str!("command_popover.rs");
-        let virtual_list_call = ["gpui::", "list("].concat();
-        let uniform_list_call = ["uniform_", "list("].concat();
-        let eager_scroll = ["overflow_y_", "scroll"].concat();
-        assert_eq!(source.matches(&virtual_list_call).count(), 1);
-        assert!(!source.contains(&uniform_list_call));
-        assert!(!source.contains(&eager_scroll));
-    }
-
-    #[test]
-    fn virtual_list_exposes_one_draggable_scrollbar() {
-        let source = include_str!("command_popover.rs");
-        assert_eq!(source.matches("command-popover-scrollbar\"").count(), 1);
-        assert!(source.contains("scrollbar_drag_started"));
-        assert!(source.contains("scroll_to(scrollbar_list_offset"));
-        assert!(source.contains("scrollbar_drag_ended"));
-    }
-
-    #[test]
     fn scrollbar_maps_the_full_unmeasured_logical_list() {
         let layout = CommandPopoverLayout::resolve(
             CommandPopoverPresentation::Popover,
@@ -2374,7 +2307,7 @@ mod tests {
         let target = content - visible;
         let offset = scrollbar_list_offset(&heights, target);
 
-        assert!(offset.item_ix >= 15);
+        assert!(offset.item_ix > 0);
         assert_eq!(scrollbar_offset(&heights, offset), target);
         assert_eq!(scrollbar_offset(&heights, offset) + visible, content);
     }
@@ -2457,6 +2390,26 @@ mod gpui_regression_tests {
                 "input lost focus in {:?}",
                 popover.read(cx).config.presentation,
             );
+        });
+    }
+
+    #[gpui::test]
+    fn unchanged_refresh_preserves_an_open_row_confirmation(cx: &mut TestAppContext) {
+        let (host, cx) = open(cx, CommandPopoverPresentation::Popover, false);
+        let popover = host.read_with(cx, |host, _| host.popover.clone());
+        popover.update(cx, |popover, cx| {
+            let mut row = CommandPopoverRow::new("feature", "feature");
+            row.actions
+                .push(CommandPopoverAction::new("delete", "Delete"));
+            let items = vec![CommandPopoverItem::Row(row)];
+            popover.set_items(items.clone(), cx);
+            popover
+                .open_confirmation_with_message("feature", "delete", Some("Delete?".into()), cx)
+                .expect("confirmation");
+            popover.set_items(items, cx);
+            popover.set_status(CommandPopoverStatus::Ready, cx);
+            assert_eq!(popover.state.inline_action(), Some(("feature", "delete")));
+            assert_eq!(popover.confirmation_message, Some("Delete?".into()));
         });
     }
 

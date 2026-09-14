@@ -106,7 +106,9 @@ impl Project {
     }
 
     pub(crate) fn refresh_status(&mut self) {
-        self.status = if self.directory.is_dir() {
+        self.status = if self.directory.is_dir()
+            && (self.kind != Some(ProjectKind::Worktree) || self.directory.join(".git").is_file())
+        {
             ProjectStatus::Available
         } else {
             ProjectStatus::Missing

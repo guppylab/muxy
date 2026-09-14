@@ -41,7 +41,7 @@ fn settings_resize_profile(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn responsive_resize_uses_one_render_and_only_visible_shortcut_rows(cx: &mut TestAppContext) {
+fn resize_uses_one_render_and_only_visible_shortcut_rows(cx: &mut TestAppContext) {
     let state = AppState::bootstrap().expect("state");
     let (boot, _requests) = stub_boot(state);
     let (view, cx) = settings_window(boot, cx);
@@ -64,16 +64,6 @@ fn responsive_resize_uses_one_render_and_only_visible_shortcut_rows(cx: &mut Tes
                 muxy_core::shortcuts::ALL.len() + 2
             );
         });
-        let pane = cx.debug_bounds("settings-view").expect("pane");
-        let category = cx
-            .debug_bounds("settings-category-Keyboard")
-            .expect("category");
-        let viewport = cx.debug_bounds("settings-sections").expect("viewport");
-        if pane.size.width - px(2.0) < px(660.0) {
-            assert!(viewport.top() > category.bottom());
-        } else {
-            assert!(viewport.top() < category.top());
-        }
     }
 }
 

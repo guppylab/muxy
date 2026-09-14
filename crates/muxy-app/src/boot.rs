@@ -53,6 +53,7 @@ impl Boot {
 
 #[derive(Debug)]
 pub(crate) enum Work {
+    Git(muxy_protocol::GitRequest),
     ProjectSessions {
         project: muxy_protocol::ProjectId,
     },
@@ -122,6 +123,10 @@ pub(crate) enum Work {
 
 #[derive(Debug)]
 pub(crate) enum Update {
+    Git {
+        request: muxy_protocol::GitRequest,
+        result: Result<muxy_protocol::GitReply, ClientError>,
+    },
     ProjectSessions {
         project: muxy_protocol::ProjectId,
         result: Result<muxy_protocol::ProjectSessions, ClientError>,
@@ -338,6 +343,10 @@ fn schedule(
 
 fn rejected(work: Work, error: ClientError) -> Update {
     match work {
+        Work::Git(request) => Update::Git {
+            request,
+            result: Err(error),
+        },
         Work::ProjectSessions { project } => Update::ProjectSessions {
             project,
             result: Err(error),
@@ -401,6 +410,10 @@ fn rejected(work: Work, error: ClientError) -> Update {
 )]
 fn perform(work: Work, client: &Client) -> Option<Update> {
     let result = match work {
+        Work::Git(request) => {
+            let result = client.git(request.clone());
+            return Some(Update::Git { request, result });
+        }
         Work::ProjectSessions { project } => {
             return Some(Update::ProjectSessions {
                 project,

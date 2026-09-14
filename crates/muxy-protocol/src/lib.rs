@@ -51,3 +51,9 @@ pub use project::{
 pub mod wire;
 
 pub mod transport;
+
+mod git;
+pub use git::{
+    GitAction, GitBranch, GitFile, GitReply, GitRequest, GitSummary, GitWorktree, WorktreeAction,
+    WorktreeIntent, WorktreeRemoval,
+};

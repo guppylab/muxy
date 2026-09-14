@@ -179,11 +179,22 @@ fn project_list(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
     let targets = Rc::new(RefCell::new(ProjectRows::default()));
     let measured = targets.clone();
     let moving = targets.clone();
-    let projects = model.state.projects();
+    let all = model.state.projects();
+    let projects: Vec<_> = all
+        .iter()
+        .filter(|p| p.parent_id.is_none())
+        .flat_map(|parent| {
+            std::iter::once(parent)
+                .chain(all.iter().filter(move |p| p.parent_id == Some(parent.id)))
+        })
+        .collect();
     let ids: Vec<_> = projects
         .iter()
         .map(|project| {
-            (!project.home && project.status() == ProjectStatus::Available).then_some(project.id)
+            (!project.home
+                && project.parent_id.is_none()
+                && project.status() == ProjectStatus::Available)
+                .then_some(project.id)
         })
         .collect();
     div()
@@ -267,6 +278,9 @@ fn project_row(
         .flex()
         .flex_none()
         .items_center()
+        .when(wide && project.parent_id.is_some(), |row| {
+            row.ml(m.spacing5())
+        })
         .when(wide, |row| {
             row.p(m.spacing2())
                 .gap(m.spacing4())
@@ -296,9 +310,10 @@ fn project_row(
                 }
             }),
         )
-        .when(!project.home && !missing, |row| {
-            row.on_drag(drag, |_, _, _, cx| cx.new(|_| Empty))
-        })
+        .when(
+            !project.home && project.parent_id.is_none() && !missing,
+            |row| row.on_drag(drag, |_, _, _, cx| cx.new(|_| Empty)),
+        )
         .child(tile)
         .when(wide, |row| {
             row.child(

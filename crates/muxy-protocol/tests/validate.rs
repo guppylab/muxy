@@ -333,6 +333,7 @@ fn samples_cover_every_message_variant_once_and_use_the_right_channel() {
                 ..
             } => ("CreationCancelled", ChannelKind::Control),
 
+            Message::GitChanged { .. } => ("GitChanged", ChannelKind::Control),
             Message::SessionsChanged { .. } => ("SessionsChanged", ChannelKind::Control),
             Message::CatalogChanged { .. } => ("CatalogChanged", ChannelKind::Control),
             Message::Request {
@@ -421,6 +422,10 @@ fn samples_cover_every_message_variant_once_and_use_the_right_channel() {
                 body: RequestBody::SavedHistoryPage { .. },
                 ..
             } => ("SavedHistoryRequest", ChannelKind::Control),
+            Message::Request {
+                body: RequestBody::Git(_),
+                ..
+            } => ("GitRequest", ChannelKind::Control),
             Message::Request { .. } => ("Request", ChannelKind::Control),
             Message::FrameAck { .. } => ("FrameAck", ChannelKind::Control),
             Message::HelloReply { .. } => ("HelloReply", ChannelKind::Control),
@@ -433,6 +438,10 @@ fn samples_cover_every_message_variant_once_and_use_the_right_channel() {
                 body: ReplyBody::Attached { snapshot, .. },
                 ..
             } if !snapshot.history.is_empty() => ("HistoryAttach", ChannelKind::Control),
+            Message::Reply {
+                body: ReplyBody::Git(_),
+                ..
+            } => ("GitReply", ChannelKind::Control),
             Message::Reply { .. } => ("Reply", ChannelKind::Control),
             Message::SessionEnded { .. } => ("SessionEnded", ChannelKind::Control),
             Message::Fatal(_) => ("Fatal", ChannelKind::Control),
@@ -460,6 +469,9 @@ fn samples_cover_every_message_variant_once_and_use_the_right_channel() {
     assert_eq!(
         seen,
         BTreeSet::from([
+            "GitChanged",
+            "GitRequest",
+            "GitReply",
             "CatalogChanged",
             "SessionsChanged",
             "IdentifyClient",

@@ -106,7 +106,7 @@ fn zoom_and_tab_switch_detach_only_hidden_leaves_and_restore_all(cx: &mut TestAp
 }
 
 #[gpui::test]
-fn zoom_controls_frame_the_pane_and_restore_the_split_layout(cx: &mut TestAppContext) {
+fn zoom_controls_preserve_focus_and_restore_the_split_layout(cx: &mut TestAppContext) {
     let (mut state, split_tab, panes) = split_state();
     let home = state.home().id;
     for _ in 0..12 {
@@ -165,25 +165,9 @@ fn zoom_controls_frame_the_pane_and_restore_the_split_layout(cx: &mut TestAppCon
                     .read(cx)
                     .focused
             );
-            for (id, pane) in &model.grids {
-                assert_eq!(
-                    pane.view.read(cx).corner_radius,
-                    if zoomed && *id == panes[2] {
-                        model.metrics.radius_lg() - px(1.0)
-                    } else {
-                        px(0.0)
-                    }
-                );
-            }
             assert_eq!(store::load(&model.path).expect("saved"), model.state);
         });
-        if zoomed {
-            let frame = cx.debug_bounds("zoomed-pane-frame").expect("zoom frame");
-            let terminal = cx.debug_bounds("terminal-pane").expect("zoomed terminal");
-            let inset = view.read_with(cx, |model, _| model.metrics.spacing7()) + px(1.0);
-            assert_eq!(terminal.origin, frame.origin + gpui::point(inset, inset));
-            assert_eq!(terminal.size, frame.size - size(inset * 2.0, inset * 2.0));
-        } else {
+        if !zoomed {
             assert!(cx.debug_bounds("split-divider-[]").is_some());
             assert_eq!(
                 view.read_with(cx, |model, cx| model

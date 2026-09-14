@@ -80,6 +80,12 @@ impl AppModel {
             self.apply_restore(&sessions, cx);
             self.resume_update_attaches(cx);
         }
+        if let Some((project, context)) = self.git.select_after_catalog.take()
+            && context == self.git.interaction
+            && self.state.project(project).is_some()
+        {
+            self.select_project(project, cx);
+        }
         self.sync_visible(cx);
         if self.catalog.dirty > page.revision {
             self.refresh_catalog(cx);

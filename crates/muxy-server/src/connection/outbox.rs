@@ -194,6 +194,10 @@ impl Outbox {
         };
         let mut state = self.lock();
         if !state.closed {
+            if let Message::GitChanged { project } = &message
+                && state.control.iter().any(|pending| matches!(pending, Message::GitChanged { project: id } if id == project)) {
+                return;
+            }
             if let Message::CatalogChanged { revision } = &message
                 && let Some(Message::CatalogChanged { revision: pending }) = state
                     .control

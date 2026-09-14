@@ -177,10 +177,13 @@ mod tests {
     }
 
     fn frame() -> Frame {
-        Frame::new(
-            Bounds::new(point(px(10.0), px(20.0)), size(px(31.0), px(43.0))),
-            size(px(8.0), px(16.0)),
-        )
+        Frame {
+            outer: rect(px(10.0), px(20.0), px(41.0), px(63.0)),
+            content: rect(px(12.0), px(22.0), px(39.0), px(61.0)),
+            grid: rect(px(12.0), px(22.0), px(36.0), px(54.0)),
+            viewport: Size { cols: 3, rows: 2 },
+            cell: size(px(8.0), px(16.0)),
+        }
     }
 
     fn color_at(quads: &[(Bounds<Pixels>, Hsla)], x: f32, y: f32) -> Option<Hsla> {
@@ -196,11 +199,20 @@ mod tests {
     }
 
     #[test]
-    fn two_point_inset_keeps_fractional_cell_space_on_right_and_bottom() {
-        let frame = frame();
-        assert_eq!(frame.content, rect(px(12.0), px(22.0), px(39.0), px(61.0)));
-        assert_eq!(frame.viewport, Size { cols: 3, rows: 2 });
-        assert_eq!(frame.grid, rect(px(12.0), px(22.0), px(36.0), px(54.0)));
+    fn frame_keeps_fractional_cell_space_on_right_and_bottom() {
+        let frame = Frame::new(frame().outer, frame().cell);
+        assert_eq!(frame.grid.origin, frame.content.origin);
+        assert_eq!(
+            frame.grid.size.width,
+            frame.cell.width * f32::from(frame.viewport.cols)
+        );
+        assert_eq!(
+            frame.grid.size.height,
+            frame.cell.height * f32::from(frame.viewport.rows)
+        );
+        let remainder = frame.content.size - frame.grid.size;
+        assert!(remainder.width >= px(0.0) && remainder.width < frame.cell.width);
+        assert!(remainder.height >= px(0.0) && remainder.height < frame.cell.height);
         let tiny = Frame::new(Bounds::default(), size(px(8.0), px(16.0)));
         assert_eq!(tiny.content.size, size(px(0.0), px(0.0)));
         assert_eq!(tiny.viewport, Size { cols: 1, rows: 1 });
@@ -247,11 +259,13 @@ mod tests {
     #[test]
     fn default_backgrounds_missing_cells_and_powerline_disable_vertical_extension() {
         let palette = Palette::new(true);
+        let [red, green, blue] = palette.terminal_colors().background;
+        let background = Color::Rgb(red, green, blue);
         let red = Color::Rgb(255, 0, 0);
         for runs in [
             vec![run("x", 1, red)],
             vec![run("x", 1, red), run("  ", 2, Color::Default)],
-            vec![run("x", 1, red), run("  ", 2, Color::Rgb(0x19, 0x17, 0x1f))],
+            vec![run("x", 1, red), run("  ", 2, background)],
             vec![run("\u{e0b0}", 1, red), run("  ", 2, red)],
             vec![run("\u{e0d4}", 1, red), run("  ", 2, red)],
         ] {

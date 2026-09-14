@@ -200,6 +200,7 @@ pub(super) fn reader(client: Client, shared: Arc<Mutex<Shared>>) -> Result<JoinH
                             pending.metadata.push(event);
                         }
                     }
+                    ClientEvent::GitChanged { .. } => (),
                     ClientEvent::CatalogChanged { .. } => state.refresh = true,
                     ClientEvent::SessionsChanged { .. } => state.sessions_dirty = true,
                     ClientEvent::SessionEnded { session, .. } => {

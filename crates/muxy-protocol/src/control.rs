@@ -70,6 +70,7 @@ pub enum RequestBody {
         operation: crate::OperationId,
     },
     IdentifyClient(crate::ClientKind),
+    Git(crate::GitRequest),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -111,6 +112,7 @@ pub enum ReplyBody {
     SessionReferencesSynced,
     SessionClosed,
     ClientIdentified(crate::SessionClient),
+    Git(crate::GitReply),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

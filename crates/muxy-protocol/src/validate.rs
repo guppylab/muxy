@@ -75,7 +75,8 @@ impl Message {
             }
             Self::Metadata(MetadataEvent::Links { rows, .. }) => validate_links(rows),
             Self::Metadata(MetadataEvent::Directory(path)) => validate_path(path),
-            Self::SessionsChanged { .. }
+            Self::GitChanged { .. }
+            | Self::SessionsChanged { .. }
             | Self::CatalogChanged { .. }
             | Self::ServerRestarting
             | Self::FrameAck { .. }
@@ -111,6 +112,7 @@ fn validate_mouse(event: &MouseEvent) -> Result<(), ErrorCode> {
 
 fn validate_request(body: &RequestBody) -> Result<(), ErrorCode> {
     match body {
+        RequestBody::Git(request) => request.validate(),
         RequestBody::SyncSessionReferences { sessions, .. } => {
             if sessions.len() > 16_384 {
                 Err(ErrorCode::BadRequest)
@@ -226,7 +228,8 @@ fn validate_reply(body: &ReplyBody) -> Result<(), ErrorCode> {
             )
         }
         ReplyBody::SavedScreen(screen) => validate_saved_screen(screen),
-        ReplyBody::ProjectMutated { .. }
+        ReplyBody::Git(_)
+        | ReplyBody::ProjectMutated { .. }
         | ReplyBody::SessionReferencesSynced
         | ReplyBody::ClientIdentified(_)
         | ReplyBody::SessionClosed

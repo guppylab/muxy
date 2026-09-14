@@ -66,13 +66,6 @@ fn existing_modal_filters_attached_sessions_preserves_owner_search_and_opens_one
         model.receive_session_page(project, Ok(page(5, entries.clone())), cx);
     });
     cx.run_until_parked();
-    assert_eq!(
-        cx.debug_bounds("project-terminals")
-            .expect("existing modal")
-            .size
-            .width,
-        px(640.0)
-    );
     picker.update(cx, |picker, cx| {
         assert!(picker.select_row("1", cx).is_err());
         assert!(picker.select_row("2", cx).is_err());

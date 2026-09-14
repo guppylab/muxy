@@ -41,6 +41,8 @@ impl Connection {
                 registry,
                 outbox,
                 workers: WorkerPool::new("ordering-test", 1, 32)?,
+                git_workers: WorkerPool::new("git-test", 1, 16)?,
+                git_watch: Arc::new(Mutex::new(None)),
                 search_cache: Arc::new(Mutex::new(SearchCache::default())),
                 version: muxy_protocol::V1,
                 last_channel: Arc::new(AtomicU32::new(0)),

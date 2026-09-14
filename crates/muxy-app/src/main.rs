@@ -11,6 +11,7 @@ mod views {
     pub(crate) mod confirm;
     pub(crate) mod disconnected;
     pub(crate) mod font_picker;
+    pub(crate) mod git;
     pub(crate) mod menu;
     pub(crate) mod overlays;
     pub(crate) mod project_editor;

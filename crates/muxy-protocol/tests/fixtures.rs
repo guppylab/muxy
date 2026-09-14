@@ -43,6 +43,14 @@ fn fixture_path(message: &Message) -> PathBuf {
 
 fn project_fixture_name(message: &Message) -> Option<&'static str> {
     Some(match message {
+        Message::Request {
+            body: RequestBody::Git(_),
+            ..
+        } => "git_request",
+        Message::Reply {
+            body: ReplyBody::Git(_),
+            ..
+        } => "git_reply",
         Message::SessionsChanged { .. } => "sessions_changed",
         Message::Request {
             body: RequestBody::IdentifyClient(_),
@@ -220,6 +228,7 @@ fn development_messages_share_one_version_and_reject_unknown_schemas() -> Result
 
 fn kind_name(kind: MessageKind) -> &'static str {
     match kind {
+        MessageKind::GitChanged => "git_changed",
         MessageKind::SessionsChanged => "sessions_changed",
         MessageKind::CatalogChanged => "catalog_changed",
         MessageKind::Hello => "hello",

@@ -19,6 +19,16 @@ pub(crate) fn items(project: &Project) -> Vec<Item> {
             Item::action("Existing Terminals…", Command::ExistingSessions(id)),
         ]);
     }
+    if !project.home && project.status() == ProjectStatus::Available {
+        if project.parent_id.is_none() {
+            items.push(Item::action("Worktrees…", Command::Worktrees(id)));
+        } else {
+            items.push(Item::action(
+                "Remove Worktree and Files…",
+                Command::RemoveWorktree(id),
+            ));
+        }
+    }
     if !project.home {
         items.push(Item::action("Remove Project…", Command::RemoveProject(id)));
     }

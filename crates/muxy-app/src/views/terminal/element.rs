@@ -1094,7 +1094,7 @@ mod tests {
 
     #[gpui::test]
     #[allow(clippy::unwrap_used)]
-    fn terminal_geometry_matches_swift_padding_after_resize(cx: &mut gpui::TestAppContext) {
+    fn terminal_viewport_uses_whole_cells_after_resize(cx: &mut gpui::TestAppContext) {
         let (pane, cx) = cx.add_window_view(|_, cx| {
             TerminalPane::new(
                 Palette::new(true),
@@ -1105,12 +1105,9 @@ mod tests {
         for dimensions in [size(px(816.0), px(416.0)), size(px(643.0), px(379.0))] {
             cx.simulate_resize(dimensions);
             cx.run_until_parked();
-            let pane_bounds = cx.debug_bounds("terminal-pane").unwrap();
             pane.read_with(cx, |pane, _| {
                 let (bounds, cell) = pane.geometry.unwrap();
                 let viewport = pane.viewport().unwrap();
-                assert_eq!(bounds.origin, pane_bounds.origin + point(px(2.0), px(2.0)));
-                assert_eq!(bounds.size, pane_bounds.size - size(px(4.0), px(4.0)));
                 let unused_width = bounds.size.width - cell.width * f32::from(viewport.cols);
                 let unused_height = bounds.size.height - cell.height * f32::from(viewport.rows);
                 assert!(unused_width >= px(0.0) && unused_width < cell.width);

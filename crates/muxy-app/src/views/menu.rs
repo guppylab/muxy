@@ -29,6 +29,8 @@ pub(crate) fn register_shortcuts(registry: &mut muxy_ui::shortcuts::Registry<'_>
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Command {
+    Worktrees(muxy_app_core::ProjectId),
+    RemoveWorktree(muxy_app_core::ProjectId),
     Dismiss,
     ExistingSessions(muxy_app_core::ProjectId),
     DetachTerminal(muxy_app_core::PaneId),
@@ -142,6 +144,17 @@ impl AppModel {
         self.dismiss_overlay(cx);
         match command {
             Command::Dismiss => {}
+            Command::Worktrees(id) => {
+                self.git.worktrees_anchor.set(Some(gpui::Bounds::new(
+                    position,
+                    gpui::size(px(0.0), px(0.0)),
+                )));
+                self.open_git_picker(id, super::git::Kind::Worktrees, window, cx);
+                return;
+            }
+            Command::RemoveWorktree(id) => {
+                self.git_request(id, muxy_protocol::GitAction::InspectRemoval, cx);
+            }
             Command::ExistingSessions(project) => {
                 self.open_session_picker(project, window, cx);
                 return;

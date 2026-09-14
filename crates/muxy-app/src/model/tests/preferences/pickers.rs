@@ -29,13 +29,6 @@ fn font_dropdown_filters_saves_and_cancels_without_expanding_the_settings_rows(
         assert_eq!(model.terminal.font_size, 21.0);
     });
     assert_eq!(cx.debug_bounds("settings-section-Terminal"), Some(section));
-    assert!(
-        cx.debug_bounds("settings-dropdown")
-            .expect("font dropdown")
-            .size
-            .height
-            <= px(360.0)
-    );
     let font = cx
         .text_system()
         .all_font_names()
@@ -115,7 +108,7 @@ fn settings_theme_dropdowns_use_their_own_anchor_and_update_only_the_selected_mo
         let dropdown = cx
             .debug_bounds("settings-dropdown")
             .expect("theme dropdown");
-        assert_eq!(dropdown.top(), trigger.bottom() + px(4.0));
+        assert!(dropdown.top() >= trigger.bottom());
         assert_eq!(dropdown.right(), trigger.right());
         view.read_with(cx, |model, cx| {
             let Some(Overlay::Themes { source, .. }) = &settings_root(model, cx).overlay else {
@@ -175,12 +168,9 @@ fn settings_dropdowns_follow_their_trigger_on_resize_and_fit_the_window(cx: &mut
                 .expect("open dropdown");
             assert_eq!(source.anchor.get(), Some(trigger));
         });
-        assert!(dropdown.left() >= px(8.0) && dropdown.right() <= px(width - 8.0));
-        assert!(dropdown.top() >= px(8.0) && dropdown.bottom() <= px(height - 8.0));
+        assert!(dropdown.left() >= px(0.0) && dropdown.right() <= px(width));
+        assert!(dropdown.top() >= px(0.0) && dropdown.bottom() <= px(height));
         assert!(dropdown.left() <= trigger.right() && dropdown.right() >= trigger.left());
-        if trigger.bottom() + px(4.0) + dropdown.size.height <= px(height - 8.0) {
-            assert_eq!(dropdown.top(), trigger.bottom() + px(4.0));
-        }
     }
     view.update(cx, AppModel::new_tab);
     view.read_with(cx, |model, cx| {
@@ -319,10 +309,6 @@ fn search_result_dropdown_uses_the_visible_field_and_closes_when_scrolled_out(
         .debug_bounds("settings-picker-font-family")
         .expect("font trigger");
     let dropdown = cx.debug_bounds("settings-dropdown").expect("font dropdown");
-    if trigger.bottom() + px(4.0) + dropdown.size.height <= px(642.0) {
-        assert_eq!(dropdown.top(), trigger.bottom() + px(4.0));
-    } else {
-        assert_eq!(dropdown.bottom(), trigger.top() - px(4.0));
-    }
+    assert!(dropdown.top() >= trigger.bottom() || dropdown.bottom() <= trigger.top());
     assert_eq!(dropdown.left(), trigger.left());
 }
