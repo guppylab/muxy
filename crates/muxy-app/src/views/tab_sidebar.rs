@@ -428,9 +428,12 @@ fn tab_row(
             .terminal(&pane.id)
             .is_some_and(|pane| pane.view.read(cx).bell_flashing)
     });
-    let title = tab
-        .displayed_pane(model.state.window().active_pane)
-        .map_or("Terminal", |pane| pane.title.as_str());
+    let title = tab.title(model.state.window().active_pane);
+    let color = tab
+        .color
+        .as_ref()
+        .and_then(|color| muxy_ui::theme::parse_hex(color.as_str()))
+        .map(gpui::Hsla::from);
     let group = SharedString::from(format!("sidebar-tab-{id}"));
     div()
         .id(group.clone())
@@ -452,6 +455,16 @@ fn tab_row(
         .text_color(if active { theme.fg } else { theme.fg_muted })
         .when(active, |row| row.bg(theme.surface))
         .hover(|style| style.bg(if active { theme.surface } else { theme.hover }))
+        .when_some(color, |row, color| {
+            row.bg(color.opacity(if active { 0.18 } else { 0.06 }))
+        })
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |model, event: &gpui::MouseDownEvent, window, cx| {
+                cx.stop_propagation();
+                model.open_tab_menu(id, event.position, window, cx);
+            }),
+        )
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |model, event: &gpui::MouseDownEvent, window, cx| {
@@ -478,7 +491,7 @@ fn tab_row(
                 .items_center()
                 .justify_center()
                 .child(SymbolGlyph::new(
-                    "terminal",
+                    if tab.pinned { "pin" } else { "terminal" },
                     m.font_footnote(),
                     if active { theme.fg } else { theme.fg_muted },
                 )),
@@ -491,7 +504,7 @@ fn tab_row(
                 .child(title.to_owned()),
         )
         .child(tab_accessory(
-            id,
+            tab,
             number.and_then(|index| tab_shortcut(index, &model.settings.keymap, modifiers)),
             bell,
             group,
@@ -654,13 +667,14 @@ impl AppModel {
 }
 
 fn tab_accessory(
-    id: TabId,
+    tab: &Tab,
     shortcut: Option<String>,
     bell: bool,
     group: SharedString,
     model: &AppModel,
     cx: &mut Context<AppModel>,
 ) -> AnyElement {
+    let id = tab.id;
     let m = model.metrics;
     let show_bell = bell && shortcut.is_none();
     div()
@@ -674,7 +688,9 @@ fn tab_accessory(
                 .items_center()
                 .justify_center()
                 .size_full()
-                .group_hover(group.clone(), |style| style.opacity(0.0))
+                .when(!tab.pinned, |slot| {
+                    slot.group_hover(group.clone(), |style| style.opacity(0.0))
+                })
                 .when_some(shortcut, |slot, shortcut| {
                     slot.child(
                         div()
@@ -692,7 +708,9 @@ fn tab_accessory(
                     )
                 }),
         )
-        .child(close_tab_button(id, group, model, cx))
+        .when(!tab.pinned, |slot| {
+            slot.child(close_tab_button(id, group, model, cx))
+        })
         .into_any_element()
 }
 

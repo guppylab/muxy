@@ -382,6 +382,71 @@ impl AppState {
         Ok(id)
     }
 
+    pub fn open_terminal_tab_adjacent(
+        &mut self,
+        project: ProjectId,
+        anchor: TabId,
+        side: crate::TabSide,
+    ) -> Result<TabId, AppError> {
+        let target = self
+            .project(project)
+            .ok_or(AppError::UnknownProject(project))?;
+        target.require_available()?;
+        let index =
+            target
+                .tabs
+                .iter()
+                .position(|tab| tab.id == anchor)
+                .ok_or(AppError::UnknownTab {
+                    project,
+                    tab: anchor,
+                })?;
+        let boundary = target.tabs.iter().take_while(|tab| tab.pinned).count();
+        let index = (index + usize::from(side == crate::TabSide::Right)).max(boundary);
+        let id = self.open_terminal_tab(project)?;
+        let tabs = &mut self.project_mut(project)?.tabs;
+        let tab = tabs
+            .pop()
+            .ok_or(AppError::UnknownTab { project, tab: id })?;
+        tabs.insert(index, tab);
+        Ok(id)
+    }
+
+    pub fn set_tab_title(&mut self, tab: TabId, title: Option<String>) -> Result<(), AppError> {
+        self.tab_mut(tab)?.custom_title = title
+            .map(|title| title.trim().to_owned())
+            .filter(|title| !title.is_empty());
+        Ok(())
+    }
+
+    pub fn set_tab_color(&mut self, tab: TabId, color: Option<Color>) -> Result<(), AppError> {
+        self.tab_mut(tab)?.color = color;
+        Ok(())
+    }
+
+    pub fn toggle_tab_pin(&mut self, tab: TabId) -> Result<(), AppError> {
+        let target = self.tab_mut(tab)?;
+        target.pinned = !target.pinned;
+        let project = self
+            .projects
+            .iter_mut()
+            .find(|project| project.tabs.iter().any(|item| item.id == tab))
+            .ok_or_else(|| AppError::InvalidState("unknown tab".into()))?;
+        let index =
+            project
+                .tabs
+                .iter()
+                .position(|item| item.id == tab)
+                .ok_or(AppError::UnknownTab {
+                    project: project.id,
+                    tab,
+                })?;
+        let tab = project.tabs.remove(index);
+        let boundary = project.tabs.iter().take_while(|tab| tab.pinned).count();
+        project.tabs.insert(boundary, tab);
+        Ok(())
+    }
+
     pub fn close_tab(&mut self, project: ProjectId, tab: TabId) -> Result<(), AppError> {
         let panes: Vec<_> = self
             .project(project)
@@ -669,6 +734,12 @@ impl AppState {
                 });
             }
         }
+        let boundary = tabs.iter().take_while(|tab| tab.pinned).count();
+        let to = if tabs[from].pinned {
+            to.min(boundary.saturating_sub(1))
+        } else {
+            to.max(boundary)
+        };
         let tab = tabs.remove(from);
         tabs.insert(to, tab);
         Ok(())

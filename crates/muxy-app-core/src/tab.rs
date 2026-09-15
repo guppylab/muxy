@@ -1,11 +1,48 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{AppError, Layout, Pane, PaneContent, PaneId, TabId};
+use crate::{AppError, Color, Layout, Pane, PaneContent, PaneId, Project, TabId};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TabSide {
+    Left,
+    Right,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TabCloseScope {
+    Other,
+    Left,
+    Right,
+}
+
+impl Project {
+    pub fn closable_tabs(&self, anchor: TabId, scope: TabCloseScope) -> Vec<TabId> {
+        let Some(index) = self.tabs.iter().position(|tab| tab.id == anchor) else {
+            return Vec::new();
+        };
+        self.tabs
+            .iter()
+            .enumerate()
+            .filter(|(candidate, tab)| {
+                !tab.pinned
+                    && match scope {
+                        TabCloseScope::Other => *candidate != index,
+                        TabCloseScope::Left => *candidate < index,
+                        TabCloseScope::Right => *candidate > index,
+                    }
+            })
+            .map(|(_, tab)| tab.id)
+            .collect()
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "StoredTab")]
 pub struct Tab {
     pub id: TabId,
+    pub custom_title: Option<String>,
+    pub color: Option<Color>,
+    pub pinned: bool,
     pub panes: Vec<Pane>,
     #[serde(skip)]
     pub(crate) legacy_active_pane: Option<PaneId>,
@@ -16,6 +53,12 @@ pub struct Tab {
 #[derive(Deserialize)]
 struct StoredTab {
     id: TabId,
+    #[serde(default)]
+    custom_title: Option<String>,
+    #[serde(default)]
+    color: Option<Color>,
+    #[serde(default)]
+    pinned: bool,
     panes: Vec<Pane>,
     #[serde(default)]
     active_pane: Option<PaneId>,
@@ -35,6 +78,12 @@ impl TryFrom<StoredTab> for Tab {
             .ok_or_else(|| AppError::InvalidState("tab must contain a pane".into()))?;
         let tab = Self {
             id: stored.id,
+            custom_title: stored
+                .custom_title
+                .map(|title| title.trim().to_owned())
+                .filter(|title| !title.is_empty()),
+            color: stored.color,
+            pinned: stored.pinned,
             layout: stored.layout.unwrap_or(Layout::Leaf(first.id)),
             panes: stored.panes,
             legacy_active_pane: stored.active_pane,
@@ -74,6 +123,9 @@ impl Tab {
     }
 
     pub fn title(&self, active: Option<PaneId>) -> &str {
+        if let Some(title) = &self.custom_title {
+            return title;
+        }
         self.displayed_pane(active)
             .map_or("", |pane| pane.title.as_str())
     }
@@ -100,6 +152,9 @@ impl Tab {
         };
         Self {
             id: TabId::new(),
+            custom_title: None,
+            color: None,
+            pinned: false,
             legacy_active_pane: None,
             layout: Layout::Leaf(pane.id),
             zoomed: None,

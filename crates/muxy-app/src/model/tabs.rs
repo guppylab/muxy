@@ -1,0 +1,87 @@
+use gpui::{Context, Pixels, Point, Window};
+use muxy_app_core::{AppError, AppState, ProjectStatus, Tab, TabCloseScope, TabId, TabSide};
+
+use super::{AppModel, ConnectionState, Quitting};
+
+impl AppModel {
+    pub(crate) fn tab(&self, id: TabId) -> Option<&Tab> {
+        self.tab_project(id)?.tabs.iter().find(|tab| tab.id == id)
+    }
+
+    pub(crate) fn edit_tab(
+        &mut self,
+        edit: impl FnOnce(&mut AppState) -> Result<(), AppError>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.quitting != Quitting::Idle {
+            return false;
+        }
+        let previous = self.state.clone();
+        if let Err(error) = edit(&mut self.state) {
+            self.state = previous;
+            self.fail(error.to_string(), cx);
+            return false;
+        }
+        if !self.save(cx) {
+            self.state = previous;
+            return false;
+        }
+        cx.notify();
+        true
+    }
+
+    pub(crate) fn new_tab_adjacent(
+        &mut self,
+        anchor: TabId,
+        side: TabSide,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project) = self.tab_project(anchor).map(|project| project.id) else {
+            return;
+        };
+        if self.edit_tab(
+            |state| {
+                state
+                    .open_terminal_tab_adjacent(project, anchor, side)
+                    .map(|_| ())
+            },
+            cx,
+        ) {
+            self.changed(cx);
+            self.focus_requested = true;
+            if self.connection == ConnectionState::Disconnected {
+                self.connect(cx);
+            }
+        }
+    }
+
+    pub(crate) fn open_tab_menu(
+        &mut self,
+        id: TabId,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project) = self
+            .tab_project(id)
+            .filter(|project| project.status() == ProjectStatus::Available)
+        else {
+            return;
+        };
+        let items = crate::views::tab_menu::items(project, id);
+        self.open_menu(items, position, window, cx);
+    }
+
+    pub(crate) fn close_tabs(
+        &mut self,
+        anchor: TabId,
+        scope: TabCloseScope,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project) = self.tab_project(anchor) else {
+            return;
+        };
+        let tabs = project.closable_tabs(anchor, scope);
+        self.begin_close_tabs(tabs, None, cx);
+    }
+}

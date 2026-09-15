@@ -18,7 +18,12 @@ impl AppModel {
         }
         self.dismiss_overlay(cx);
         let window = self.window;
-        let (title, message) = if self.closing_one_pane() {
+        let (title, message) = if self.closing_multiple_tabs() {
+            (
+                "Close Tabs?",
+                "A process is still running in these tabs.\nAre you sure you want to close them?",
+            )
+        } else if self.closing_one_pane() {
             (PANE_TITLE, PANE_MESSAGE)
         } else {
             (TITLE, MESSAGE)

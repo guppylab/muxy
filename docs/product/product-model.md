@@ -97,8 +97,10 @@ this state. An unreachable server does not imply a failed project.
 
 A project may have no tabs. Each tab contains one or more panes arranged by
 horizontal or vertical splits at any depth; the arrangement is saved. Tabs
-have no title of their own; [window focus](./app-model.md#navigation-and-focus)
-determines their displayed title. Closing the last pane closes its tab.
+may have a custom title, color, and pin. Otherwise,
+[window focus](./app-model.md#navigation-and-focus) determines their displayed
+title. Pinned tabs stay first and are protected from user closes until unpinned;
+their panes still disappear when sessions end. Closing the last pane closes its tab.
 
 Pane types are either app-only, such as a web view, or server-bound, such as a
 terminal. A server-bound pane inherits its server and directory context through

@@ -3,6 +3,7 @@ pub(crate) mod git;
 mod links;
 mod preferences;
 mod quick_terminal;
+mod tabs;
 mod updates;
 
 use std::collections::{HashMap, HashSet};
@@ -55,6 +56,7 @@ enum Quitting {
 
 struct CloseRequest {
     tab: TabId,
+    tabs: Vec<TabId>,
     panes: Vec<PaneId>,
     checking: usize,
     whole_tab: bool,
@@ -606,12 +608,12 @@ impl AppModel {
     }
 
     pub(crate) fn close_tab(&mut self, tab: TabId, cx: &mut Context<Self>) {
-        self.begin_close(tab, None, cx);
+        self.begin_close_tabs(vec![tab], None, cx);
     }
 
     pub(crate) fn close_pane(&mut self, pane: PaneId, cx: &mut Context<Self>) {
         if let Some(tab) = self.pane_tab(pane) {
-            self.begin_close(tab, Some(pane), cx);
+            self.begin_close_tabs(vec![tab], Some(pane), cx);
         }
     }
 
@@ -652,7 +654,7 @@ impl AppModel {
         cx.notify();
     }
 
-    fn begin_close(&mut self, tab: TabId, pane: Option<PaneId>, cx: &mut Context<Self>) {
+    fn begin_close_tabs(&mut self, tabs: Vec<TabId>, pane: Option<PaneId>, cx: &mut Context<Self>) {
         if self.quitting != Quitting::Idle
             || self.close_request.is_some()
             || self.pending_close.is_some()
@@ -660,18 +662,39 @@ impl AppModel {
         {
             return;
         }
+        let Some(tab) = tabs.first().copied() else {
+            return;
+        };
         let Some(project) = self.tab_project(tab) else {
             return;
         };
         if project.status() == ProjectStatus::Missing {
             return;
         }
-        let Some(target) = project.tabs.iter().find(|item| item.id == tab) else {
+        let targets: Vec<_> = project
+            .tabs
+            .iter()
+            .filter(|target| tabs.contains(&target.id))
+            .collect();
+        if targets.len() != tabs.len()
+            || targets
+                .iter()
+                .any(|target| target.pinned && (pane.is_none() || target.panes.len() == 1))
+        {
             return;
-        };
-        let panes = pane.map_or_else(|| target.layout.leaves(), |pane| vec![pane]);
+        }
+        let panes = pane.map_or_else(
+            || {
+                targets
+                    .iter()
+                    .flat_map(|target| target.layout.leaves())
+                    .collect()
+            },
+            |pane| vec![pane],
+        );
         self.close_request = Some(CloseRequest {
             tab,
+            tabs,
             panes,
             checking: 0,
             whole_tab: pane.is_none(),
@@ -747,6 +770,12 @@ impl AppModel {
             .is_some_and(|request| !request.whole_tab)
     }
 
+    pub(crate) fn closing_multiple_tabs(&self) -> bool {
+        self.close_request
+            .as_ref()
+            .is_some_and(|request| request.tabs.len() > 1)
+    }
+
     pub(crate) fn finish_close_prompt(
         &mut self,
         tab: TabId,
@@ -776,7 +805,7 @@ impl AppModel {
                     );
                 }
                 if let Some(request) = &mut self.close_request {
-                    request.checking += 1;
+                    request.checking = request.panes.len();
                 }
                 self.check_next_close(cx);
             }
@@ -801,7 +830,12 @@ impl AppModel {
         let Some(project) = self.tab_project(request.tab) else {
             return;
         };
-        if project.status() == ProjectStatus::Missing {
+        if project.status() == ProjectStatus::Missing
+            || request.tabs.iter().any(|id| {
+                self.tab(*id)
+                    .is_none_or(|tab| tab.pinned && (request.whole_tab || tab.panes.len() == 1))
+            })
+        {
             return;
         }
         let project_id = project.id;
@@ -818,7 +852,10 @@ impl AppModel {
                 .iter()
                 .try_for_each(|pane| self.state.detach_pane(*pane))
         } else if request.whole_tab {
-            self.state.close_tab(project_id, request.tab)
+            request
+                .tabs
+                .iter()
+                .try_for_each(|tab| self.state.close_tab(project_id, *tab))
         } else {
             self.state.close_pane(request.panes[0])
         };
@@ -1865,6 +1902,7 @@ mod tests {
     mod session_ownership;
     mod sidebar;
     mod splits;
+    mod tab_menu;
     mod tab_sidebar;
     mod tab_strip;
     mod tui;

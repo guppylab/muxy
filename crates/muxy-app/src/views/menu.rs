@@ -29,6 +29,7 @@ pub(crate) fn register_shortcuts(registry: &mut muxy_ui::shortcuts::Registry<'_>
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Command {
+    Tab(muxy_app_core::TabId, super::tab_menu::Action),
     Layout(muxy_app_core::settings::AppLayout),
     FocusProject(bool),
     SortProjects(muxy_app_core::settings::ProjectOrder),
@@ -54,6 +55,7 @@ pub(crate) struct Item {
     command: Command,
     disabled: bool,
     checked: bool,
+    separator_before: bool,
 }
 
 impl Item {
@@ -63,6 +65,7 @@ impl Item {
             command,
             disabled: false,
             checked: false,
+            separator_before: false,
         }
     }
 
@@ -72,6 +75,11 @@ impl Item {
     }
     pub(crate) fn disabled(mut self) -> Self {
         self.disabled = true;
+        self
+    }
+
+    pub(crate) fn separated(mut self) -> Self {
+        self.separator_before = true;
         self
     }
 }
@@ -90,6 +98,31 @@ impl Menu {
             position,
             highlighted: None,
         }
+    }
+
+    fn dimensions(&self) -> gpui::Size<Pixels> {
+        let count = f32::from(u16::try_from(self.items.len()).unwrap_or(u16::MAX));
+        let separators = f32::from(
+            u16::try_from(
+                self.items
+                    .iter()
+                    .filter(|item| item.separator_before)
+                    .count(),
+            )
+            .unwrap_or(u16::MAX),
+        );
+        let width = px(
+            if self
+                .items
+                .iter()
+                .any(|item| matches!(item.command, Command::Tab(..)))
+            {
+                230.0
+            } else {
+                180.0
+            },
+        );
+        gpui::size(width, px(count * 22.0 + separators * 9.0 + 10.0))
     }
 
     fn move_highlight(&mut self, forward: bool) {
@@ -146,6 +179,31 @@ impl AppModel {
         };
         self.dismiss_overlay(cx);
         match command {
+            Command::Tab(id, action) => {
+                use super::tab_menu::Action;
+                match action {
+                    Action::New(side) => self.new_tab_adjacent(id, side, cx),
+                    Action::Rename => {
+                        self.open_tab_editor(id, position, window, cx);
+                        return;
+                    }
+                    Action::Color => {
+                        self.open_tab_colors(id, position, window, cx);
+                        return;
+                    }
+                    Action::ResetTitle => {
+                        self.edit_tab(|state| state.set_tab_title(id, None), cx);
+                    }
+                    Action::ResetColor => {
+                        self.edit_tab(|state| state.set_tab_color(id, None), cx);
+                    }
+                    Action::TogglePin => {
+                        self.edit_tab(|state| state.toggle_tab_pin(id), cx);
+                    }
+                    Action::Close => self.close_tab(id, cx),
+                    Action::CloseTabs(scope) => self.close_tabs(id, scope, cx),
+                }
+            }
             Command::Layout(layout) => self.set_layout(layout, cx),
             Command::FocusProject(focused) => self.set_project_focus(focused, cx),
             Command::SortProjects(order) => {
@@ -224,12 +282,8 @@ pub(crate) fn render(
 ) -> AnyElement {
     let m = model.metrics;
     let theme = &model.theme;
-    let count = f32::from(u16::try_from(menu.items.len()).unwrap_or(u16::MAX));
-    let origin = super::overlays::clamp(
-        menu.position,
-        gpui::size(px(180.0), px(count * 22.0 + 10.0)),
-        window.viewport_size(),
-    );
+    let dimensions = menu.dimensions();
+    let origin = super::overlays::clamp(menu.position, dimensions, window.viewport_size());
     let mut panel = div()
         .key_context("Menu")
         .track_focus(&model.overlay_focus)
@@ -250,7 +304,7 @@ pub(crate) fn render(
         .top(origin.y)
         .flex()
         .flex_col()
-        .min_w(px(180.0))
+        .min_w(dimensions.width)
         .py(m.spacing2())
         .rounded(m.radius_lg())
         .bg(theme.raised())
@@ -258,6 +312,16 @@ pub(crate) fn render(
         .border_color(theme.border)
         .shadow_lg();
     for (index, item) in menu.items.iter().enumerate() {
+        if item.separator_before {
+            panel = panel.child(
+                div()
+                    .flex_none()
+                    .h(px(1.0))
+                    .my(px(4.0))
+                    .mx(m.spacing3())
+                    .bg(theme.border),
+            );
+        }
         let command = item.command;
         let mut mark = div()
             .flex()
@@ -286,6 +350,10 @@ pub(crate) fn render(
                 .child(mark)
                 .child(
                     div()
+                        .debug_selector({
+                            let label = item.label;
+                            move || format!("menu-label-{label}")
+                        })
                         .flex_grow()
                         .text_size(m.font_emphasis())
                         .text_color(if item.disabled {
@@ -305,4 +373,37 @@ pub(crate) fn render(
         );
     }
     panel.into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use muxy_app_core::AppState;
+
+    #[test]
+    fn tab_menu_only_exposes_applicable_resets_and_closes() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut state = AppState::bootstrap()?;
+        let tab = state.open_terminal_tab(state.home().id)?;
+        let items = super::super::tab_menu::items(state.home(), tab);
+        assert!(
+            !items
+                .iter()
+                .any(|item| item.label == "Reset Title" || item.label == "Reset Tab Color")
+        );
+        assert!(
+            items
+                .iter()
+                .filter(|item| matches!(
+                    item.command,
+                    Command::Tab(_, super::super::tab_menu::Action::CloseTabs(_))
+                ))
+                .all(|item| item.disabled)
+        );
+        state.toggle_tab_pin(tab)?;
+        let items = super::super::tab_menu::items(state.home(), tab);
+        assert!(!items.iter().any(|item| item.label == "Close Tab"));
+        assert!(items.iter().any(|item| item.label == "Unpin Tab"));
+        Ok(())
+    }
 }

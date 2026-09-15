@@ -311,7 +311,12 @@ fn tab_cell(
             .terminal(&pane.id)
             .is_some_and(|pane| pane.view.read(cx).bell_flashing)
     });
-    let title = pane.map_or("", |pane| pane.title.as_str());
+    let title = tab.title(model.state.window().active_pane);
+    let color = tab
+        .color
+        .as_ref()
+        .and_then(|color| muxy_ui::theme::parse_hex(color.as_str()))
+        .map(gpui::Hsla::from);
     let settings = pane.is_some_and(|pane| pane.content == muxy_app_core::PaneContent::Settings);
     let shows_title = width >= 80.0;
     let id = tab.id;
@@ -344,6 +349,16 @@ fn tab_cell(
         .text_size(px(12.0))
         .text_color(foreground)
         .when(active, |tab| tab.bg(theme.surface))
+        .when_some(color, |cell, color| {
+            cell.bg(color.opacity(if active { 0.18 } else { 0.06 }))
+        })
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |model, event: &gpui::MouseDownEvent, window, cx| {
+                cx.stop_propagation();
+                model.open_tab_menu(id, event.position, window, cx);
+            }),
+        )
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |model, event: &gpui::MouseDownEvent, window, cx| {
@@ -375,9 +390,15 @@ fn tab_cell(
             group,
             foreground,
             bell.then_some(theme.accent),
-            settings,
+            if tab.pinned {
+                Icon::Pin
+            } else if settings {
+                Icon::Settings
+            } else {
+                Icon::Terminal
+            },
         ))
-        .child(close)
+        .when(!tab.pinned, |cell| cell.child(close))
         .into_any_element()
 }
 
@@ -388,7 +409,7 @@ fn tab_label(
     group: SharedString,
     foreground: gpui::Hsla,
     bell: Option<gpui::Hsla>,
-    settings: bool,
+    icon: Icon,
 ) -> impl IntoElement {
     div()
         .flex()
@@ -403,26 +424,22 @@ fn tab_label(
             div()
                 .flex()
                 .flex_none()
-                .when(!shows_title, |icon| {
+                .when(!shows_title && icon != Icon::Pin, |icon| {
                     icon.group_hover(group, |style| style.opacity(0.0))
                 })
-                .debug_selector(|| {
+                .debug_selector(move || {
                     if bell.is_some() {
                         "tab-bell".into()
-                    } else if settings {
+                    } else if icon == Icon::Pin {
+                        "tab-pin".into()
+                    } else if icon == Icon::Settings {
                         "tab-settings".into()
                     } else {
                         "tab-terminal".into()
                     }
                 })
                 .child(IconGlyph::new(
-                    if bell.is_some() {
-                        Icon::Bell
-                    } else if settings {
-                        Icon::Settings
-                    } else {
-                        Icon::Terminal
-                    },
+                    if bell.is_some() { Icon::Bell } else { icon },
                     px(14.0),
                     bell.unwrap_or(foreground),
                 )),

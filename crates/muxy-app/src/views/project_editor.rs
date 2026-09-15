@@ -5,7 +5,7 @@ use gpui::{
     IntoElement, ParentElement, Pixels, Point, StatefulInteractiveElement, Styled, Window, actions,
     div, px, size,
 };
-use muxy_app_core::{PROJECT_COLORS, ProjectId, ProjectStatus};
+use muxy_app_core::{PROJECT_COLORS, ProjectId, ProjectStatus, TabId};
 use muxy_ui::text_input::{InputEvent, InputStyle, TextInput};
 use muxy_ui::theme::parse_hex;
 
@@ -30,8 +30,14 @@ pub(crate) enum Field {
     Icon,
 }
 
+#[derive(Clone, Copy)]
+enum Target {
+    Project(ProjectId),
+    Tab(TabId),
+}
+
 pub(crate) struct Editor {
-    project: ProjectId,
+    target: Target,
     field: Field,
     input: Entity<TextInput>,
     position: Point<Pixels>,
@@ -39,7 +45,7 @@ pub(crate) struct Editor {
 }
 
 pub(crate) struct Colors {
-    project: ProjectId,
+    target: Target,
     position: Point<Pixels>,
     selected: usize,
 }
@@ -64,6 +70,32 @@ impl AppModel {
             Field::Name => project.name.clone(),
             Field::Icon => project.icon.clone().unwrap_or_default(),
         };
+        self.open_metadata_editor(Target::Project(id), field, text, position, window, cx);
+    }
+
+    pub(crate) fn open_tab_editor(
+        &mut self,
+        id: TabId,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tab) = self.tab(id) else {
+            return;
+        };
+        let text = tab.title(self.state.window().active_pane).to_owned();
+        self.open_metadata_editor(Target::Tab(id), Field::Name, text, position, window, cx);
+    }
+
+    fn open_metadata_editor(
+        &mut self,
+        target: Target,
+        field: Field,
+        text: String,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let input = cx.new(|cx| {
             TextInput::new(InputStyle::field(&self.theme, &self.metrics), cx).with_text(text)
         });
@@ -80,7 +112,7 @@ impl AppModel {
             }
         }));
         self.overlay = Some(Overlay::ProjectEditor(Editor {
-            project: id,
+            target,
             field,
             input,
             position,
@@ -93,16 +125,20 @@ impl AppModel {
         let Some(Overlay::ProjectEditor(editor)) = &self.overlay else {
             return;
         };
-        let id = editor.project;
+        let target = editor.target;
         let field = editor.field;
         let text = editor.input.read(cx).text().trim().to_owned();
-        if self.edit_project(
-            |state| match field {
-                Field::Name => state.rename_project(id, &text),
-                Field::Icon => state.set_project_icon(id, (!text.is_empty()).then_some(text)),
-            },
-            cx,
-        ) {
+        let saved = match target {
+            Target::Tab(id) => self.edit_tab(|state| state.set_tab_title(id, Some(text)), cx),
+            Target::Project(id) => self.edit_project(
+                |state| match field {
+                    Field::Name => state.rename_project(id, &text),
+                    Field::Icon => state.set_project_icon(id, (!text.is_empty()).then_some(text)),
+                },
+                cx,
+            ),
+        };
+        if saved {
             self.dismiss_overlay(cx);
         } else if let Some(Overlay::ProjectEditor(editor)) = &mut self.overlay {
             editor.error.clone_from(&self.error);
@@ -128,9 +164,41 @@ impl AppModel {
             .iter()
             .position(|(_, color)| *color == project.color.as_str())
             .unwrap_or(0);
+        self.open_metadata_colors(Target::Project(id), selected, position, window, cx);
+    }
+
+    pub(crate) fn open_tab_colors(
+        &mut self,
+        id: TabId,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tab) = self.tab(id) else {
+            return;
+        };
+        let selected = PROJECT_COLORS
+            .iter()
+            .position(|(_, hex)| {
+                tab.color
+                    .as_ref()
+                    .is_some_and(|color| color.as_str() == *hex)
+            })
+            .unwrap_or(0);
+        self.open_metadata_colors(Target::Tab(id), selected, position, window, cx);
+    }
+
+    fn open_metadata_colors(
+        &mut self,
+        target: Target,
+        selected: usize,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.overlay_subscription = None;
         self.overlay = Some(Overlay::ProjectColors(Colors {
-            project: id,
+            target,
             position,
             selected,
         }));
@@ -151,11 +219,16 @@ impl AppModel {
         let Some(Overlay::ProjectColors(colors)) = &self.overlay else {
             return;
         };
-        let id = colors.project;
+        let target = colors.target;
         let index = selected.unwrap_or(colors.selected);
         if let Some((_, hex)) = PROJECT_COLORS.get(index)
             && let Ok(color) = hex.parse()
-            && self.edit_project(|state| state.set_project_color(id, color), cx)
+            && match target {
+                Target::Project(id) => {
+                    self.edit_project(|state| state.set_project_color(id, color), cx)
+                }
+                Target::Tab(id) => self.edit_tab(|state| state.set_tab_color(id, Some(color)), cx),
+            }
         {
             self.dismiss_overlay(cx);
         }
@@ -195,9 +268,10 @@ pub(crate) fn render(
             div()
                 .text_size(m.font_body())
                 .font_weight(FontWeight::SEMIBOLD)
-                .child(match editor.field {
-                    Field::Name => "Rename Project",
-                    Field::Icon => "Change Icon",
+                .child(match (editor.target, editor.field) {
+                    (Target::Tab(_), _) => "Rename Tab",
+                    (_, Field::Name) => "Rename Project",
+                    (_, Field::Icon) => "Change Icon",
                 }),
         )
         .child(editor.input.clone())
@@ -266,7 +340,12 @@ pub(crate) fn render_colors(
         .occlude()
         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .child(div().text_size(m.font_body()).child(format!(
-            "Project Color · {}",
+            "{} Color · {}",
+            if matches!(colors.target, Target::Tab(_)) {
+                "Tab"
+            } else {
+                "Project"
+            },
             PROJECT_COLORS[colors.selected].0
         )))
         .child(

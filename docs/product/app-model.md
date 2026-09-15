@@ -57,8 +57,8 @@ project ownership or execution context.
 
 The current project, selected tab, and focused pane belong to the window.
 There is one active pane for the whole window, even if several tabs are visible.
-A tab displays that pane's title when it contains the active pane, otherwise
-its first pane's title.
+A tab displays its custom title when set. Otherwise it displays that pane's title
+when it contains the active pane, or its first pane's title.
 
 Closing the active pane focuses an adjacent pane in its tab. Closing the whole
 tab focuses the first pane of the next tab, or the previous tab if there is no

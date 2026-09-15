@@ -23,6 +23,7 @@ mod views {
     pub(crate) mod sidebar;
     pub(crate) mod splits;
     pub(crate) mod status_bar;
+    pub(crate) mod tab_menu;
     pub(crate) mod tab_sidebar;
     pub(crate) mod tab_strip;
     pub(crate) mod theme_picker;
