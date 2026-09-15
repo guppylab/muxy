@@ -29,6 +29,9 @@ pub(crate) fn register_shortcuts(registry: &mut muxy_ui::shortcuts::Registry<'_>
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Command {
+    Layout(muxy_app_core::settings::AppLayout),
+    FocusProject(bool),
+    SortProjects(muxy_app_core::settings::ProjectOrder),
     Worktrees(muxy_app_core::ProjectId),
     RemoveWorktree(muxy_app_core::ProjectId),
     Dismiss,
@@ -63,8 +66,8 @@ impl Item {
         }
     }
 
-    pub(crate) fn checked(mut self) -> Self {
-        self.checked = true;
+    pub(crate) fn checked_if(mut self, checked: bool) -> Self {
+        self.checked = checked;
         self
     }
     pub(crate) fn disabled(mut self) -> Self {
@@ -143,6 +146,13 @@ impl AppModel {
         };
         self.dismiss_overlay(cx);
         match command {
+            Command::Layout(layout) => self.set_layout(layout, cx),
+            Command::FocusProject(focused) => self.set_project_focus(focused, cx),
+            Command::SortProjects(order) => {
+                self.appearance.sidebar_project_order = order;
+                self.save_appearance(cx);
+                cx.notify();
+            }
             Command::Dismiss => {}
             Command::Worktrees(id) => {
                 self.git.worktrees_anchor.set(Some(gpui::Bounds::new(

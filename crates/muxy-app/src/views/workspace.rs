@@ -299,8 +299,8 @@ fn action_handlers(cx: &mut Context<AppModel>) -> gpui::Div {
         .on_action(cx.listener(|model, _: &NextTab, _, cx| model.cycle_tab(true, cx)))
         .on_action(cx.listener(|model, _: &PreviousTab, _, cx| model.cycle_tab(false, cx)))
         .on_action(cx.listener(|model, action: &SelectTab, _, cx| {
-            if let Some(tab) = model.state.current_project().tabs.get(action.index) {
-                model.select_tab(tab.id, cx);
+            if let Some(tab) = model.navigation_tabs().get(action.index) {
+                model.select_tab(*tab, cx);
             }
         }))
         .on_action(
@@ -372,12 +372,10 @@ impl Render for AppModel {
         self.tab_drag
             .cancel_unavailable(self.state.current_project(), false);
         self.sync_pane_focus(cx);
+        self.sync_tab_sidebar(cx);
         let theme = &self.theme;
-        let sidebar_width = if self.appearance.sidebar_expanded {
-            220.0
-        } else {
-            44.0
-        };
+        let tab_focused = self.appearance.layout == muxy_app_core::settings::AppLayout::TabFocused;
+        let sidebar_width = self.sidebar_width();
         let content = super::splits::render(self, cx).unwrap_or_else(|| empty(self, cx));
         let error = self.error.as_ref().map(|error| {
             div()
@@ -390,6 +388,7 @@ impl Render for AppModel {
         });
         action_handlers(cx)
             .track_focus(&self.focus)
+            .on_modifiers_changed(cx.listener(|_, _, _, cx| cx.notify()))
             .relative()
             .flex()
             .size_full()
@@ -397,7 +396,9 @@ impl Render for AppModel {
             .text_color(theme.fg)
             .font_family(".SystemUIFont")
             .line_height(relative(1.2))
-            .child(sidebar::sidebar(self, cx))
+            .when(sidebar_width > 0.0, |body| {
+                body.child(sidebar::sidebar(self, window, cx))
+            })
             .child(
                 div()
                     .flex()
@@ -405,7 +406,11 @@ impl Render for AppModel {
                     .flex_1()
                     .min_w(px(0.0))
                     .min_h(px(0.0))
-                    .child(tab_strip::tab_strip(self, sidebar_width, window, cx))
+                    .child(if tab_focused {
+                        super::tab_sidebar::titlebar(self, sidebar_width, cx)
+                    } else {
+                        tab_strip::tab_strip(self, sidebar_width, window, cx)
+                    })
                     .child(div().h(px(1.0)).flex_none().bg(theme.border))
                     .children(error)
                     .child(
@@ -422,7 +427,11 @@ impl Render for AppModel {
             .child(
                 div()
                     .absolute()
-                    .top(px(if sidebar_width >= 153.0 { 0.0 } else { 33.0 }))
+                    .top(px(if sidebar_width >= titlebar::navigation_width(self) {
+                        0.0
+                    } else {
+                        33.0
+                    }))
                     .bottom_0()
                     .left(px(sidebar_width - 1.0))
                     .w(px(1.0))

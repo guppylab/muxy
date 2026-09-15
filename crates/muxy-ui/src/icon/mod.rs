@@ -114,7 +114,7 @@ impl Icon {
     pub fn from_symbol(symbol: &str) -> Option<Self> {
         Some(match symbol {
             "house.fill" | "house" => Self::House,
-            "folder" => Self::Folder,
+            "folder" | "folder.fill" => Self::Folder,
             "arrow.triangle.branch" => Self::GitBranch,
             "network" => Self::Network,
             "bell" => Self::Bell,

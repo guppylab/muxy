@@ -101,6 +101,13 @@ pub(super) const SETTINGS: &[Setting] = &[
         section: "Interface",
     },
     Setting {
+        id: "sidebar-collapsed-style",
+        label: "Collapsed sidebar style",
+        description: "Show project icons or hide the sidebar in Project Focused. Tab Focused always hides it when collapsed.",
+        category: Category::Appearance,
+        section: "Interface",
+    },
+    Setting {
         id: "font-family",
         label: "Font family",
         description: "The typeface used to render text in every terminal pane.",

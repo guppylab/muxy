@@ -1,5 +1,5 @@
 use muxy_core::shortcuts::ShortcutId;
-mod drag;
+pub(super) mod drag;
 
 pub(crate) use drag::TabDragState;
 
@@ -48,7 +48,7 @@ pub(crate) fn tab_strip(
     } else {
         control_width
     };
-    let leading = (153.0 - sidebar_width).max(0.0);
+    let leading = (titlebar::navigation_width(model) - sidebar_width).max(0.0);
     let available = (f32::from(window.viewport_size().width)
         - sidebar_width
         - leading
@@ -120,7 +120,7 @@ pub(crate) fn tab_strip(
         .into_any_element()
 }
 
-fn existing_terminals_button(
+pub(super) fn existing_terminals_button(
     count: usize,
     model: &AppModel,
     cx: &mut Context<AppModel>,
@@ -163,7 +163,7 @@ fn existing_terminals_button(
         .into_any_element()
 }
 
-fn settings_button(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
+pub(super) fn settings_button(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
     let theme = &model.theme;
     let tooltip = model
         .settings
@@ -199,7 +199,11 @@ fn settings_button(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         .into_any_element()
 }
 
-fn zoom_control(zoomed: bool, model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
+pub(super) fn zoom_control(
+    zoomed: bool,
+    model: &AppModel,
+    cx: &mut Context<AppModel>,
+) -> AnyElement {
     let theme = &model.theme;
     let label = if zoomed {
         "Restore Pane"

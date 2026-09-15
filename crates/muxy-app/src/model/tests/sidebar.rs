@@ -64,6 +64,24 @@ fn order(view: &Entity<AppModel>, cx: &VisualTestContext) -> Vec<ProjectId> {
 }
 
 #[gpui::test]
+fn name_sorting_disables_manual_project_dragging(cx: &mut TestAppContext) {
+    use muxy_app_core::settings::ProjectOrder;
+    let (state, ids) = projects();
+    let (mut boot, _requests) = stub_boot(state);
+    boot.settings.appearance.sidebar_expanded = true;
+    boot.settings.appearance.sidebar_project_order = ProjectOrder::Name;
+    let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
+    cx.run_until_parked();
+    let from = row(cx, 1).center();
+    let to = row(cx, 3).center();
+    start(cx, from);
+    pointer(cx, to, true);
+    assert!(!cx.update(|_, cx| cx.has_active_drag()));
+    release(cx, to);
+    assert_eq!(order(&view, cx), ids);
+}
+
+#[gpui::test]
 fn dragging_projects_reorders_in_place_and_persists_without_selecting(cx: &mut TestAppContext) {
     for wide in [true, false] {
         let (state, [home, first, second, third]) = projects();

@@ -23,7 +23,7 @@ struct TabDrag {
 }
 
 impl TabDragState {
-    pub(super) fn begin(&mut self, project: ProjectId, tab: TabId, origin: Point<Pixels>) {
+    pub(crate) fn begin(&mut self, project: ProjectId, tab: TabId, origin: Point<Pixels>) {
         self.gesture = Some(TabDrag {
             project,
             tab,
@@ -54,7 +54,7 @@ impl TabDragState {
     }
 }
 
-pub(super) type TabBounds = Rc<RefCell<Vec<(TabId, Bounds<Pixels>)>>>;
+pub(crate) type TabBounds = Rc<RefCell<Vec<(TabId, Bounds<Pixels>)>>>;
 
 impl AppModel {
     pub(crate) fn cancel_titlebar_drag(&mut self, cx: &mut Context<Self>) {
@@ -119,7 +119,7 @@ fn move_pointer(
     }
 }
 
-pub(super) fn track_pointer(bounds: TabBounds, cx: &Context<AppModel>) -> AnyElement {
+pub(crate) fn track_pointer(bounds: TabBounds, cx: &Context<AppModel>) -> AnyElement {
     let weak = cx.weak_entity();
     canvas(
         |_, _, _| (),

@@ -528,7 +528,7 @@ fn tabs_and_titlebar_controls_never_request_window_movement(cx: &mut TestAppCont
             "maximize-pane",
             "nav-back",
             "nav-forward",
-            "layout-menu",
+            "sidebar-toggle",
         ] {
             let from = cx.debug_bounds(selector).expect("control").center();
             press(cx, from);

@@ -5,7 +5,6 @@ use gpui::{
 use muxy_ui::components::IconGlyph;
 use muxy_ui::icon::Icon;
 
-use super::menu::{Command, Item};
 use crate::model::AppModel;
 
 #[derive(Clone, PartialEq, Debug, gpui::Action)]
@@ -61,49 +60,47 @@ pub(crate) fn navigation(
         .absolute()
         .top_0()
         .left_0()
-        .w(px(sidebar_width.max(153.0)))
+        .w(px(sidebar_width.max(navigation_width(model))))
         .h(m.title_bar_height())
         .flex()
         .items_center()
         .justify_end()
         .pr(m.spacing4())
         .gap(m.spacing1())
-        .bg(theme.bg)
+        .bg(if model.appearance.sidebar_expanded {
+            theme.raised()
+        } else {
+            theme.bg
+        })
         .border_r_1()
         .border_color(theme.border)
         .child(arrow(model, false, cx))
         .child(arrow(model, true, cx))
         .child(
             div()
-                .id("layout-menu")
-                .debug_selector(|| "layout-menu".into())
-                .group("layout-menu")
-                .flex()
-                .flex_none()
-                .items_center()
-                .justify_center()
-                .size(m.scaled(22.0))
-                .cursor_pointer()
+                .debug_selector(|| "sidebar-toggle".into())
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(cx.listener(|model, event: &gpui::ClickEvent, window, cx| {
-                    cx.stop_propagation();
-                    model.open_menu(
-                        vec![
-                            Item::action("Project Focused", Command::Dismiss).checked(),
-                            Item::action("Tab Focused", Command::Dismiss).disabled(),
-                            Item::action("Agents Focused", Command::Dismiss).disabled(),
-                        ],
-                        event.position(),
-                        window,
-                        cx,
-                    );
-                }))
                 .child(
-                    IconGlyph::new(Icon::Grid, m.font_body(), theme.fg_muted)
-                        .hover_in_group("layout-menu", theme.fg),
+                    muxy_ui::components::IconButton::new(
+                        "toggle-sidebar",
+                        Icon::PanelLeft,
+                        m.font_body(),
+                        m.scaled(22.0),
+                        theme.fg_muted,
+                        theme.fg,
+                    )
+                    .tooltip("Toggle Sidebar", theme.raised(), theme.fg, theme.border)
+                    .on_click(cx.listener(|model, _, window, cx| {
+                        cx.stop_propagation();
+                        model.toggle_sidebar(window, cx);
+                    })),
                 ),
         )
         .into_any_element()
+}
+
+pub(super) fn navigation_width(model: &AppModel) -> f32 {
+    f32::from(model.metrics.traffic_light_width() + model.metrics.navigation_arrows_width())
 }
 
 fn arrow(model: &AppModel, forward: bool, cx: &mut Context<AppModel>) -> AnyElement {

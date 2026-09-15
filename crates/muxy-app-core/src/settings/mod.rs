@@ -10,7 +10,7 @@ mod ghostty;
 mod keymap;
 mod quick_terminal;
 
-pub use appearance::Appearance;
+pub use appearance::{AppLayout, Appearance, ProjectOrder, SidebarCollapsedStyle};
 pub use chord::KeyChord;
 pub use config::{
     ClipboardSettings, CloseBehavior, NewPaneDirectory, OpenerSettings, PaneSettings,

@@ -1,6 +1,6 @@
 use super::{Category, Change, PickerKind, SettingsEvent, SettingsView};
 use gpui::{AnyElement, Context};
-use muxy_app_core::settings::CloseBehavior;
+use muxy_app_core::settings::{CloseBehavior, SidebarCollapsedStyle};
 use muxy_ui::controls::{self, Choice};
 
 pub(super) fn rows(
@@ -79,6 +79,9 @@ pub(super) fn rows(
             rows.push(pane.row(id, label, pane.toggle(id, value, change, cx)));
         }
     }
+    if category == Category::Appearance && pane.matches(category, "Collapsed sidebar style") {
+        rows.push(collapsed_sidebar_style(pane, cx));
+    }
     for (id, label) in [
         ("width", "Default window width"),
         ("height", "Default window height"),
@@ -88,4 +91,33 @@ pub(super) fn rows(
         }
     }
     rows
+}
+
+fn collapsed_sidebar_style(pane: &SettingsView, cx: &mut Context<SettingsView>) -> AnyElement {
+    let appearance = &pane.snapshot.settings.appearance;
+    pane.row(
+        "sidebar-collapsed-style",
+        "Collapsed sidebar style",
+        controls::segmented(
+            pane.style(),
+            "sidebar-collapsed-style",
+            &[
+                Choice::new("icons", "Icons"),
+                Choice::new("hidden", "Hidden"),
+            ],
+            match appearance.sidebar_collapsed_style {
+                SidebarCollapsedStyle::Icons => "icons",
+                SidebarCollapsedStyle::Hidden => "hidden",
+            },
+            cx.listener(|_, selected: &gpui::SharedString, _, cx| {
+                cx.emit(SettingsEvent::Change(Change::SidebarCollapsedStyle(
+                    if selected.as_ref() == "hidden" {
+                        SidebarCollapsedStyle::Hidden
+                    } else {
+                        SidebarCollapsedStyle::Icons
+                    },
+                )));
+            }),
+        ),
+    )
 }

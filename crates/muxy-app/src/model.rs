@@ -88,6 +88,7 @@ pub(crate) struct AppModel {
     pub(crate) focus_requested: bool,
     pub(crate) split_resize: crate::views::splits::SplitResizeState,
     pub(crate) tab_drag: crate::views::tab_strip::TabDragState,
+    pub(crate) tab_sidebar_selection: Option<(ProjectId, Option<TabId>)>,
     #[cfg(target_os = "macos")]
     pub(crate) window_drag: Option<muxy_ui::window_drag::WindowDrag>,
     pub(crate) theme_anchor: Option<gpui::Bounds<gpui::Pixels>>,
@@ -167,15 +168,24 @@ impl AppModel {
     }
 
     pub(crate) fn save_appearance(&mut self, cx: &mut Context<Self>) {
-        if let Err(error) = self
-            .appearance
-            .save(&self.path.with_file_name("settings.toml"))
-        {
-            self.appearance = self.settings.appearance.clone();
-            self.refresh_theme(cx);
-            self.fail(format!("Could not save appearance: {error}"), cx);
-        } else {
-            self.settings.appearance = self.appearance.clone();
+        match self.appearance.save_changes(
+            &self.settings.appearance,
+            &self.path.with_file_name("settings.toml"),
+        ) {
+            Ok(saved) => {
+                let theme_changed = self.appearance.dark_theme != saved.dark_theme
+                    || self.appearance.light_theme != saved.light_theme;
+                self.appearance = saved;
+                self.settings.appearance = self.appearance.clone();
+                if theme_changed {
+                    self.refresh_theme(cx);
+                }
+            }
+            Err(error) => {
+                self.appearance = self.settings.appearance.clone();
+                self.refresh_theme(cx);
+                self.fail(format!("Could not save appearance: {error}"), cx);
+            }
         }
         self.sync_preferences(cx);
     }
@@ -259,6 +269,7 @@ impl AppModel {
             error: theme_error,
             focus: cx.focus_handle(),
             appearance: boot.settings.appearance.clone(),
+            tab_sidebar_selection: None,
             settings: boot.settings,
             terminal: boot.terminal,
             server_preferences: preferences::ServerPreferences::default(),
@@ -445,9 +456,8 @@ impl AppModel {
 
     pub(crate) fn cycle_project(&mut self, forward: bool, cx: &mut Context<Self>) {
         let projects: Vec<_> = self
-            .state
-            .projects()
-            .iter()
+            .sidebar_projects()
+            .into_iter()
             .filter(|project| project.status() == ProjectStatus::Available)
             .map(|project| project.id)
             .collect();
@@ -551,7 +561,10 @@ impl AppModel {
         if self.active_tab() == Some(tab) {
             return;
         }
-        match self.state.select_tab(self.state.current_project().id, tab) {
+        let Some(project) = self.tab_project(tab).map(|project| project.id) else {
+            return;
+        };
+        match self.state.select_tab(project, tab) {
             Ok(()) => {
                 self.changed(cx);
                 self.focus_requested = true;
@@ -561,20 +574,18 @@ impl AppModel {
     }
 
     pub(crate) fn cycle_tab(&mut self, forward: bool, cx: &mut Context<Self>) {
-        let tabs = &self.state.current_project().tabs;
+        let tabs = self.navigation_tabs();
         if tabs.is_empty() {
             return;
         }
-        let current = tabs
-            .iter()
-            .position(|tab| Some(tab.id) == self.active_tab())
-            .unwrap_or(0);
-        let next = if forward {
-            (current + 1) % tabs.len()
-        } else {
-            (current + tabs.len() - 1) % tabs.len()
+        let current = tabs.iter().position(|tab| Some(*tab) == self.active_tab());
+        let next = match (current, forward) {
+            (Some(current), true) => (current + 1) % tabs.len(),
+            (Some(current), false) => (current + tabs.len() - 1) % tabs.len(),
+            (None, true) => 0,
+            (None, false) => tabs.len() - 1,
         };
-        self.select_tab(tabs[next].id, cx);
+        self.select_tab(tabs[next], cx);
     }
 
     pub(crate) fn move_tab(&mut self, from: TabId, to: TabId, cx: &mut Context<Self>) {
@@ -1854,6 +1865,7 @@ mod tests {
     mod session_ownership;
     mod sidebar;
     mod splits;
+    mod tab_sidebar;
     mod tab_strip;
     mod tui;
     mod updates;

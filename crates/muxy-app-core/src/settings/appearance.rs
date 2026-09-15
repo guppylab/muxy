@@ -7,22 +7,58 @@ use serde::{Deserialize, Serialize};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AppLayout {
+    #[default]
+    ProjectFocused,
+    TabFocused,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectOrder {
+    #[default]
+    Manual,
+    Name,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SidebarCollapsedStyle {
+    #[default]
+    Icons,
+    Hidden,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Appearance {
+    pub layout: AppLayout,
     pub dark_theme: String,
     pub light_theme: String,
     pub sidebar_expanded: bool,
+    pub sidebar_collapsed_style: SidebarCollapsedStyle,
     pub status_bar_visible: bool,
+    pub tab_focused_expanded: std::collections::BTreeMap<crate::ProjectId, bool>,
+    #[serde(rename = "tab_focused_focus")]
+    pub sidebar_focus: bool,
+    #[serde(rename = "tab_focused_project_order")]
+    pub sidebar_project_order: ProjectOrder,
 }
 
 impl Default for Appearance {
     fn default() -> Self {
         Self {
+            layout: AppLayout::default(),
             dark_theme: "Muxy".into(),
             light_theme: "Muxy Light".into(),
             sidebar_expanded: false,
+            sidebar_collapsed_style: SidebarCollapsedStyle::default(),
             status_bar_visible: true,
+            tab_focused_expanded: std::collections::BTreeMap::new(),
+            sidebar_focus: false,
+            sidebar_project_order: ProjectOrder::default(),
         }
     }
 }
@@ -38,6 +74,42 @@ impl Appearance {
 
     pub fn save(&self, path: &Path) -> Result<()> {
         save_section(path, "appearance", self)
+    }
+
+    pub fn save_changes(&self, previous: &Self, path: &Path) -> Result<Self> {
+        let current = toml::Value::try_from(self)?;
+        let previous_values = toml::Value::try_from(previous)?;
+        let mut changes = toml::Table::new();
+        if let Some(current) = current.as_table() {
+            for (key, value) in current {
+                if key != "tab_focused_expanded" && previous_values.get(key) != Some(value) {
+                    changes.insert(key.clone(), value.clone());
+                }
+            }
+        }
+        let mut document = read_document(path)?;
+        let target = document.entry("appearance").or_insert(previous_values);
+        let target = target
+            .as_table_mut()
+            .ok_or_else(|| io::Error::other("appearance must be a table"))?;
+        target.extend(changes);
+        let mut saved: Self = toml::Value::Table(target.clone()).try_into()?;
+        for (project, expanded) in &self.tab_focused_expanded {
+            if previous.tab_focused_expanded.get(project) != Some(expanded) {
+                saved.tab_focused_expanded.insert(*project, *expanded);
+            }
+        }
+        for project in previous.tab_focused_expanded.keys() {
+            if !self.tab_focused_expanded.contains_key(project) {
+                saved.tab_focused_expanded.remove(project);
+            }
+        }
+        target.insert(
+            "tab_focused_expanded".into(),
+            toml::Value::try_from(&saved.tab_focused_expanded)?,
+        );
+        write_document(path, &document)?;
+        Ok(saved)
     }
 }
 
@@ -104,6 +176,32 @@ fn read_document(path: &Path) -> Result<toml::Table> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn independent_project_expansion_changes_preserve_the_latest_saved_choices() -> Result<()> {
+        let first = crate::ProjectId::new();
+        let second = crate::ProjectId::new();
+        let directory = std::env::temp_dir().join(format!("muxy-appearance-projects-{first}"));
+        let path = directory.join("settings.toml");
+        let initial = Appearance {
+            tab_focused_expanded: [(first, true), (second, true)].into(),
+            ..Appearance::default()
+        };
+        initial.save(&path)?;
+        let mut one = initial.clone();
+        one.tab_focused_expanded.insert(first, false);
+        one.save_changes(&initial, &path)?;
+        let mut two = initial.clone();
+        two.tab_focused_expanded.insert(second, false);
+        let saved = two.save_changes(&initial, &path)?;
+        assert_eq!(
+            saved.tab_focused_expanded,
+            [(first, false), (second, false)].into()
+        );
+        assert_eq!(Appearance::load(&path)?, saved);
+        fs::remove_dir_all(directory)?;
+        Ok(())
+    }
 
     #[test]
     fn updating_appearance_preserves_other_settings() -> Result<()> {

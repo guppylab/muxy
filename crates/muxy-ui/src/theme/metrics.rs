@@ -67,7 +67,7 @@ impl Metrics {
         radius_xl = 10.0;
 
         sidebar_collapsed_width = 44.0;
-        sidebar_expanded_width = 220.0;
+        sidebar_expanded_width = 270.0;
         sidebar_expanded_min_width = 180.0;
         sidebar_expanded_max_width = 480.0;
 

@@ -62,6 +62,7 @@ pub(crate) enum Change {
     QuickTerminal(muxy_app_core::settings::QuickTerminalSettings),
     Theme(bool, String),
     Sidebar(bool),
+    SidebarCollapsedStyle(muxy_app_core::settings::SidebarCollapsedStyle),
     StatusBar(bool),
     ConfirmProcess(bool),
     CloseBehavior(muxy_app_core::settings::CloseBehavior),

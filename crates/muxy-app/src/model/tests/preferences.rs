@@ -9,6 +9,31 @@ use crate::views::settings::{Change, SettingsEvent};
 use muxy_core::shortcuts::ShortcutSettings;
 
 #[gpui::test]
+fn collapsed_sidebar_style_control_saves_without_expanding_the_sidebar(cx: &mut TestAppContext) {
+    use muxy_app_core::settings::{Settings, SidebarCollapsedStyle};
+    let (boot, _requests) = stub_boot(AppState::bootstrap().expect("state"));
+    let (view, cx) = settings_window(boot, cx);
+    click_preference(cx, "settings-category-Appearance");
+    for (choice, style, width) in [
+        ("hidden", SidebarCollapsedStyle::Hidden, 0.0),
+        ("icons", SidebarCollapsedStyle::Icons, 44.0),
+    ] {
+        click_preference(
+            cx,
+            format!("settings-segment-sidebar-collapsed-style-{choice}").leak(),
+        );
+        view.read_with(cx, |model, _| {
+            assert_eq!(model.appearance.sidebar_collapsed_style, style);
+            assert!(!model.appearance.sidebar_expanded);
+            assert_eq!(px(model.sidebar_width()), px(width));
+            let saved =
+                Settings::load(&model.path.with_file_name("settings.toml")).expect("settings");
+            assert_eq!(saved.appearance.sidebar_collapsed_style, style);
+        });
+    }
+}
+
+#[gpui::test]
 fn close_behavior_control_saves_and_rejects_failed_writes(cx: &mut TestAppContext) {
     use muxy_app_core::settings::CloseBehavior;
     let (boot, _requests) = stub_boot(AppState::bootstrap().expect("state"));

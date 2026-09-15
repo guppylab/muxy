@@ -228,15 +228,19 @@ impl AppModel {
                 } else {
                     settings.appearance.light_theme = name;
                 }
-                settings.appearance.save(&path)?;
+                settings.appearance = settings.appearance.save_changes(&self.appearance, &path)?;
             }
             Change::Sidebar(value) => {
                 settings.appearance.sidebar_expanded = value;
-                settings.appearance.save(&path)?;
+                settings.appearance = settings.appearance.save_changes(&self.appearance, &path)?;
+            }
+            Change::SidebarCollapsedStyle(style) => {
+                settings.appearance.sidebar_collapsed_style = style;
+                settings.appearance = settings.appearance.save_changes(&self.appearance, &path)?;
             }
             Change::StatusBar(value) => {
                 settings.appearance.status_bar_visible = value;
-                settings.appearance.save(&path)?;
+                settings.appearance = settings.appearance.save_changes(&self.appearance, &path)?;
             }
             Change::ConfirmProcess(value) => {
                 settings.window.confirm_running_process = value;
@@ -274,6 +278,9 @@ impl AppModel {
             }
             _ => return Err("Unknown app setting".into()),
         }
+        let theme_changed = theme_changed
+            || self.appearance.dark_theme != settings.appearance.dark_theme
+            || self.appearance.light_theme != settings.appearance.light_theme;
         self.appearance = settings.appearance.clone();
         self.settings = settings;
         if theme_changed {
@@ -473,6 +480,7 @@ fn change_id(change: &Change) -> &str {
         Change::Theme(false, _) => "light-theme",
         Change::Theme(true, _) => "dark-theme",
         Change::Sidebar(_) => "sidebar",
+        Change::SidebarCollapsedStyle(_) => "sidebar-collapsed-style",
         Change::StatusBar(_) => "status-bar",
         Change::ConfirmProcess(_) => "confirm-process",
         Change::CloseBehavior(_) => "close-behavior",

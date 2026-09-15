@@ -5,60 +5,87 @@ use gpui::prelude::FluentBuilder;
 use gpui::{
     AnyElement, AppContext, Bounds, Context, DragMoveEvent, Empty, FontWeight, InteractiveElement,
     IntoElement, ParentElement, Pixels, Point, SharedString, StatefulInteractiveElement, Styled,
-    div, px,
+    Window, div, px,
 };
-use muxy_app_core::{Project, ProjectId, ProjectStatus};
+use muxy_app_core::{
+    Project, ProjectId, ProjectStatus,
+    settings::{AppLayout, ProjectOrder, SidebarCollapsedStyle},
+};
+
+use super::{
+    menu::{Command, Item},
+    tab_sidebar,
+};
 use muxy_ui::components::{IconButton, IconGlyph, SymbolGlyph};
 use muxy_ui::icon::Icon;
 use muxy_ui::theme::{contrasting_foreground, parse_hex};
 
 use crate::model::AppModel;
 
-pub(crate) fn sidebar(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
+pub(crate) fn sidebar(model: &AppModel, window: &Window, cx: &mut Context<AppModel>) -> AnyElement {
     let m = model.metrics;
-    let theme = &model.theme;
-    let wide = model.appearance.sidebar_expanded;
     let header = header(model, cx);
-    let rows = project_list(model, cx);
+    let contents = match model.appearance.layout {
+        AppLayout::ProjectFocused => project_list(model, cx),
+        AppLayout::TabFocused => tab_sidebar::contents(model, window, cx),
+    };
     div()
+        .debug_selector(|| "workspace-sidebar".into())
         .flex()
         .flex_col()
         .flex_none()
-        .w(if wide {
-            m.sidebar_expanded_width()
-        } else {
-            m.sidebar_collapsed_width()
-        })
+        .w(px(model.sidebar_width()))
         .h_full()
         .min_h(px(0.0))
-        .bg(theme.bg)
+        .bg(model.theme.raised())
         .child(div().h(m.title_bar_height()).flex_none())
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .flex_1()
-                .min_h(px(0.0))
-                .gap(m.spacing3())
-                .child(header)
-                .child(rows),
-        )
+        .child(header)
+        .child(contents)
         .child(footer(model, cx))
         .into_any_element()
 }
 
-fn footer(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
+impl AppModel {
+    pub(crate) fn sidebar_width(&self) -> f32 {
+        if self.appearance.sidebar_expanded {
+            f32::from(self.metrics.sidebar_expanded_width())
+        } else if self.appearance.layout == AppLayout::ProjectFocused
+            && self.appearance.sidebar_collapsed_style == SidebarCollapsedStyle::Icons
+        {
+            f32::from(self.metrics.sidebar_collapsed_width())
+        } else {
+            0.0
+        }
+    }
+
+    pub(crate) fn sidebar_projects(&self) -> Vec<&Project> {
+        let projects = self.state.projects();
+        let active = self.state.current_project();
+        let focused = active.parent_id.unwrap_or(active.id);
+        let mut parents: Vec<_> = projects
+            .iter()
+            .filter(|project| project.parent_id.is_none())
+            .collect();
+        if self.appearance.sidebar_project_order == ProjectOrder::Name {
+            parents.sort_by_cached_key(|project| (!project.home, project.name.to_lowercase()));
+        }
+        parents
+            .into_iter()
+            .filter(|project| !self.appearance.sidebar_focus || project.id == focused)
+            .flat_map(|parent| {
+                std::iter::once(parent).chain(projects.iter().filter(move |child| {
+                    child.parent_id == Some(parent.id)
+                        && (self.appearance.layout == AppLayout::ProjectFocused
+                            || self.project_expanded(parent.id))
+                }))
+            })
+            .collect()
+    }
+}
+
+pub(super) fn footer(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
     let m = model.metrics;
     let theme = &model.theme;
-    let toggle = IconButton::new(
-        "toggle-sidebar",
-        Icon::PanelLeft,
-        m.scaled(13.0),
-        m.control_medium(),
-        theme.fg_muted,
-        theme.fg,
-    )
-    .on_click(cx.listener(|model, _, window, cx| model.toggle_sidebar(window, cx)));
     let view = cx.weak_entity();
     let notifications = div()
         .flex()
@@ -114,32 +141,154 @@ fn footer(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
     if model.appearance.sidebar_expanded {
         footer
             .px(m.spacing5())
-            .child(toggle)
-            .child(div().flex_grow())
             .child(notifications)
+            .child(div().flex_grow())
             .child(themes)
             .into_any_element()
     } else {
         footer
             .flex_col()
-            .child(notifications)
             .child(themes)
-            .child(toggle)
+            .child(notifications)
             .into_any_element()
     }
 }
 
-fn header(model: &AppModel, _: &mut Context<AppModel>) -> AnyElement {
+fn header(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
     if !model.appearance.sidebar_expanded {
         return div().into_any_element();
     }
+    let m = model.metrics;
+    let theme = &model.theme;
     div()
-        .px(model.metrics.spacing6())
-        .pt(model.metrics.spacing2())
-        .text_size(model.metrics.font_caption())
-        .font_weight(FontWeight::SEMIBOLD)
-        .text_color(model.theme.fg_muted)
-        .child("All Projects")
+        .flex()
+        .items_center()
+        .gap(m.spacing2())
+        .px(m.spacing3())
+        .pt(m.spacing2())
+        .child(
+            div()
+                .id("sidebar-project-filter")
+                .debug_selector(|| "sidebar-project-filter".into())
+                .flex()
+                .flex_1()
+                .min_w(px(0.0))
+                .items_center()
+                .justify_between()
+                .px(m.spacing4())
+                .h(m.control_medium())
+                .rounded(m.radius_md())
+                .bg(theme.surface)
+                .cursor_pointer()
+                .hover(|style| style.bg(theme.hover))
+                .text_size(m.font_caption())
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(theme.fg_muted)
+                .on_click(cx.listener(|model, event: &gpui::ClickEvent, window, cx| {
+                    model.open_menu(
+                        vec![
+                            Item::action("All Projects", Command::FocusProject(false))
+                                .checked_if(!model.appearance.sidebar_focus),
+                            Item::action("Focus Current Project", Command::FocusProject(true))
+                                .checked_if(model.appearance.sidebar_focus),
+                        ],
+                        event.position(),
+                        window,
+                        cx,
+                    );
+                }))
+                .child(if model.appearance.sidebar_focus {
+                    "Focused Project"
+                } else {
+                    "All Projects"
+                })
+                .child(IconGlyph::new(
+                    Icon::ChevronDown,
+                    m.font_caption(),
+                    theme.fg_muted,
+                )),
+        )
+        .child(
+            div()
+                .id("sidebar-project-sort")
+                .debug_selector(|| "sidebar-project-sort".into())
+                .flex()
+                .items_center()
+                .justify_center()
+                .size(m.control_medium())
+                .rounded(m.radius_md())
+                .bg(theme.surface)
+                .cursor_pointer()
+                .hover(|style| style.bg(theme.hover))
+                .on_click(cx.listener(|model, event: &gpui::ClickEvent, window, cx| {
+                    model.open_menu(
+                        vec![
+                            Item::action(
+                                "Manual Order",
+                                Command::SortProjects(ProjectOrder::Manual),
+                            )
+                            .checked_if(
+                                model.appearance.sidebar_project_order == ProjectOrder::Manual,
+                            ),
+                            Item::action("Name", Command::SortProjects(ProjectOrder::Name))
+                                .checked_if(
+                                    model.appearance.sidebar_project_order == ProjectOrder::Name,
+                                ),
+                        ],
+                        event.position(),
+                        window,
+                        cx,
+                    );
+                }))
+                .child(IconGlyph::new(
+                    Icon::ArrowUpDown,
+                    m.font_body(),
+                    theme.fg_muted,
+                )),
+        )
+        .child(layout_selector(model, cx))
+        .into_any_element()
+}
+
+fn layout_selector(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
+    let m = model.metrics;
+    let theme = &model.theme;
+    div()
+        .id("layout-menu")
+        .debug_selector(|| "layout-menu".into())
+        .group("layout-menu")
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .size(m.control_medium())
+        .rounded(m.radius_md())
+        .bg(theme.surface)
+        .hover(|style| style.bg(theme.hover))
+        .cursor_pointer()
+        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(|model, event: &gpui::ClickEvent, window, cx| {
+            cx.stop_propagation();
+            model.open_menu(
+                vec![
+                    Item::action(
+                        "Project Focused",
+                        Command::Layout(AppLayout::ProjectFocused),
+                    )
+                    .checked_if(model.appearance.layout == AppLayout::ProjectFocused),
+                    Item::action("Tab Focused", Command::Layout(AppLayout::TabFocused))
+                        .checked_if(model.appearance.layout == AppLayout::TabFocused),
+                    Item::action("Agents Focused", Command::Dismiss).disabled(),
+                ],
+                event.position(),
+                window,
+                cx,
+            );
+        }))
+        .child(
+            IconGlyph::new(Icon::Grid, m.font_body(), theme.fg_muted)
+                .hover_in_group("layout-menu", theme.fg),
+        )
         .into_any_element()
 }
 
@@ -150,7 +299,10 @@ struct DraggedProject {
 
 impl DraggedProject {
     fn move_to(&self, target: Option<ProjectId>, model: &mut AppModel, cx: &mut Context<AppModel>) {
-        if model.overlay.is_some() || model.close_prompt.is_some() {
+        if model.overlay.is_some()
+            || model.close_prompt.is_some()
+            || model.appearance.sidebar_project_order != ProjectOrder::Manual
+        {
             return;
         }
         let target = target.filter(|target| *target != self.id);
@@ -179,15 +331,7 @@ fn project_list(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
     let targets = Rc::new(RefCell::new(ProjectRows::default()));
     let measured = targets.clone();
     let moving = targets.clone();
-    let all = model.state.projects();
-    let projects: Vec<_> = all
-        .iter()
-        .filter(|p| p.parent_id.is_none())
-        .flat_map(|parent| {
-            std::iter::once(parent)
-                .chain(all.iter().filter(move |p| p.parent_id == Some(parent.id)))
-        })
-        .collect();
+    let projects = model.sidebar_projects();
     let ids: Vec<_> = projects
         .iter()
         .map(|project| {
@@ -229,10 +373,10 @@ fn project_list(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
             div()
                 .flex()
                 .flex_col()
-                .gap(m.spacing3())
                 .px(if wide { m.spacing3() } else { m.spacing4() })
-                .pt(if wide { px(0.0) } else { m.spacing2() })
-                .pb(m.spacing2())
+                .when(!wide, |list| list.gap(m.spacing3()))
+                .pt(if wide { m.spacing5() } else { m.spacing2() })
+                .pb(m.spacing3())
                 .when(!wide, Styled::items_center)
                 .children(
                     projects
@@ -240,7 +384,9 @@ fn project_list(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
                         .enumerate()
                         .map(|(index, project)| project_row(project, index, model, cx)),
                 )
-                .child(add_project_button(model, cx))
+                .when(!model.appearance.sidebar_focus, |list| {
+                    list.child(add_project_button(model, cx))
+                })
                 .on_children_prepainted(move |bounds, _, _| {
                     measured.borrow_mut().0 = ids
                         .iter()
@@ -282,11 +428,13 @@ fn project_row(
             row.ml(m.spacing5())
         })
         .when(wide, |row| {
-            row.p(m.spacing2())
+            row.px(m.spacing2())
+                .my(m.spacing1())
+                .h(m.control_large())
                 .gap(m.spacing4())
                 .rounded(m.radius_lg())
                 .when(active, |row| row.bg(theme.surface))
-                .hover(|style| style.bg(theme.hover))
+                .hover(|style| style.bg(if active { theme.surface } else { theme.hover }))
         })
         .when(!wide, |row| row.justify_center().size(m.scaled(34.0)))
         .when(missing, |row| row.opacity(0.5))
@@ -311,7 +459,10 @@ fn project_row(
             }),
         )
         .when(
-            !project.home && project.parent_id.is_none() && !missing,
+            !project.home
+                && project.parent_id.is_none()
+                && !missing
+                && model.appearance.sidebar_project_order == ProjectOrder::Manual,
             |row| row.on_drag(drag, |_, _, _, cx| cx.new(|_| Empty)),
         )
         .child(tile)
@@ -321,7 +472,7 @@ fn project_row(
                     .flex_1()
                     .min_w(px(0.0))
                     .truncate()
-                    .text_size(m.font_emphasis())
+                    .text_size(m.font_headline())
                     .font_weight(if active {
                         FontWeight::SEMIBOLD
                     } else {
@@ -351,7 +502,7 @@ fn project_row(
         .into_any_element()
 }
 
-fn add_project_button(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
+pub(super) fn add_project_button(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
     let m = model.metrics;
     let theme = &model.theme;
     let wide = model.appearance.sidebar_expanded;
