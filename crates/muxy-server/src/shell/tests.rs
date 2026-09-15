@@ -439,3 +439,60 @@ fn bash_preserves_the_exit_status_seen_by_the_user_prompt_command() -> TestResul
     assert!(String::from_utf8_lossy(&output).contains("status:1"));
     Ok(())
 }
+
+#[test]
+fn zsh_consumes_alt_vertical_arrows_and_preserves_custom_bindings() -> TestResult {
+    for startup in [
+        "bindkey -e",
+        "bindkey -v",
+        "bindkey -e; bindkey '^[[1;3A' backward-char",
+    ] {
+        let mut shell = Shell::start("/bin/zsh", false, true, startup)?;
+        shell.until(b"\x1b]133;B\x07")?;
+        shell
+            .pty
+            .write(b"printf 'RESULT:<%s>\\n' ab\x1b[1;3A\x1b[1;3BX\n")?;
+        let output = shell.until(b"\x1b]133;B\x07")?;
+        let expected = if startup.contains("backward-char") {
+            "RESULT:<aXb>"
+        } else {
+            "RESULT:<abX>"
+        };
+        assert!(
+            String::from_utf8_lossy(&output).contains(expected),
+            "{startup}: {}",
+            String::from_utf8_lossy(&output)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn bash_integration_consumes_alt_arrows_without_replacing_user_bindings() -> TestResult {
+    for custom in [false, true] {
+        let binding = if custom {
+            r#"bind '"\e[1;3A": backward-char'"#
+        } else {
+            ":"
+        };
+        let startup =
+            format!("set -o emacs; {binding}; source \"$MUXY_SHELL_INTEGRATION_DIR/muxy.bash\"");
+        let mut shell = Shell::start("/bin/bash", false, true, &startup)?;
+        shell.until(b"\x1b]133;B\x07")?;
+        shell
+            .pty
+            .write(b"printf 'RESULT:<%s>\\n' ab\x1b[1;3A\x1b[1;3BX\n")?;
+        let output = shell.until(b"\x1b]133;B\x07")?;
+        let expected = if custom {
+            "RESULT:<aXb>"
+        } else {
+            "RESULT:<abX>"
+        };
+        assert!(
+            String::from_utf8_lossy(&output).contains(expected),
+            "{}",
+            String::from_utf8_lossy(&output)
+        );
+    }
+    Ok(())
+}

@@ -10,19 +10,42 @@ pub(super) struct Frame {
     pub(super) grid: Bounds<Pixels>,
     pub(super) viewport: Size,
     cell: gpui::Size<Pixels>,
+    color: muxy_app_core::settings::PaddingColor,
 }
 
 impl Frame {
-    pub(super) fn new(outer: Bounds<Pixels>, cell: gpui::Size<Pixels>) -> Self {
-        let content = Bounds::new(
-            outer.origin + point(px(2.0), px(2.0)),
+    #[cfg(test)]
+    fn new(outer: Bounds<Pixels>, cell: gpui::Size<Pixels>) -> Self {
+        Self::configured(
+            outer,
+            cell,
+            &muxy_app_core::settings::TerminalOptions::default(),
+        )
+    }
+
+    pub(super) fn configured(
+        outer: Bounds<Pixels>,
+        cell: gpui::Size<Pixels>,
+        options: &muxy_app_core::settings::TerminalOptions,
+    ) -> Self {
+        let mut content = Bounds::new(
+            outer.origin + point(px(options.padding_x[0]), px(options.padding_y[0])),
             size(
-                (outer.size.width - px(4.0)).max(px(0.0)),
-                (outer.size.height - px(4.0)).max(px(0.0)),
+                (outer.size.width - px(options.padding_x.iter().sum())).max(px(0.0)),
+                (outer.size.height - px(options.padding_y.iter().sum())).max(px(0.0)),
             ),
         );
         let viewport = viewport_size(content.size, cell);
+        if options.padding_balance {
+            let remainder = size(
+                (content.size.width - cell.width * f32::from(viewport.cols)).max(px(0.0)),
+                (content.size.height - cell.height * f32::from(viewport.rows)).max(px(0.0)),
+            );
+            content.origin += point(remainder.width / 2.0, remainder.height / 2.0);
+            content.size = content.size - remainder;
+        }
         Self {
+            color: options.padding_color,
             outer,
             content,
             grid: Bounds::new(
@@ -40,9 +63,12 @@ impl Frame {
     pub(super) fn backgrounds(
         self,
         view: &TerminalPane,
-        palette: Palette,
+        palette: &Palette,
     ) -> Vec<(Bounds<Pixels>, Hsla)> {
         let mut quads = Vec::new();
+        if self.color == muxy_app_core::settings::PaddingColor::Background {
+            return quads;
+        }
         let Some(grid) = view.displayed_grid() else {
             return quads;
         };
@@ -61,7 +87,7 @@ impl Frame {
         runs: &[Run],
         row: u16,
         remainder: f32,
-        palette: Palette,
+        palette: &Palette,
         quads: &mut Vec<(Bounds<Pixels>, Hsla)>,
     ) {
         let top = self.grid.top() + self.cell.height * f32::from(row) + px(remainder);
@@ -70,7 +96,8 @@ impl Frame {
             return;
         }
         let vertical = (top <= self.grid.top() || bottom >= self.grid.bottom())
-            && extend_vertical(runs, self.viewport.cols, palette);
+            && (self.color == muxy_app_core::settings::PaddingColor::ExtendAlways
+                || extend_vertical(runs, self.viewport.cols, palette));
         let mut column = 0_u16;
         for run in runs {
             let end = column.saturating_add(run.width).min(self.viewport.cols);
@@ -139,7 +166,7 @@ fn rect(left: Pixels, top: Pixels, right: Pixels, bottom: Pixels) -> Bounds<Pixe
     Bounds::new(point(left, top), size(right - left, bottom - top))
 }
 
-fn extend_vertical(runs: &[Run], cols: u16, palette: Palette) -> bool {
+fn extend_vertical(runs: &[Run], cols: u16, palette: &Palette) -> bool {
     let mut width = 0_u16;
     for run in runs {
         if run.width == 0 {
@@ -178,6 +205,7 @@ mod tests {
 
     fn frame() -> Frame {
         Frame {
+            color: muxy_app_core::settings::PaddingColor::default(),
             outer: rect(px(10.0), px(20.0), px(41.0), px(63.0)),
             content: rect(px(12.0), px(22.0), px(39.0), px(61.0)),
             grid: rect(px(12.0), px(22.0), px(36.0), px(54.0)),
@@ -196,6 +224,24 @@ mod tests {
         let color = hits.next().map(|(_, color)| *color);
         assert!(hits.next().is_none(), "padding quads must not overlap");
         color
+    }
+
+    #[test]
+    fn configured_padding_preserves_asymmetry_and_balances_unused_cells() {
+        let outer = Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(80.0)));
+        let cell = size(px(8.0), px(16.0));
+        let mut options = muxy_app_core::settings::TerminalOptions {
+            padding_x: [4.0, 8.0],
+            padding_y: [3.0, 5.0],
+            ..Default::default()
+        };
+        let frame = Frame::configured(outer, cell, &options);
+        assert_eq!(frame.grid.origin, point(px(4.0), px(3.0)));
+        assert_eq!(frame.viewport, Size { cols: 11, rows: 4 });
+        options.padding_balance = true;
+        let frame = Frame::configured(outer, cell, &options);
+        assert_eq!(frame.grid.origin, point(px(4.0), px(7.0)));
+        assert_eq!(frame.content.size, frame.grid.size);
     }
 
     #[test]
@@ -228,14 +274,14 @@ mod tests {
             &[run("x", 1, red), run("  ", 2, blue)],
             0,
             0.0,
-            Palette::new(true),
+            &Palette::new(true),
             &mut quads,
         );
         frame.extend_row(
             &[run("   ", 3, blue)],
             1,
             0.0,
-            Palette::new(true),
+            &Palette::new(true),
             &mut quads,
         );
         for (x, y, color) in [
@@ -269,14 +315,14 @@ mod tests {
             vec![run("\u{e0b0}", 1, red), run("  ", 2, red)],
             vec![run("\u{e0d4}", 1, red), run("  ", 2, red)],
         ] {
-            assert!(!extend_vertical(&runs, 3, palette));
+            assert!(!extend_vertical(&runs, 3, &palette));
             let mut quads = Vec::new();
-            frame().extend_row(&runs, 0, 0.0, palette, &mut quads);
+            frame().extend_row(&runs, 0, 0.0, &palette, &mut quads);
             assert_eq!(color_at(&quads, 10.5, 30.0), Some(rgb(0xff_00_00).into()));
             assert_eq!(color_at(&quads, 10.5, 20.5), None);
             assert_eq!(color_at(&quads, 20.5, 20.5), None);
         }
-        assert!(extend_vertical(&[run("   ", 3, red)], 3, palette));
+        assert!(extend_vertical(&[run("   ", 3, red)], 3, &palette));
     }
 
     #[test]
@@ -299,7 +345,7 @@ mod tests {
                 },
             };
             let mut quads = Vec::new();
-            frame().extend_row(&[run], 0, 0.0, palette, &mut quads);
+            frame().extend_row(&[run], 0, 0.0, &palette, &mut quads);
             for (x, y) in [(10.5, 30.0), (40.5, 30.0), (20.5, 20.5)] {
                 assert_eq!(color_at(&quads, x, y), Some(rgb(expected).into()));
             }
@@ -316,7 +362,7 @@ mod tests {
             (1, Color::Rgb(0, 255, 0)),
             (2, Color::Rgb(0, 0, 255)),
         ] {
-            frame.extend_row(&[run("   ", 3, color)], row, -4.0, palette, &mut quads);
+            frame.extend_row(&[run("   ", 3, color)], row, -4.0, &palette, &mut quads);
         }
         for (y, color) in [
             (20.5, 0xff_00_00),

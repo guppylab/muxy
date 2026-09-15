@@ -17,6 +17,9 @@ pub use config::{
     ProjectSettings, Settings, WindowSettings,
 };
 pub use error::{Error, Result};
-pub use ghostty::{CellHeight, FontMap, FontOptions, TerminalSettings};
+pub use ghostty::{
+    CellHeight, FontMap, FontOptions, OptionAsAlt, PaddingColor, TerminalAction, TerminalBindings,
+    TerminalColor, TerminalOptions, TerminalSettings,
+};
 pub use keymap::Keymap;
 pub use quick_terminal::QuickTerminalSettings;

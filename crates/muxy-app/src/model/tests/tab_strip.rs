@@ -68,6 +68,47 @@ fn strip_background(cx: &mut VisualTestContext) -> gpui::Point<gpui::Pixels> {
 }
 
 #[gpui::test]
+fn configuration_diagnostics_stay_below_the_titlebar(cx: &mut TestAppContext) {
+    use muxy_app_core::settings::AppLayout;
+
+    let state = AppState::bootstrap().expect("state");
+    let (observer, cx) = observe_window_zoom(state, cx);
+    let model = observer.read_with(cx, |observer, _| observer.model.clone());
+    for (layout, selector) in [
+        (AppLayout::ProjectFocused, "tab-strip"),
+        (AppLayout::TabFocused, "project-titlebar"),
+    ] {
+        for expanded in [true, false] {
+            model.update(cx, |model, cx| {
+                model.appearance.layout = layout;
+                model.appearance.sidebar_expanded = expanded;
+                model.configuration_error = None;
+                model.error = None;
+                cx.notify();
+            });
+            cx.run_until_parked();
+            let titlebar = cx.debug_bounds(selector).expect("titlebar");
+            let navigation = cx.debug_bounds("nav-back").expect("navigation");
+            for message in ["Unknown setting".to_owned(), "Unknown setting\n".repeat(20)] {
+                model.update(cx, |model, cx| {
+                    model.configuration_error = Some(message);
+                    model.error = Some("Server unavailable".into());
+                    cx.notify();
+                });
+                cx.run_until_parked();
+                assert_eq!(cx.debug_bounds(selector), Some(titlebar));
+                assert_eq!(cx.debug_bounds("nav-back"), Some(navigation));
+                let diagnostics = cx
+                    .debug_bounds("terminal-configuration-diagnostics")
+                    .expect("diagnostics");
+                assert!(diagnostics.top() >= titlebar.bottom());
+                assert!(diagnostics.size.height <= px(100.0));
+            }
+        }
+    }
+}
+
+#[gpui::test]
 fn tab_strip_background_double_click_requests_native_zoom_each_time(cx: &mut TestAppContext) {
     for has_tabs in [false, true] {
         let mut state = AppState::bootstrap().expect("state");

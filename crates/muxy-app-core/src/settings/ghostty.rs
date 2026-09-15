@@ -5,8 +5,12 @@ use std::path::{Path, PathBuf};
 
 use crate::settings::{Error, Result, config::read_or_create};
 
+mod bindings;
 mod fonts;
+mod options;
+pub use bindings::{TerminalAction, TerminalBindings};
 pub use fonts::{FontMap, FontOptions};
+pub use options::{PaddingColor, TerminalColor, TerminalOptions};
 
 const DEFAULT_CONFIG: &str = "font-family = Menlo\nfont-size = 13\nadjust-cell-height = 0\n";
 
@@ -16,6 +20,58 @@ pub struct TerminalSettings {
     pub font_size: f32,
     pub cell_height: CellHeight,
     pub font: FontOptions,
+    pub macos_option_as_alt: OptionAsAlt,
+    pub options: TerminalOptions,
+    pub keybindings: TerminalBindings,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum OptionAsAlt {
+    #[default]
+    True,
+    False,
+    Left,
+    Right,
+}
+
+impl OptionAsAlt {
+    pub fn enabled(self, left: bool, right: bool) -> bool {
+        match self {
+            Self::True => true,
+            Self::False => false,
+            Self::Left => left,
+            Self::Right => right,
+        }
+    }
+}
+
+impl std::str::FromStr for OptionAsAlt {
+    type Err = Error;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "" | "true" => Ok(Self::True),
+            "false" => Ok(Self::False),
+            "left" => Ok(Self::Left),
+            "right" => Ok(Self::Right),
+            _ => Err(Error::new(
+                "macos-option-as-alt",
+                "expected true, false, left, or right",
+            )),
+        }
+    }
+}
+
+impl std::fmt::Display for OptionAsAlt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::True => "true",
+            Self::False => "false",
+            Self::Left => "left",
+            Self::Right => "right",
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -45,6 +101,10 @@ impl Default for TerminalSettings {
             font_size: 13.0,
             cell_height: CellHeight::Natural,
             font: FontOptions::default(),
+            macos_option_as_alt: OptionAsAlt::default(),
+            options: TerminalOptions::default(),
+            keybindings: TerminalBindings::default(),
+            diagnostics: Vec::new(),
         }
     }
 }
@@ -109,6 +169,10 @@ impl TerminalSettings {
         Ok((settings, included_keys))
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "Keep config dispatch and source diagnostics together"
+    )]
     fn read(
         &mut self,
         path: &Path,
@@ -142,7 +206,12 @@ impl TerminalSettings {
                     | "font-thicken"
                     | "font-thicken-strength"
                     | "adjust-cell-width"
-            ) {
+                    | "macos-option-as-alt"
+            ) && !options::KEYS.contains(&key)
+                && key != "keybind"
+            {
+                self.diagnostics
+                    .push(format!("{context}: {key} is not supported by Muxy"));
                 continue;
             }
             if key != "config-file"
@@ -152,18 +221,38 @@ impl TerminalSettings {
             }
             let context = format!("{context} {key}");
             let value = value
-                .or_else(|| (key == "font-thicken").then_some("true"))
+                .or_else(|| {
+                    (matches!(key, "font-thicken" | "macos-option-as-alt")
+                        || TerminalOptions::boolean(key))
+                    .then_some("true")
+                })
                 .ok_or_else(|| Error::new(&context, "expected key = value"))?
                 .trim();
             let optional = key == "config-file" && value.starts_with('?');
             let value = if optional { &value[1..] } else { value };
-            let value = if key == "font-feature" {
+            let value = if matches!(key, "font-feature" | "theme") {
                 value
             } else {
                 config_value(value).map_err(|error| Error::new(&context, error))?
             };
             match key {
-                key if self.font.read(key, value)? => {}
+                key if self
+                    .font
+                    .read(key, value)
+                    .map_err(|error| Error::new(&context, error))? => {}
+                key if self
+                    .options
+                    .read(key, value)
+                    .map_err(|error| Error::new(&context, error))? => {}
+                "keybind" => {
+                    if let Some(warning) = self
+                        .keybindings
+                        .read(value)
+                        .map_err(|error| Error::new(&context, error))?
+                    {
+                        self.diagnostics.push(format!("{context}: {warning}"));
+                    }
+                }
                 "font-family" if value.is_empty() => families.clear(),
                 "font-family" => families.push(value.into()),
                 "font-size" => {
@@ -182,6 +271,10 @@ impl TerminalSettings {
                 "adjust-cell-height" => {
                     self.cell_height =
                         parse_height(value).map_err(|error| Error::new(&context, error))?;
+                }
+                "macos-option-as-alt" => {
+                    self.macos_option_as_alt =
+                        value.parse().map_err(|error| Error::new(&context, error))?;
                 }
                 "config-file" if value.is_empty() => includes.clear(),
                 "config-file" => {
@@ -204,6 +297,10 @@ impl TerminalSettings {
 
     /// Rewrites supported values while preserving includes, comments, and unrelated keys.
     /// Returns the effective settings, including values supplied by included files.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "Keep the preserving config rewrite and atomic replacement together"
+    )]
     pub fn save(&self, path: &Path) -> Result<Self> {
         if !self.font_size.is_finite() || !(1.0..=256.0).contains(&self.font_size) {
             return Err(Error::new("font-size", "must be between 1 and 256 points"));
@@ -246,6 +343,23 @@ impl TerminalSettings {
             .as_ref()
             .is_none_or(|old| old.cell_height != self.cell_height);
         let font_changed = previous.as_ref().is_none_or(|old| old.font != self.font);
+        let option_changed = previous
+            .as_ref()
+            .is_none_or(|old| old.macos_option_as_alt != self.macos_option_as_alt);
+        let old_options = previous
+            .as_ref()
+            .map_or_else(TerminalOptions::default, |old| old.options.clone())
+            .values();
+        let changed_options: std::collections::BTreeMap<_, _> = self
+            .options
+            .values()
+            .into_iter()
+            .filter(|(key, value)| old_options.get(key) != Some(value))
+            .collect();
+        let bindings_changed = previous
+            .as_ref()
+            .map_or_else(TerminalBindings::default, |old| old.keybindings.clone())
+            != self.keybindings;
         let mut updated = String::new();
         for line in source.split_inclusive('\n') {
             let key = line
@@ -256,7 +370,10 @@ impl TerminalSettings {
                 "font-family" => families_changed,
                 "font-size" => size_changed,
                 "adjust-cell-height" => height_changed,
+                "macos-option-as-alt" => option_changed,
                 key if fonts::KEYS.contains(&key) => font_changed,
+                "keybind" => bindings_changed,
+                key if changed_options.contains_key(key) => true,
                 _ => false,
             };
             if !rewrite {
@@ -283,6 +400,24 @@ impl TerminalSettings {
                 let _ = writeln!(updated, "{line}");
             }
         }
+        if option_changed {
+            let _ = writeln!(
+                updated,
+                "macos-option-as-alt = {}",
+                self.macos_option_as_alt
+            );
+        }
+        for (key, value) in changed_options {
+            if key == "palette" {
+                let _ = writeln!(updated, "palette =");
+            }
+            let _ = writeln!(updated, "{key} = {value}");
+        }
+        if bindings_changed {
+            for value in self.keybindings.lines() {
+                let _ = writeln!(updated, "keybind = {value}");
+            }
+        }
         // Resolve before replacing the source, so a broken include never reports a saved value.
         let temporary = path.with_file_name(format!(
             ".ghostty-{}-{}.conf",
@@ -291,9 +426,9 @@ impl TerminalSettings {
         ));
         crate::settings::appearance::atomic_write(&temporary, &updated)
             .map_err(|error| Error::new("ghostty.conf", error))?;
-        let result = Self::load_with_seed(&temporary, None).and_then(|effective| {
+        let result = Self::load_with_seed(&temporary, None).and_then(|_| {
             fs::rename(&temporary, path).map_err(|error| Error::new("ghostty.conf", error))?;
-            Ok(effective)
+            Self::load_with_seed(path, None)
         });
         if result.is_err() {
             let _ = fs::remove_file(&temporary);

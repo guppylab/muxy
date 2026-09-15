@@ -15,6 +15,12 @@ pub(crate) struct Selection {
     pub(crate) head: Point,
 }
 
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct SelectedRow {
+    columns: Range<u16>,
+    text: String,
+}
+
 impl Selection {
     pub(crate) fn normalized(self) -> Range<Point> {
         self.anchor.min(self.head)..self.anchor.max(self.head)
@@ -42,7 +48,7 @@ impl Selection {
                 columns.end = columns.end.max(cell.end);
             }
         }
-        columns
+        columns.start.min(grid.size.cols)..columns.end.min(grid.size.cols)
     }
 
     pub(crate) fn text(self, grid: &RunGrid) -> String {
@@ -66,11 +72,27 @@ impl Selection {
             .join("\n")
     }
 
-    pub(crate) fn rows(self, grid: &RunGrid) -> Vec<Option<Vec<Run>>> {
+    pub(crate) fn rows(self, grid: &RunGrid) -> Vec<Option<SelectedRow>> {
         let range = self.normalized();
         (range.start.row..=range.end.row)
-            .filter(|row| !self.columns(*row, grid).is_empty())
-            .map(|row| row_runs(grid, row).map(<[Run]>::to_vec))
+            .map(|row| (row, self.columns(row, grid)))
+            .filter(|(_, columns)| !columns.is_empty())
+            .map(|(row, columns)| {
+                let runs = row_runs(grid, row)?;
+                let mut text = String::new();
+                let mut end = columns.start;
+                for (cell, value) in cells(runs) {
+                    if cell.start < columns.end && cell.end > columns.start {
+                        text.push_str(value);
+                        end = cell.end;
+                    }
+                }
+                text.extend(std::iter::repeat_n(
+                    ' ',
+                    usize::from(columns.end.saturating_sub(end)),
+                ));
+                Some(SelectedRow { columns, text })
+            })
             .collect()
     }
 

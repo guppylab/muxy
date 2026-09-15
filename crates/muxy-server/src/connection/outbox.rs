@@ -177,15 +177,17 @@ impl Outbox {
     }
 
     pub(super) fn colors(&self) -> Option<TerminalColors> {
-        self.lock().colors
+        self.lock().colors.clone()
     }
 
     pub(super) fn set_colors(&self, colors: TerminalColors) {
         let mut state = self.lock();
-        state.colors = Some(colors);
         for attachment in state.attachments.values() {
-            let _ = attachment.handle.send(SessionCommand::SetColors(colors));
+            let _ = attachment
+                .handle
+                .send(SessionCommand::SetColors(colors.clone()));
         }
+        state.colors = Some(colors);
     }
 
     pub(super) fn push_control(&self, message: Message) {
@@ -240,8 +242,8 @@ impl Outbox {
         if state.references.owner.is_some() && state.references.released.contains(&session) {
             return Err(ServerError::unknown_session(session));
         }
-        if let Some(colors) = state.colors {
-            handle.send(SessionCommand::SetColors(colors))?;
+        if let Some(colors) = &state.colors {
+            handle.send(SessionCommand::SetColors(colors.clone()))?;
         }
         handle.send(command)?;
         state.references.released.remove(&session);

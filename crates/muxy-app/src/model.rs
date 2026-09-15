@@ -99,6 +99,7 @@ pub(crate) struct AppModel {
     pub(crate) overlay_subscription: Option<Subscription>,
     pub(crate) picker_search: crate::picker::search::SearchService,
     pub(crate) navigation: crate::navigation::Navigation,
+    pub(crate) configuration_error: Option<String>,
     path: PathBuf,
     bounds_save: Option<Task<()>>,
     work: Worker,
@@ -128,8 +129,23 @@ impl AppModel {
         self.grids.get(id)
     }
     pub(crate) fn refresh_theme(&mut self, cx: &mut Context<Self>) {
-        (self.theme, self.palette) = self.themes.resolve(&self.appearance, self.dark);
-        if self.connection == ConnectionState::Ready {
+        let previous_colors = self.palette.terminal_colors();
+        let (theme, fallback) = self.themes.resolve(&self.appearance, self.dark);
+        self.theme = theme;
+        match self.themes.terminal_palette(
+            &fallback,
+            &self.terminal.options,
+            self.dark,
+            self.path
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new(".")),
+        ) {
+            Ok(palette) => self.palette = palette,
+            Err(error) => self.configuration_error = Some(error),
+        }
+        if self.connection == ConnectionState::Ready
+            && previous_colors != self.palette.terminal_colors()
+        {
             self.send(Work::Colors(self.palette.terminal_colors()), cx);
         }
         for pane in self.grids.values() {
@@ -148,6 +164,52 @@ impl AppModel {
             });
         }
         cx.notify();
+    }
+
+    pub(crate) fn reload_configuration(&mut self, cx: &mut Context<Self>) {
+        let result = muxy_app_core::settings::TerminalSettings::load(
+            &self.path.with_file_name("ghostty.conf"),
+        );
+        match result {
+            Ok(terminal) => {
+                let themes = crate::theme::Catalog::load(&self.path.with_file_name("themes"));
+                let fallback = themes.resolve(&self.appearance, self.dark).1;
+                if let Err(error) = themes.terminal_palette(
+                    &fallback,
+                    &terminal.options,
+                    self.dark,
+                    self.path
+                        .parent()
+                        .unwrap_or_else(|| std::path::Path::new(".")),
+                ) {
+                    self.configuration_error = Some(error);
+                    cx.notify();
+                    return;
+                }
+                self.terminal = terminal;
+                self.themes = themes;
+                self.configuration_error = None;
+                for pane in self.grids.values() {
+                    let old = pane.view.read(cx);
+                    let zoom = (old.terminal.font_size.to_bits()
+                        != old.configured_font_size.to_bits())
+                    .then_some(old.terminal.font_size);
+                    pane.view.update(cx, |pane, cx| {
+                        pane.terminal = self.terminal.clone();
+                        pane.configured_font_size = self.terminal.font_size;
+                        if let Some(size) = zoom {
+                            pane.terminal.font_size = size;
+                        }
+                        cx.notify();
+                    });
+                }
+                self.refresh_theme(cx);
+            }
+            Err(error) => {
+                self.configuration_error = Some(format!("Could not reload configuration: {error}"));
+                cx.notify();
+            }
+        }
     }
 
     pub(crate) fn reload_themes(&mut self, cx: &mut Context<Self>) {
@@ -221,6 +283,9 @@ impl AppModel {
 
     fn activation_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if window.is_window_active() {
+            if self.path.with_file_name("ghostty.conf").exists() {
+                self.reload_configuration(cx);
+            }
             self.refresh_git(cx);
             self.refresh_project_statuses(cx);
             self.refresh_quick_monitoring(cx);
@@ -235,6 +300,10 @@ impl AppModel {
         }
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "Application startup wires independent state and subscriptions"
+    )]
     pub(crate) fn new(boot: Boot, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let events = cx.spawn(async move |this, cx| {
             while let Ok(update) = boot.updates.recv().await {
@@ -260,7 +329,21 @@ impl AppModel {
             async {}
         });
         let themes = crate::theme::Catalog::load(&boot.state_path.with_file_name("themes"));
-        let (theme, palette) = themes.resolve(&boot.settings.appearance, dark);
+        let (theme, fallback) = themes.resolve(&boot.settings.appearance, dark);
+        let mut configuration_error = None;
+        let palette = themes
+            .terminal_palette(
+                &fallback,
+                &boot.terminal.options,
+                dark,
+                boot.state_path
+                    .parent()
+                    .unwrap_or_else(|| std::path::Path::new(".")),
+            )
+            .unwrap_or_else(|error| {
+                configuration_error = Some(error);
+                fallback
+            });
         let theme_error = (!themes.errors.is_empty()).then(|| themes.errors.join("; "));
         let mut model = Self {
             git: git::GitState::default(),
@@ -298,6 +381,7 @@ impl AppModel {
             overlay_subscription: None,
             picker_search: crate::picker::search::SearchService::default(),
             navigation: crate::navigation::Navigation::default(),
+            configuration_error,
             path: boot.state_path,
             bounds_save: None,
             work: boot.work,
@@ -1117,8 +1201,13 @@ impl AppModel {
             .collect();
         for id in hidden {
             if let Some(pane) = self.grids.remove(&id) {
-                self.font_sizes
-                    .insert(id, pane.view.read(cx).terminal.font_size);
+                let terminal = pane.view.read(cx);
+                if terminal.terminal.font_size.to_bits() == terminal.configured_font_size.to_bits()
+                {
+                    self.font_sizes.remove(&id);
+                } else {
+                    self.font_sizes.insert(id, terminal.terminal.font_size);
+                }
                 pane.view.update(cx, |pane, cx| {
                     pane.set_focused(false, cx);
                     pane.native_visible = false;
@@ -1174,6 +1263,7 @@ impl AppModel {
         let state = self.pane_state(id);
         let view = cx.new(|cx| {
             let mut pane = TerminalPane::new(self.palette, terminal, cx);
+            pane.configured_font_size = self.terminal.font_size;
             pane.copy_on_select = self.settings.clipboard.copy_on_select;
             pane.open_context = open_context;
             pane.grid = snapshot;
@@ -1991,6 +2081,97 @@ mod tests {
             },
             requests,
         )
+    }
+
+    #[gpui::test]
+    #[allow(clippy::float_cmp)]
+    fn terminal_config_reload_applies_live_preserves_zoom_and_rejects_invalid_files(
+        cx: &mut TestAppContext,
+    ) {
+        let mut state = AppState::bootstrap().expect("state");
+        state.open_terminal_tab(state.home().id).expect("tab");
+        let (boot, _requests) = stub_boot(state);
+        let path = boot.state_path.with_file_name("ghostty.conf");
+        let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
+        view.update(cx, |model, cx| {
+            let id = model.active_pane().expect("pane");
+            model.grids[&id].view.update(cx, |pane, _| pane.terminal.zoom(2.0));
+            std::fs::write(&path, "font-size = 21\nbackground = 123456\nmacos-option-as-alt = false\nkeybind = shift+enter=text:\\x1b\\r\nwindow-save-state = always\n").expect("config");
+            model.reload_configuration(cx);
+            assert_eq!(model.terminal.font_size, 21.0);
+            assert_eq!(model.palette.background, 0x12_34_56);
+            let pane = model.grids[&id].view.read(cx);
+            assert_eq!(pane.terminal.font_size, 15.0);
+            assert_eq!(pane.configured_font_size, 21.0);
+            assert_eq!(pane.terminal.macos_option_as_alt, muxy_app_core::settings::OptionAsAlt::False);
+            assert!(model.configuration_error.is_none());
+            assert!(model.terminal.diagnostics.iter().any(|message| message.contains("window-save-state")));
+            for source in ["background = broken\n", "theme = missing-theme-123\n"] {
+                std::fs::write(&path, source).expect("config");
+                model.reload_configuration(cx);
+                assert_eq!(model.palette.background, 0x12_34_56);
+                assert_eq!(model.terminal.font_size, 21.0);
+                assert!(model.configuration_error.is_some());
+                let error = model.configuration_error.clone();
+                model.refresh_theme(cx);
+                assert_eq!(model.configuration_error, error);
+            }
+            std::fs::write(&path, "font-size = 19\n").expect("config");
+            model.reload_configuration(cx);
+            assert!(model.configuration_error.is_none());
+            assert_eq!(model.terminal.font_size, 19.0);
+            assert!(model.terminal.options.background.is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn terminal_reload_updates_hidden_tabs_and_preserves_only_explicit_zoom(
+        cx: &mut TestAppContext,
+    ) {
+        let mut state = AppState::bootstrap().expect("state");
+        let first = state.open_terminal_tab(state.home().id).expect("tab");
+        let second = state.open_terminal_tab(state.home().id).expect("tab");
+        let (boot, _requests) = stub_boot(state);
+        let path = boot.state_path.with_file_name("ghostty.conf");
+        let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
+        view.update(cx, |model, cx| {
+            model.select_tab(first, cx);
+            model.select_tab(second, cx);
+            assert!(model.font_sizes.is_empty());
+            std::fs::write(&path, "font-size = 21\n").expect("config");
+            model.reload_configuration(cx);
+            for tab in [first, second] {
+                model.select_tab(tab, cx);
+                let pane = &model.grids[&model.active_pane().expect("pane")].view;
+                assert_eq!(
+                    pane.read(cx).terminal.font_size.to_bits(),
+                    21.0_f32.to_bits()
+                );
+            }
+            let pane = &model.grids[&model.active_pane().expect("pane")].view;
+            pane.update(cx, |pane, _| pane.terminal.zoom(2.0));
+            model.select_tab(first, cx);
+            std::fs::write(&path, "font-size = 19\n").expect("config");
+            model.reload_configuration(cx);
+            model.select_tab(second, cx);
+            let pane = &model.grids[&model.active_pane().expect("pane")].view;
+            assert_eq!(
+                pane.read(cx).terminal.font_size.to_bits(),
+                23.0_f32.to_bits()
+            );
+            pane.update(cx, |pane, _| {
+                pane.terminal.font_size = pane.configured_font_size;
+            });
+            model.reload_configuration(cx);
+            let pane = &model.grids[&model.active_pane().expect("pane")].view;
+            assert_eq!(
+                pane.read(cx).terminal.font_size.to_bits(),
+                19.0_f32.to_bits()
+            );
+            model.select_tab(first, cx);
+            model.select_tab(second, cx);
+            assert!(model.font_sizes.is_empty());
+        });
     }
 
     fn saved_screen() -> muxy_protocol::SavedScreen {

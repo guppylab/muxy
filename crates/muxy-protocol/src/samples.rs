@@ -199,6 +199,9 @@ fn color_samples() -> [Message; 2] {
                 background: [0x19, 0x17, 0x1f],
                 cursor: [0xc3, 0x70, 0xd3],
                 ansi: [[0x12, 0x34, 0x56]; 16],
+                palette: std::collections::BTreeMap::from([(196, [0xab, 0xcd, 0xef])]),
+                cursor_style: Some(crate::CursorShape::Bar),
+                cursor_blink: Some(false),
             }),
         },
         Message::Reply {

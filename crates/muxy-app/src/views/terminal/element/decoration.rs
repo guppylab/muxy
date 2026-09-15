@@ -8,7 +8,7 @@ pub(super) fn prepare(
     style: Style,
     bounds: Bounds<Pixels>,
     foreground: Hsla,
-    palette: Palette,
+    palette: &Palette,
     scale: f32,
 ) {
     let snap = |value: Pixels| px((f32::from(value) * scale).round() / scale);

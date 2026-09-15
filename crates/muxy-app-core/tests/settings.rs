@@ -780,6 +780,8 @@ fn terminal_save_preserves_comments_unknown_keys_and_includes_and_returns_effect
         font_families: vec!["SF Mono".into(), "Menlo".into()],
         font_size: 18.0,
         cell_height: CellHeight::Percent(10.0),
+        macos_option_as_alt: muxy_app_core::settings::OptionAsAlt::default(),
+        ..TerminalSettings::default()
     };
     let effective = requested.save(&path)?;
     assert_eq!(effective.font_size, 22.0);
@@ -943,5 +945,196 @@ fn advanced_font_settings_round_trip_and_preserve_includes() -> Result {
     settings.font.bold.push("bad\nfont-size=99".into());
     assert!(settings.save(&other).is_err());
     assert_eq!(fs::read(other)?, before);
+    Ok(())
+}
+
+#[test]
+fn option_as_alt_parses_resets_and_preserves_settings_on_save() -> Result {
+    use muxy_app_core::settings::OptionAsAlt;
+    let fixture = Fixture::new()?;
+    for (source, expected) in [
+        ("macos-option-as-alt = true", OptionAsAlt::True),
+        ("macos-option-as-alt = false", OptionAsAlt::False),
+        ("macos-option-as-alt = \"left\"", OptionAsAlt::Left),
+        ("macos-option-as-alt = right", OptionAsAlt::Right),
+        ("macos-option-as-alt", OptionAsAlt::True),
+        (
+            "macos-option-as-alt = false\nmacos-option-as-alt =",
+            OptionAsAlt::True,
+        ),
+    ] {
+        let path = fixture.write("ghostty.conf", source)?;
+        let mut settings = TerminalSettings::load(&path)?;
+        assert_eq!(settings.macos_option_as_alt, expected);
+        settings.font_size = 17.0;
+        assert_eq!(settings.save(&path)?.macos_option_as_alt, expected);
+        assert!(fs::read_to_string(&path)?.starts_with(source));
+        settings.macos_option_as_alt = OptionAsAlt::False;
+        assert_eq!(
+            settings.save(&path)?.macos_option_as_alt,
+            OptionAsAlt::False
+        );
+        assert_eq!(TerminalSettings::load(&path)?, settings);
+    }
+    let path = fixture.write("ghostty.conf", "# example\nmacos-option-as-alt = invalid\n")?;
+    let error = TerminalSettings::load(&path)
+        .err()
+        .ok_or("accepted invalid option")?
+        .to_string();
+    assert!(
+        error.contains("ghostty.conf:2 macos-option-as-alt"),
+        "{error}"
+    );
+    Ok(())
+}
+
+#[test]
+fn included_option_as_alt_applies_and_is_not_replaced_by_font_edits() -> Result {
+    use muxy_app_core::settings::OptionAsAlt;
+    let fixture = Fixture::new()?;
+    fixture.write("input.conf", "macos-option-as-alt = right\n")?;
+    let path = fixture.write(
+        "ghostty.conf",
+        "macos-option-as-alt = true\nconfig-file = input.conf\n",
+    )?;
+    let mut settings = TerminalSettings::load(&path)?;
+    assert_eq!(settings.macos_option_as_alt, OptionAsAlt::Right);
+    assert!(TerminalSettings::included_keys(&path)?.contains("macos-option-as-alt"));
+    settings.font_size = 18.0;
+    assert_eq!(
+        settings.save(&path)?.macos_option_as_alt,
+        OptionAsAlt::Right
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.0.join("input.conf"))?,
+        "macos-option-as-alt = right\n"
+    );
+    for (left, right) in [(false, false), (true, false), (false, true), (true, true)] {
+        assert!(OptionAsAlt::True.enabled(left, right));
+        assert!(!OptionAsAlt::False.enabled(left, right));
+        assert_eq!(OptionAsAlt::Left.enabled(left, right), left);
+        assert_eq!(OptionAsAlt::Right.enabled(left, right), right);
+    }
+    Ok(())
+}
+
+#[test]
+fn ghostty_terminal_options_bindings_and_diagnostics_round_trip() -> Result {
+    use muxy_app_core::settings::{TerminalAction, TerminalColor};
+    let fixture = Fixture::new()?;
+    let path = fixture.write(
+        "ghostty.conf",
+        r#"# keep this comment
+theme = dark:"Muxy",light:"Muxy Light"
+background = #123456
+foreground = abcdef
+palette = 1=111111,196=234567
+cursor-color = cell-foreground
+cursor-text = cell-background
+cursor-opacity = 0.6
+cursor-style = bar
+cursor-style-blink = false
+selection-background = cell-foreground
+selection-foreground = cell-background
+selection-clear-on-typing = true
+selection-clear-on-copy = true
+background-opacity = 0.8
+background-opacity-cells = true
+bold-is-bright = true
+copy-on-select = clipboard
+mouse-reporting = false
+mouse-scroll-multiplier = precision:2,discrete:4
+scroll-to-bottom = no-keystroke,output
+window-padding-x = 4,8
+window-padding-y = 6
+window-padding-balance = true
+window-padding-color = background
+keybind = shift+enter=text:\x1b\r
+keybind = alt+arrow_left=csi:1;3D
+keybind = super+c=ignore
+keybind = global:super+a=new_window
+window-save-state = always
+"#,
+    )?;
+    let mut settings = TerminalSettings::load_with_seed(&path, None)?;
+    let options = &settings.options;
+    assert_eq!(options.background, Some(0x12_34_56));
+    assert_eq!(options.palette[&196], 0x23_45_67);
+    assert_eq!(options.cursor_style, Some(muxy_protocol::CursorShape::Bar));
+    assert_eq!(options.cursor_blink, Some(false));
+    assert_eq!(options.cursor_text, Some(TerminalColor::CellBackground));
+    assert_eq!(options.padding_x, [4.0, 8.0]);
+    assert_eq!(options.padding_y, [6.0; 2]);
+    assert_eq!(
+        (options.scroll_precision, options.scroll_discrete),
+        (2.0, 4.0)
+    );
+    assert!(!options.scroll_on_keystroke && options.scroll_on_output);
+    assert_eq!(
+        settings.keybindings.bindings[&"shift-enter".parse()?],
+        TerminalAction::Text(b"\x1b\r".to_vec())
+    );
+    assert_eq!(
+        settings.keybindings.bindings[&"alt-left".parse()?],
+        TerminalAction::Text(b"\x1b[1;3D".to_vec())
+    );
+    assert_eq!(settings.diagnostics.len(), 2);
+    assert!(
+        settings
+            .diagnostics
+            .iter()
+            .all(|warning| warning.contains("ghostty.conf:"))
+    );
+    settings.font_size = 21.0;
+    assert_eq!(settings.save(&path)?, settings);
+    assert!(fs::read_to_string(&path)?.contains("keybind = shift+enter=text:\\x1b\\r"));
+    settings.options.background = Some(0x65_43_21);
+    settings.options.palette.remove(&1);
+    settings
+        .keybindings
+        .bindings
+        .insert("ctrl--".parse()?, TerminalAction::Text(vec![0, 0xff, 0x1b]));
+    let saved = settings.save(&path)?;
+    assert_eq!(saved.options, settings.options);
+    assert_eq!(saved.keybindings, settings.keybindings);
+    assert!(fs::read_to_string(&path)?.contains("# keep this comment"));
+    Ok(())
+}
+
+#[test]
+fn ghostty_option_resets_and_errors_keep_source_locations() -> Result {
+    let fixture = Fixture::new()?;
+    let path = fixture.write("ghostty.conf", "background = 123456\nbackground =\npalette = 200=123456\npalette =\nkeybind = shift+enter=text:hello\nkeybind =\nbackground-opacity = 2\nconfig-file = included.conf\n")?;
+    fixture.write(
+        "included.conf",
+        "mouse-reporting = false\nwindow-padding-x = 10,12\n",
+    )?;
+    let settings = TerminalSettings::load_with_seed(&path, None)?;
+    assert_eq!(settings.options.background, None);
+    assert!(settings.options.palette.is_empty());
+    assert!(settings.keybindings.bindings.is_empty());
+    assert_eq!(settings.options.background_opacity, Some(1.0));
+    assert!(!settings.options.mouse_reporting);
+    assert_eq!(settings.options.padding_x, [10.0, 12.0]);
+    for line in [
+        "background = invalid",
+        "palette = 256=123456",
+        "cursor-style = invalid",
+        "cursor-opacity = NaN",
+        "window-padding-x = -1",
+        "mouse-scroll-multiplier = infinity",
+        "scroll-to-bottom = invalid",
+        "keybind = shift+enter=text:\\xZZ",
+    ] {
+        fs::write(&path, format!("# comment\n{line}\n"))?;
+        let error = TerminalSettings::load_with_seed(&path, None)
+            .expect_err(line)
+            .to_string();
+        assert!(error.contains("ghostty.conf:2"), "{error}");
+        assert!(
+            error.contains(line.split('=').next().unwrap_or_default().trim()),
+            "{error}"
+        );
+    }
     Ok(())
 }

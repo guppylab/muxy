@@ -60,3 +60,17 @@ if (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 1) )
 else
     PROMPT_COMMAND=$'_muxy_precmd\n'"$_muxy_debug_setup"$'\n'"${PROMPT_COMMAND-}"$'\n_muxy_prompt_end'
 fi
+
+_muxy_bind_keys() {
+    local keymap sequence bindings
+    for keymap in emacs-standard vi-insertion vi-command; do
+        bindings=$(bind -m "$keymap" -p; bind -m "$keymap" -s)
+        for sequence in '\e[1;3A' '\e[1;3B'; do
+            if [[ $bindings != *"\"$sequence\":"* ]]; then
+                bind -m "$keymap" "\"$sequence\": \"\""
+            fi
+        done
+    done
+}
+_muxy_bind_keys
+unset -f _muxy_bind_keys

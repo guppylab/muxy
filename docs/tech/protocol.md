@@ -119,11 +119,12 @@ and choosing browser, editor, or Finder openers are app policy.
 ## Terminal colors
 
 A client can send RGB defaults for foreground, background, cursor,
-and the first 16 ANSI colors. These defaults apply to sessions created or
-attached through that connection and updates are queued to its existing
-attachments. New sessions receive them before processing terminal output.
+and all 256 palette colors, plus default cursor shape and blinking. These
+defaults apply to sessions created or attached through that connection and
+updates are queued to its existing attachments. New sessions receive them before processing terminal output.
 The emulator uses them to answer terminal color queries; theme selection
-stays in the app. Like size, defaults are session-wide: the latest update
+stays in the app. Terminal programs retain their runtime overrides.
+Like size, defaults are session-wide: the latest update
 or colored attach wins, and detaching leaves them unchanged. Clients resend
 colors on reconnect and theme changes.
 

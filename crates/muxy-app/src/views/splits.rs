@@ -55,8 +55,8 @@ pub(crate) fn render(model: &AppModel, cx: &mut Context<AppModel>) -> Option<Any
                 .size_full()
                 .min_w(px(0.0))
                 .min_h(px(0.0))
-                .p(model.metrics.spacing7())
-                .bg(model.theme.bg)
+                .border(model.metrics.spacing7())
+                .border_color(model.theme.bg)
                 .child(
                     div()
                         .flex()

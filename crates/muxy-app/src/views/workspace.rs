@@ -50,6 +50,7 @@ actions!(
         Minimize,
         Zoom,
         OpenConfiguration,
+        ReloadConfiguration,
         IncreaseFontSize,
         DecreaseFontSize,
         ScrollToBottom,
@@ -315,6 +316,9 @@ fn action_handlers(cx: &mut Context<AppModel>) -> gpui::Div {
         .on_action(cx.listener(|_, _: &Minimize, window, _| window.minimize_window()))
         .on_action(cx.listener(|_, _: &Zoom, window, _| window.zoom_window()))
         .on_action(cx.listener(titlebar::begin_window_move))
+        .on_action(
+            cx.listener(|model, _: &ReloadConfiguration, _, cx| model.reload_configuration(cx)),
+        )
         .on_action(cx.listener(|model, _: &IncreaseFontSize, _, cx| model.zoom_terminal(1.0, cx)))
         .on_action(cx.listener(|model, _: &DecreaseFontSize, _, cx| model.zoom_terminal(-1.0, cx)))
 }
@@ -383,22 +387,13 @@ impl Render for AppModel {
         let tab_focused = self.appearance.layout == muxy_app_core::settings::AppLayout::TabFocused;
         let sidebar_width = self.sidebar_width();
         let content = super::splits::render(self, cx).unwrap_or_else(|| empty(self, cx));
-        let error = self.error.as_ref().map(|error| {
-            div()
-                .px(px(12.0))
-                .py(px(8.0))
-                .bg(theme.surface)
-                .text_color(theme.fg)
-                .text_size(px(12.0))
-                .child(error.clone())
-        });
+        let error = self.error.as_ref().map(|message| banner(message, theme));
         action_handlers(cx)
             .track_focus(&self.focus)
             .on_modifiers_changed(cx.listener(|_, _, _, cx| cx.notify()))
             .relative()
             .flex()
             .size_full()
-            .bg(theme.bg)
             .text_color(theme.fg)
             .font_family(".SystemUIFont")
             .line_height(relative(1.2))
@@ -412,13 +407,27 @@ impl Render for AppModel {
                     .flex_1()
                     .min_w(px(0.0))
                     .min_h(px(0.0))
-                    .child(if tab_focused {
-                        super::tab_sidebar::titlebar(self, sidebar_width, cx)
-                    } else {
-                        tab_strip::tab_strip(self, sidebar_width, window, cx)
-                    })
-                    .child(div().h(px(1.0)).flex_none().bg(theme.border))
-                    .children(error)
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_none()
+                            .bg(theme.bg)
+                            .child(if tab_focused {
+                                super::tab_sidebar::titlebar(self, sidebar_width, cx)
+                            } else {
+                                tab_strip::tab_strip(self, sidebar_width, window, cx)
+                            })
+                            .child(div().h(px(1.0)).flex_none().bg(theme.border))
+                            .children(error)
+                            .children(self.configuration_error.as_ref().map(|message| {
+                                banner(message, theme)
+                                    .id("terminal-configuration-diagnostics")
+                                    .debug_selector(|| "terminal-configuration-diagnostics".into())
+                                    .max_h(px(100.0))
+                                    .overflow_y_scroll()
+                            })),
+                    )
                     .child(
                         div()
                             .flex_1()
@@ -454,11 +463,22 @@ impl Render for AppModel {
     }
 }
 
+fn banner(message: &str, theme: &muxy_ui::theme::Theme) -> gpui::Div {
+    div()
+        .px(px(12.0))
+        .py(px(8.0))
+        .bg(theme.surface)
+        .text_color(theme.fg)
+        .text_size(px(12.0))
+        .child(message.to_owned())
+}
+
 fn empty(model: &AppModel, cx: &mut Context<AppModel>) -> gpui::AnyElement {
     let theme = &model.theme;
     let m = model.metrics;
     let missing = model.state.current_project().status() == muxy_app_core::ProjectStatus::Missing;
     div()
+        .bg(theme.bg)
         .size_full()
         .flex()
         .flex_col()

@@ -17,7 +17,7 @@ use super::{
     colors::Palette,
     element, find, input,
     scroll::{HistoryRequest, Scroll},
-    selection::{Point, Selection},
+    selection::{Point, SelectedRow, Selection},
 };
 
 pub(crate) enum PaneEvent {
@@ -71,9 +71,10 @@ pub(crate) struct TerminalPane {
     pub(crate) find_refresh: Option<Task<()>>,
     pub(crate) find_focus_pending: bool,
     pub(crate) selection: Option<Selection>,
-    selection_rows: Vec<Option<Vec<muxy_protocol::Run>>>,
+    selection_rows: Vec<Option<SelectedRow>>,
     selecting: Option<(Selection, usize)>,
     pub(crate) input_modes: InputModes,
+    pub(crate) composition: super::ime::Composition,
     held_buttons: Vec<MouseButton>,
     last_mouse: Option<MouseEvent>,
     wheel_remainder: f32,
@@ -100,11 +101,17 @@ pub(crate) struct TerminalPane {
     directory: ServerPath,
     pub(crate) bell_flashing: bool,
     bell_expiry: Option<Task<()>>,
+    _keybindings: gpui::Subscription,
+    pub(crate) configured_font_size: f32,
 }
 
 impl EventEmitter<PaneEvent> for TerminalPane {}
 
 impl TerminalPane {
+    #[allow(
+        clippy::large_types_passed_by_value,
+        reason = "Each pane owns its palette snapshot"
+    )]
     pub(crate) fn new(
         palette: Palette,
         terminal: muxy_app_core::settings::TerminalSettings,
@@ -116,7 +123,15 @@ impl TerminalPane {
             }
         })
         .detach();
+        let weak = cx.entity().downgrade();
+        let keybindings = cx.intercept_keystrokes(move |event, window, cx| {
+            let _ = weak.update(cx, |pane, cx| {
+                pane.configured_key(&event.keystroke, window, cx);
+            });
+        });
         Self {
+            _keybindings: keybindings,
+            configured_font_size: terminal.font_size,
             grid: None,
             sent_cell_size: None,
             images: element::images::Textures::default(),
@@ -132,6 +147,7 @@ impl TerminalPane {
             selection_rows: Vec::new(),
             selecting: None,
             input_modes: InputModes::default(),
+            composition: super::ime::Composition::default(),
             held_buttons: Vec::new(),
             last_mouse: None,
             wheel_remainder: 0.0,
@@ -246,7 +262,11 @@ impl TerminalPane {
             if grid.cursor != frame.cursor {
                 self.cursor_blink.reset();
             }
+            let output_changed = !frame.rows.is_empty() || grid.cursor != frame.cursor;
             grid.apply(frame);
+            if output_changed && self.terminal.options.scroll_on_output {
+                self.scroll.bottom();
+            }
             if self.scroll.view.is_none() {
                 if frame.reset {
                     self.restart_find(cx);
@@ -644,6 +664,7 @@ impl TerminalPane {
     }
 
     fn reset_input(&mut self) {
+        self.composition = super::ime::Composition::default();
         self.link_hover = super::links::Hover::default();
         self.input_modes = InputModes::default();
         self.held_buttons.clear();
@@ -652,11 +673,15 @@ impl TerminalPane {
     }
 
     fn reports_mouse(&self, shift: bool) -> bool {
-        self.state == PaneState::Live && self.input_modes.mouse_tracking && !shift
+        self.state == PaneState::Live
+            && self.terminal.options.mouse_reporting
+            && self.input_modes.mouse_tracking
+            && !shift
     }
 
     fn reports_wheel(&self) -> bool {
         self.state == PaneState::Live
+            && self.terminal.options.mouse_reporting
             && (self.input_modes.mouse_tracking || self.input_modes.alternate_scroll)
     }
 
@@ -665,6 +690,7 @@ impl TerminalPane {
             return;
         }
         if !active {
+            self.composition = super::ime::Composition::default();
             let buttons = std::mem::take(&mut self.held_buttons);
             if let (Some(channel), Some(event)) = (self.channel, self.last_mouse) {
                 for button in buttons {
@@ -762,8 +788,11 @@ impl TerminalPane {
 
     fn mouse_wheel(&mut self, event: &gpui::ScrollWheelEvent, cx: &mut Context<Self>) {
         let delta = match event.delta {
-            gpui::ScrollDelta::Pixels(delta) => f32::from(delta.y) / self.cell_height.max(1.0),
-            gpui::ScrollDelta::Lines(delta) => delta.y,
+            gpui::ScrollDelta::Pixels(delta) => {
+                f32::from(delta.y) / self.cell_height.max(1.0)
+                    * self.terminal.options.scroll_precision
+            }
+            gpui::ScrollDelta::Lines(delta) => delta.y * self.terminal.options.scroll_discrete,
         };
         if self.reports_wheel() && !event.modifiers.shift {
             if delta.signum() != self.wheel_remainder.signum() {
@@ -796,6 +825,8 @@ impl TerminalPane {
         self.prepare_saved_history(cx);
         #[cfg(target_os = "macos")]
         if !self.reports_wheel()
+            && self.terminal.options.scroll_precision.to_bits() == 1.0_f32.to_bits()
+            && self.terminal.options.scroll_discrete.to_bits() == 1.0_f32.to_bits()
             && let Some(position) = self
                 .native_scroll
                 .as_ref()
@@ -1003,12 +1034,26 @@ impl TerminalPane {
             cx,
         );
         self.selecting = None;
-        if completed_selection && self.copy_on_select {
-            self.copy_selection(cx);
+        if completed_selection
+            && self
+                .terminal
+                .options
+                .copy_on_select
+                .unwrap_or(self.copy_on_select)
+        {
+            self.copy_selection_text(cx);
         }
     }
 
-    pub(crate) fn copy_selection(&self, cx: &mut Context<Self>) {
+    pub(crate) fn copy_selection(&mut self, cx: &mut Context<Self>) {
+        self.copy_selection_text(cx);
+        if self.terminal.options.selection_clear_on_copy {
+            self.clear_selection();
+            cx.notify();
+        }
+    }
+
+    fn copy_selection_text(&self, cx: &mut Context<Self>) {
         if let (Some(selection), Some(grid)) = (self.selection, self.displayed_grid()) {
             let text = selection.text(grid);
             if !text.is_empty() {
@@ -1068,12 +1113,19 @@ impl TerminalPane {
         }
     }
 
-    fn send_paste(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
+    pub(super) fn send_paste(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
         if self.state == PaneState::Live
             && !bytes.is_empty()
             && let Some(channel) = self.channel
         {
-            self.scroll_to_bottom(cx);
+            if self.terminal.options.scroll_on_keystroke {
+                self.scroll_to_bottom(cx);
+            }
+            if self.terminal.options.selection_clear_on_typing {
+                self.clear_selection();
+            }
+            self.cursor_blink.reset();
+            cx.notify();
             for chunk in bytes.chunks(muxy_protocol::MAX_INPUT) {
                 cx.emit(PaneEvent::Input(channel, chunk.to_vec()));
             }
@@ -1099,20 +1151,88 @@ fn mouse_button(button: MouseButton) -> muxy_protocol::MouseButton {
 }
 
 impl TerminalPane {
+    fn configured_key(
+        &mut self,
+        key: &gpui::Keystroke,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use muxy_app_core::settings::TerminalAction;
+        if !self.focus.is_focused(window) || !self.composition.text.is_empty() {
+            return;
+        }
+        let Ok(chord) = key.unparse().parse::<muxy_app_core::settings::KeyChord>() else {
+            return;
+        };
+        let Some(action) = self.terminal.keybindings.bindings.get(&chord).cloned() else {
+            return;
+        };
+        match action {
+            TerminalAction::Text(bytes) => self.send_paste(&bytes, cx),
+            TerminalAction::Ignore => {}
+            TerminalAction::Unbind => {
+                if input::uses_text_input(key, self.option_as_alt()) {
+                    return;
+                }
+                if let Some(grid) = &self.grid
+                    && let Some(bytes) =
+                        input::encode_with_bindings(key, grid.modes, self.option_as_alt(), false)
+                {
+                    self.send_paste(&bytes, cx);
+                }
+            }
+            TerminalAction::Copy => {
+                self.copy_selection(cx);
+            }
+            TerminalAction::Paste => self.paste_clipboard(cx),
+            TerminalAction::SelectAll => self.select_all(cx),
+            TerminalAction::Reload => {
+                window.dispatch_action(Box::new(crate::views::workspace::ReloadConfiguration), cx);
+            }
+            TerminalAction::ScrollTop => self.scroll_rows(f32::MAX, cx),
+            TerminalAction::ScrollBottom => self.scroll_to_bottom(cx),
+            TerminalAction::IncreaseFontSize(amount) => self.terminal.zoom(amount),
+            TerminalAction::DecreaseFontSize(amount) => self.terminal.zoom(-amount),
+            TerminalAction::ResetFontSize => self.terminal.font_size = self.configured_font_size,
+        }
+        cx.notify();
+        cx.stop_propagation();
+    }
+
+    fn option_as_alt(&self) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            let (left, right) = muxy_ui::keyboard::option_sides();
+            self.terminal.macos_option_as_alt.enabled(left, right)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            true
+        }
+    }
+
     fn terminal_key_down(
         &mut self,
         event: &gpui::KeyDownEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.focus.is_focused(window) {
+        if !self.focus.is_focused(window) || !self.composition.text.is_empty() {
             return;
         }
-        if let (Some(channel), Some(grid)) = (self.channel, &self.grid)
-            && let Some(bytes) = input::encode(&event.keystroke, grid.modes)
+        let option_as_alt = self.option_as_alt();
+        if !event.is_held && input::uses_text_input(&event.keystroke, option_as_alt) {
+            return;
+        }
+        if let Some(grid) = &self.grid
+            && let Some(bytes) = input::encode_with_bindings(
+                &event.keystroke,
+                grid.modes,
+                option_as_alt,
+                !self.terminal.keybindings.clear_defaults,
+            )
         {
-            self.scroll_to_bottom(cx);
-            cx.emit(PaneEvent::Input(channel, bytes));
+            self.send_paste(&bytes, cx);
             cx.stop_propagation();
         }
     }
@@ -1138,7 +1258,12 @@ impl Render for TerminalPane {
             .overflow_hidden()
             .rounded(self.corner_radius)
             .bg(gpui::Rgba {
-                a: self.background_opacity,
+                a: if self.terminal.options.background_opacity_cells {
+                    0.0
+                } else {
+                    self.background_opacity
+                        * self.terminal.options.background_opacity.unwrap_or(1.0)
+                },
                 ..gpui::rgb(palette.background)
             })
             .flex()
@@ -1206,7 +1331,7 @@ impl Render for TerminalPane {
                     .flex_1()
                     .min_h(px(0.0))
                     .overflow_hidden()
-                    .child(element::terminal(cx.entity(), palette)),
+                    .child(element::terminal(cx.entity(), &palette)),
             )
     }
 }
@@ -1265,6 +1390,254 @@ mod tests {
             size(px(10.0), px(20.0)),
         ));
         pane.cell_height = 20.0;
+    }
+
+    #[gpui::test]
+    fn keyboard_dispatch_respects_option_settings_and_text_input(cx: &mut TestAppContext) {
+        let (pane, cx) = cx.add_window_view(|window, cx| {
+            let mut pane = TerminalPane::new(
+                Palette::new(true),
+                muxy_app_core::settings::TerminalSettings::default(),
+                cx,
+            );
+            prepare_mouse(&mut pane);
+            pane.focus.focus(window);
+            pane
+        });
+        let input = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        cx.update(|_, cx| {
+            let input = input.clone();
+            cx.subscribe(&pane, move |_, event, _| {
+                if let PaneEvent::Input(_, bytes) = event {
+                    input.borrow_mut().extend_from_slice(bytes);
+                }
+            })
+            .detach();
+        });
+        cx.simulate_keystrokes("a shift-b space ctrl-c ctrl-left alt-left alt-f5");
+        assert_eq!(&*input.borrow(), b"aB \x03\x1b[1;5D\x1bb\x1b[15;3~");
+        for (setting, expected) in [
+            (muxy_app_core::settings::OptionAsAlt::True, "\x1bb"),
+            (muxy_app_core::settings::OptionAsAlt::False, "∫"),
+        ] {
+            input.borrow_mut().clear();
+            cx.update(|window, cx| {
+                pane.update(cx, |pane, _| pane.terminal.macos_option_as_alt = setting);
+                window.dispatch_keystroke(
+                    gpui::Keystroke {
+                        key: "b".into(),
+                        key_char: Some("∫".into()),
+                        modifiers: gpui::Modifiers {
+                            alt: true,
+                            ..gpui::Modifiers::default()
+                        },
+                    },
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+            assert_eq!(&*input.borrow(), expected.as_bytes());
+        }
+        input.borrow_mut().clear();
+        for (chord, text) in [("e", "e"), ("alt-b", "∫")] {
+            let mut keystroke = gpui::Keystroke::parse(chord).unwrap();
+            keystroke.key_char = Some(text.into());
+            cx.simulate_event(gpui::KeyDownEvent {
+                keystroke,
+                is_held: true,
+            });
+        }
+        cx.run_until_parked();
+        assert_eq!(&*input.borrow(), "e∫".as_bytes());
+        input.borrow_mut().clear();
+        pane.update(cx, |pane, cx| pane.set_state(PaneState::Disconnected, cx));
+        cx.simulate_keystrokes("a ctrl-c alt-left enter");
+        assert!(input.borrow().is_empty());
+    }
+
+    #[gpui::test]
+    fn configured_bindings_override_actions_reload_and_unbind(cx: &mut TestAppContext) {
+        use muxy_app_core::settings::TerminalAction;
+        let (pane, cx) = cx.add_window_view(|window, cx| {
+            let mut pane = TerminalPane::new(
+                Palette::new(true),
+                muxy_app_core::settings::TerminalSettings::default(),
+                cx,
+            );
+            prepare_mouse(&mut pane);
+            pane.focus.focus(window);
+            for (chord, action) in [
+                ("shift-enter", TerminalAction::Text(b"\x1b\r".to_vec())),
+                ("cmd-c", TerminalAction::Text(b"custom".to_vec())),
+                ("alt-left", TerminalAction::Unbind),
+                ("ctrl-k", TerminalAction::Ignore),
+            ] {
+                pane.terminal
+                    .keybindings
+                    .bindings
+                    .insert(chord.parse().unwrap(), action);
+            }
+            pane
+        });
+        let input = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        cx.update(|_, cx| {
+            cx.bind_keys([gpui::KeyBinding::new(
+                "cmd-c",
+                muxy_ui::text_input::Copy,
+                Some("TerminalPane"),
+            )]);
+            let input = input.clone();
+            cx.subscribe(&pane, move |_, event, _| {
+                if let PaneEvent::Input(_, bytes) = event {
+                    input.borrow_mut().extend_from_slice(bytes);
+                }
+            })
+            .detach();
+        });
+        cx.simulate_keystrokes("shift-enter cmd-c alt-left ctrl-k alt-up alt-down");
+        assert_eq!(&*input.borrow(), b"\x1b\rcustom\x1b[1;3D\x1b[1;3A\x1b[1;3B");
+        input.borrow_mut().clear();
+        pane.update(cx, |pane, _| {
+            pane.terminal.keybindings.bindings.clear();
+        });
+        cx.simulate_keystrokes("shift-enter alt-left");
+        assert_eq!(&*input.borrow(), b"\r\x1bb");
+    }
+
+    #[gpui::test]
+    fn configuration_controls_mouse_reporting_and_selection_lifecycle(cx: &mut TestAppContext) {
+        let (pane, cx) = cx.add_window_view(|_, cx| {
+            TerminalPane::new(
+                Palette::new(true),
+                muxy_app_core::settings::TerminalSettings::default(),
+                cx,
+            )
+        });
+        pane.update(cx, |pane, cx| {
+            prepare_mouse(pane);
+            pane.input_modes.mouse_tracking = true;
+            assert!(pane.reports_mouse(false));
+            pane.terminal.options.mouse_reporting = false;
+            assert!(!pane.reports_mouse(false));
+            assert!(!pane.reports_wheel());
+            pane.select_all(cx);
+            pane.terminal.options.selection_clear_on_copy = true;
+            pane.copy_selection_text(cx);
+            assert!(pane.selection.is_some(), "automatic copy keeps selection");
+            pane.copy_selection(cx);
+            assert!(
+                pane.selection.is_none(),
+                "explicit copy clears selection from any entry point"
+            );
+            pane.terminal.options.scroll_on_keystroke = false;
+            pane.scroll_rows(1.0, cx);
+            assert!(pane.scroll.view.is_some());
+            pane.select_all(cx);
+            pane.terminal.options.selection_clear_on_typing = true;
+            pane.send_paste(b"text", cx);
+            assert!(pane.selection.is_none());
+            assert!(pane.scroll.view.is_some());
+            pane.terminal.options.scroll_on_keystroke = true;
+            pane.send_paste(b"text", cx);
+            assert!(pane.scroll.view.is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn composition_preedit_stays_local_and_commit_sends_utf8_once(cx: &mut TestAppContext) {
+        use gpui::EntityInputHandler;
+        let (pane, cx) = cx.add_window_view(|window, cx| {
+            let mut pane = TerminalPane::new(
+                Palette::new(true),
+                muxy_app_core::settings::TerminalSettings::default(),
+                cx,
+            );
+            prepare_mouse(&mut pane);
+            pane.focus.focus(window);
+            pane
+        });
+        let input = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        cx.update(|_, cx| {
+            let input = input.clone();
+            cx.subscribe(&pane, move |_, event, _| {
+                if let PaneEvent::Input(_, bytes) = event {
+                    input.borrow_mut().push(bytes.clone());
+                }
+            })
+            .detach();
+        });
+        cx.update(|window, cx| {
+            pane.update(cx, |pane, cx| {
+                prepare_mouse(pane);
+                pane.replace_and_mark_text_in_range(None, "😀に", Some(2..3), window, cx);
+                assert_eq!(pane.marked_text_range(window, cx), Some(0..3));
+                assert_eq!(
+                    pane.selected_text_range(false, window, cx).unwrap().range,
+                    2..3
+                );
+                let mut actual = None;
+                assert_eq!(
+                    pane.text_for_range(0..2, &mut actual, window, cx)
+                        .as_deref(),
+                    Some("😀")
+                );
+                assert_eq!(actual, Some(0..2));
+                pane.replace_and_mark_text_in_range(Some(2..3), "日本", Some(1..1), window, cx);
+                assert_eq!(pane.composition.text, "😀日本");
+                assert_eq!(
+                    pane.selected_text_range(false, window, cx).unwrap().range,
+                    3..3
+                );
+                let bounds = pane
+                    .bounds_for_range(0..4, Bounds::default(), window, cx)
+                    .unwrap();
+                assert_eq!(bounds.origin, point(px(60.0), px(40.0)));
+                pane.terminal_key_down(
+                    &gpui::KeyDownEvent {
+                        keystroke: gpui::Keystroke::parse("enter").unwrap(),
+                        is_held: false,
+                    },
+                    window,
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
+        assert!(input.borrow().is_empty());
+        cx.update(|window, cx| {
+            pane.update(cx, |pane, cx| {
+                pane.replace_text_in_range(None, "😀日本", window, cx);
+                assert_eq!(pane.marked_text_range(window, cx), None);
+            });
+        });
+        cx.run_until_parked();
+        assert_eq!(&*input.borrow(), &["😀日本".as_bytes().to_vec()]);
+        input.borrow_mut().clear();
+        cx.update(|window, cx| {
+            pane.update(cx, |pane, cx| {
+                pane.replace_and_mark_text_in_range(None, "é", Some(1..1), window, cx);
+                pane.unmark_text(window, cx);
+                pane.unmark_text(window, cx);
+                assert!(pane.composition.text.is_empty());
+            });
+        });
+        cx.run_until_parked();
+        assert_eq!(&*input.borrow(), &["é".as_bytes().to_vec()]);
+        input.borrow_mut().clear();
+        cx.update(|window, cx| {
+            pane.update(cx, |pane, cx| {
+                pane.replace_and_mark_text_in_range(None, "cancelled", None, window, cx);
+                pane.replace_and_mark_text_in_range(None, "", None, window, cx);
+                pane.unmark_text(window, cx);
+                assert!(pane.composition.text.is_empty());
+                pane.set_state(PaneState::Disconnected, cx);
+                pane.replace_text_in_range(None, "lost", window, cx);
+                pane.replace_and_mark_text_in_range(None, "lost", None, window, cx);
+                assert!(pane.composition.text.is_empty());
+            });
+        });
+        cx.run_until_parked();
+        assert!(input.borrow().is_empty());
     }
 
     #[gpui::test]
@@ -1998,6 +2371,87 @@ mod tests {
         cx.run_until_parked();
         assert!(reported.borrow().is_empty());
         assert_eq!(&*input.borrow(), &[b"\x1b[I".to_vec(), b"\x1b[O".to_vec()]);
+    }
+
+    #[gpui::test]
+    fn composer_redraws_preserve_mouse_drag_and_completed_selection(cx: &mut TestAppContext) {
+        let (pane, cx) = cx.add_window_view(|_, cx| {
+            TerminalPane::new(
+                Palette::new(true),
+                muxy_app_core::settings::TerminalSettings::default(),
+                cx,
+            )
+        });
+        cx.update(|window, cx| {
+            pane.update(cx, |pane, cx| {
+                prepare_mouse(pane);
+                let mut terminal =
+                    muxy_terminal::Terminal::new(pane.viewport.unwrap(), 0).expect("terminal");
+                pane.mouse_down(
+                    &gpui::MouseDownEvent {
+                        position: point(px(0.0), px(5.0)),
+                        click_count: 1,
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                );
+                pane.mouse_move(
+                    &gpui::MouseMoveEvent {
+                        position: point(px(50.0), px(5.0)),
+                        pressed_button: Some(MouseButton::Left),
+                        ..Default::default()
+                    },
+                    cx,
+                );
+                let selection = pane.selection.expect("drag selection");
+                for (index, redraw) in [
+                    "\x1b[?2026h\x1b[H\x1b[2K\x1b[1;31malpha\x1b[0m updated\x1b[?2026l",
+                    "\x1b[?2026h\x1b[H\x1b[2K\x1b[34mal\x1b[2mpha\x1b[0m another footer\x1b[?2026l",
+                    "\x1b[Homega",
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    terminal.feed(redraw.as_bytes());
+                    pane.apply(
+                        &ScreenFrame {
+                            graphics: None,
+                            seq: index as u64 + 1,
+                            reset: false,
+                            rows: terminal.screen().expect("redrawn rows"),
+                            cursor: pane.grid.as_ref().unwrap().cursor,
+                            modes: Modes::default(),
+                        },
+                        cx,
+                    );
+                    if index == 2 {
+                        assert!(
+                            pane.selection.is_none(),
+                            "changed selected text clears selection"
+                        );
+                        continue;
+                    }
+                    assert_eq!(pane.selection, Some(selection));
+                    if index == 0 {
+                        assert!(pane.selecting.is_some(), "redraw keeps the drag active");
+                        pane.mouse_up(
+                            &gpui::MouseUpEvent {
+                                position: point(px(50.0), px(5.0)),
+                                ..Default::default()
+                            },
+                            window,
+                            cx,
+                        );
+                    }
+                    pane.copy_selection(cx);
+                    assert_eq!(
+                        cx.read_from_clipboard().unwrap().text().as_deref(),
+                        Some("alpha")
+                    );
+                }
+            });
+        });
     }
 
     #[gpui::test]

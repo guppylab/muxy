@@ -119,7 +119,7 @@ pub(crate) fn start(
             let terminal =
                 match Terminal::new(size, history_budget_bytes).and_then(|mut terminal| {
                     if let Some(colors) = colors {
-                        set_colors(&mut terminal, colors)?;
+                        set_colors(&mut terminal, &colors)?;
                     }
                     Ok(terminal)
                 }) {
@@ -180,14 +180,9 @@ pub(crate) fn start(
 
 fn set_colors(
     terminal: &mut Terminal,
-    colors: TerminalColors,
+    colors: &TerminalColors,
 ) -> Result<(), muxy_terminal::TerminalError> {
-    terminal.set_colors(
-        colors.foreground,
-        colors.background,
-        colors.cursor,
-        colors.ansi,
-    )
+    terminal.set_defaults(colors)
 }
 
 fn start_input(pty: &mut Pty, events: Sender<OwnerEvent>) -> Result<Sender<Vec<u8>>, ServerError> {
@@ -244,7 +239,8 @@ impl Owner {
                     }
                 }
                 Wake::Event(OwnerEvent::Command(SessionCommand::SetColors(colors))) => {
-                    set_colors(&mut self.terminal, colors)?;
+                    set_colors(&mut self.terminal, &colors)?;
+                    self.output_pending = true;
                 }
                 Wake::Event(OwnerEvent::Command(SessionCommand::Resize(size))) => {
                     self.resize(size)?;

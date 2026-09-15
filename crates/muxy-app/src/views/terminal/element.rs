@@ -1,3 +1,4 @@
+mod background;
 mod block;
 mod box_drawing;
 mod decoration;
@@ -27,11 +28,14 @@ struct Painting {
     blocks: Vec<(Bounds<Pixels>, Hsla)>,
     paths: Vec<(gpui::Path<Pixels>, Hsla)>,
     images: Vec<images::Placement>,
-    selections: Vec<Bounds<Pixels>>,
+    selections: Vec<(Bounds<Pixels>, Hsla)>,
     matches: Vec<(Bounds<Pixels>, bool)>,
     decorations: Vec<(Bounds<Pixels>, Hsla)>,
     cursor: Option<Bounds<Pixels>>,
     cursor_shape: muxy_protocol::CursorShape,
+    cursor_color: Hsla,
+    cursor_text: Hsla,
+    background_opacity: f32,
     cell: gpui::Size<Pixels>,
 }
 
@@ -45,12 +49,18 @@ struct PaintGlyph {
     emoji: bool,
 }
 
-pub(crate) fn terminal(view: Entity<TerminalPane>, palette: Palette) -> impl IntoElement {
+#[allow(
+    clippy::too_many_lines,
+    reason = "Keep terminal layout and input registration in the same canvas"
+)]
+pub(crate) fn terminal(view: Entity<TerminalPane>, palette: &Palette) -> impl IntoElement {
+    let palette = *palette;
     let mouse_view = view.clone();
     canvas(
         move |bounds, window, cx| {
-            let (base_font, font_size, cell) = typography(&view.read(cx).terminal, palette, window);
-            let frame = padding::Frame::new(bounds, cell);
+            let (base_font, font_size, cell) =
+                typography(&view.read(cx).terminal, &palette, window);
+            let frame = padding::Frame::configured(bounds, cell, &view.read(cx).terminal.options);
             let viewport = frame.viewport;
             #[cfg(target_os = "macos")]
             if let Some(native) = &view.read(cx).native_scroll {
@@ -88,7 +98,7 @@ pub(crate) fn terminal(view: Entity<TerminalPane>, palette: Palette) -> impl Int
                 view.read(cx),
                 frame.content.origin,
                 cell,
-                palette,
+                &palette,
                 &base_font,
                 font_size,
                 window,
@@ -118,24 +128,52 @@ pub(crate) fn terminal(view: Entity<TerminalPane>, palette: Palette) -> impl Int
                     }
                 }
             });
-            (painting, frame, frame.backgrounds(view.read(cx), palette))
+            (painting, frame, frame.backgrounds(view.read(cx), &palette))
         },
         move |bounds, (painting, frame, padding), window, cx| {
             let focus_border = mouse_view.read(cx).focus_border;
-            let mouse_view = mouse_view.clone();
+            let focus = mouse_view.read(cx).focus.clone();
+            window.handle_input(
+                &focus,
+                gpui::ElementInputHandler::new(frame.content, mouse_view.clone()),
+                cx,
+            );
+            let event_view = mouse_view.clone();
             window.on_mouse_event(move |event: &gpui::MouseMoveEvent, phase, _, cx| {
                 if phase.bubble() {
-                    mouse_view.update(cx, |pane, cx| pane.mouse_move(event, cx));
+                    event_view.update(cx, |pane, cx| pane.mouse_move(event, cx));
                 }
             });
-            for (bounds, color) in padding {
+            if mouse_view
+                .read(cx)
+                .terminal
+                .options
+                .background_opacity_cells
+            {
+                let clip = frame.grid.intersect(&frame.content);
+                let colored = painting
+                    .backgrounds
+                    .iter()
+                    .map(|(bounds, _)| bounds.intersect(&clip))
+                    .chain(padding.iter().map(|(bounds, _)| *bounds));
+                let mut color: Hsla = rgb(palette.background).into();
+                color.a = painting.background_opacity;
+                for bounds in background::uncovered(bounds, colored) {
+                    window.paint_quad(fill(bounds, color));
+                }
+            }
+            for (bounds, mut color) in padding {
+                color.a *= painting.background_opacity;
                 window.paint_quad(fill(bounds, color));
             }
             window.with_content_mask(
                 Some(gpui::ContentMask {
                     bounds: frame.grid.intersect(&frame.content),
                 }),
-                |window| paint(painting, palette, window, cx),
+                |window| {
+                    paint(painting, &palette, window, cx);
+                    super::ime::paint(&mouse_view, window, cx);
+                },
             );
             if let Some(color) = focus_border {
                 window.paint_quad(gpui::outline(bounds, color, gpui::BorderStyle::Solid));
@@ -159,7 +197,7 @@ fn viewport_size(bounds: gpui::Size<Pixels>, cell: gpui::Size<Pixels>) -> Size {
 
 fn typography(
     terminal: &muxy_app_core::settings::TerminalSettings,
-    palette: Palette,
+    palette: &Palette,
     window: &Window,
 ) -> (gpui::Font, Pixels, gpui::Size<Pixels>) {
     let font_size = px(terminal.font_size);
@@ -204,24 +242,33 @@ fn physical_cell(cell: gpui::Size<Pixels>, scale: f32) -> muxy_protocol::CellSiz
 struct RowRenderer<'a> {
     settings: &'a muxy_app_core::settings::FontOptions,
     cell: gpui::Size<Pixels>,
-    palette: Palette,
+    palette: &'a Palette,
     base_font: &'a gpui::Font,
     font_size: Pixels,
     metrics: (Pixels, Pixels),
     window: &'a mut Window,
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "Keep preparation of a complete frame together"
+)]
 fn prepare(
     view: &TerminalPane,
     origin: Point<Pixels>,
     cell: gpui::Size<Pixels>,
-    palette: Palette,
+    palette: &Palette,
     base_font: &gpui::Font,
     font_size: Pixels,
     window: &mut Window,
 ) -> Painting {
     let mut painting = Painting {
         cell,
+        background_opacity: if view.terminal.options.background_opacity_cells {
+            view.background_opacity * view.terminal.options.background_opacity.unwrap_or(1.0)
+        } else {
+            1.0
+        },
         thicken: if view.terminal.font.thicken {
             f32::from(view.terminal.font.thicken_strength) / 255.0
         } else {
@@ -261,10 +308,43 @@ fn prepare(
         search_highlights(view, start + index, position, cell, &mut painting);
         link_highlight(view, start + index, position, cell, palette, &mut painting);
         if let Some(bounds) = selection_bounds(view, start + index, position, cell) {
-            painting.selections.push(bounds);
+            let mut color: Hsla = rgb(palette
+                .selection_background
+                .map_or(palette.indexed(4), |color| {
+                    color.resolve(palette.foreground, palette.background)
+                }))
+            .into();
+            if palette.selection_background.is_none() {
+                color.a = 0.35;
+            }
+            painting.selections.push((bounds, color));
+            let mut column = 0;
+            if let Some(color) = palette.selection_background {
+                for run in runs {
+                    let run_bounds = Bounds::new(
+                        position + point(cell.width * f32::from(column), px(0.0)),
+                        size(cell.width * f32::from(run.width), cell.height),
+                    );
+                    let selected = run_bounds.intersect(&bounds);
+                    if selected.size.width > px(0.0) {
+                        let (fg, bg) = palette.style(run.style);
+                        painting
+                            .selections
+                            .push((selected, rgb(color.resolve(fg, bg)).into()));
+                    }
+                    column += run.width;
+                }
+            }
         }
+        let selected = view.selection.and_then(|selection| {
+            let row =
+                isize::try_from(start + index).ok()? - isize::try_from(grid.history.len()).ok()?;
+            let columns = selection.columns(row, grid);
+            (!columns.is_empty() && palette.selection_foreground.is_some())
+                .then(|| selected_runs(runs, columns, palette))
+        });
         renderer.row(
-            runs,
+            selected.as_deref().unwrap_or(runs),
             position,
             &mut painting,
             painting_thickens || (view.scroll.view.is_none() && row == grid.cursor.row),
@@ -278,6 +358,28 @@ fn prepare(
         && grid.cursor.row < height
     {
         painting.cursor_shape = grid.cursor.shape;
+        let cursor_style = grid
+            .content_row(grid.history.len() + usize::from(grid.cursor.row))
+            .and_then(|runs| {
+                let mut column = 0;
+                runs.iter()
+                    .find(|run| {
+                        column += run.width;
+                        column > grid.cursor.col
+                    })
+                    .map(|run| run.style)
+            })
+            .unwrap_or_default();
+        let (foreground, background) = palette.style(cursor_style);
+        painting.cursor_color = rgb(palette.cursor_color.map_or(palette.cursor, |color| {
+            color.resolve(foreground, background)
+        }))
+        .into();
+        painting.cursor_color.a = palette.cursor_opacity;
+        painting.cursor_text = rgb(palette.cursor_text.map_or(palette.background, |color| {
+            color.resolve(foreground, background)
+        }))
+        .into();
         painting.cursor = Some(Bounds::new(
             origin
                 + point(
@@ -288,6 +390,60 @@ fn prepare(
         ));
     }
     painting
+}
+
+fn selected_runs(runs: &[Run], selected: std::ops::Range<u16>, palette: &Palette) -> Vec<Run> {
+    let mut result = Vec::new();
+    let mut column = 0;
+    for run in runs {
+        let end = column + run.width;
+        let start_selected = selected.start.max(column).min(end);
+        let end_selected = selected.end.max(column).min(end);
+        if start_selected >= end_selected {
+            result.push(run.clone());
+        } else {
+            let (foreground, background) = palette.style(run.style);
+            let rgb = |color: u32| {
+                let [_, r, g, b] = color.to_be_bytes();
+                muxy_protocol::Color::Rgb(r, g, b)
+            };
+            let style = Style {
+                fg: rgb(palette
+                    .selection_foreground
+                    .map_or(foreground, |color| color.resolve(foreground, background))),
+                bg: if run.style.inverse {
+                    rgb(background)
+                } else {
+                    run.style.bg
+                },
+                inverse: false,
+                ..run.style
+            };
+            if run.text.is_ascii() && run.text.len() == usize::from(run.width) {
+                for (start, end, style) in [
+                    (column, start_selected, run.style),
+                    (start_selected, end_selected, style),
+                    (end_selected, end, run.style),
+                ] {
+                    if start < end {
+                        result.push(Run {
+                            text: run.text[usize::from(start - column)..usize::from(end - column)]
+                                .into(),
+                            width: end - start,
+                            style,
+                        });
+                    }
+                }
+            } else {
+                result.push(Run {
+                    style,
+                    ..run.clone()
+                });
+            }
+        }
+        column = end;
+    }
+    result
 }
 
 impl RowRenderer<'_> {
@@ -515,7 +671,7 @@ fn append_run(
     text: &mut String,
     styles: &mut Vec<TextRun>,
     columns: &mut Vec<u16>,
-    palette: Palette,
+    palette: &Palette,
     base_font: &gpui::Font,
 ) {
     if run.text.bytes().all(|byte| byte == b' ') {
@@ -604,7 +760,7 @@ fn configure_codepoint(
     }
 }
 
-fn text_run(len: usize, style: Style, palette: Palette, base_font: &gpui::Font) -> TextRun {
+fn text_run(len: usize, style: Style, palette: &Palette, base_font: &gpui::Font) -> TextRun {
     let mut font = base_font.clone();
     font.weight = if style.bold {
         FontWeight::BOLD
@@ -643,21 +799,24 @@ fn push_quad(quads: &mut Vec<(Bounds<Pixels>, Hsla)>, bounds: Bounds<Pixels>, co
     }
 }
 
-fn paint(painting: Painting, palette: Palette, window: &mut Window, cx: &mut App) {
+#[allow(
+    clippy::too_many_lines,
+    reason = "Keep the terminal paint order explicit"
+)]
+fn paint(painting: Painting, palette: &Palette, window: &mut Window, cx: &mut App) {
     images::paint(&painting.images, i64::MIN..i64::from(i32::MIN / 2), window);
-    for (bounds, color) in painting.backgrounds {
+    for (bounds, mut color) in painting.backgrounds {
+        color.a *= painting.background_opacity;
         window.paint_quad(fill(bounds, color));
     }
     images::paint(&painting.images, i64::from(i32::MIN / 2)..0, window);
-    let mut selection_color: Hsla = rgb(palette.indexed(4)).into();
     for (bounds, current) in painting.matches {
         let mut color: Hsla = rgb(palette.indexed(3)).into();
         color.a = if current { 0.65 } else { 0.25 };
         window.paint_quad(fill(bounds, color));
     }
-    selection_color.a = 0.35;
-    for bounds in painting.selections {
-        window.paint_quad(fill(bounds, selection_color));
+    for (bounds, color) in painting.selections {
+        window.paint_quad(fill(bounds, color));
     }
     for (bounds, color) in painting.decorations {
         window.paint_quad(fill(bounds, color));
@@ -696,7 +855,7 @@ fn paint(painting: Painting, palette: Palette, window: &mut Window, cx: &mut App
     }
     images::paint(&painting.images, 0..i64::MAX, window);
     if let Some(cursor) = painting.cursor {
-        let color: Hsla = rgb(palette.cursor).into();
+        let color = painting.cursor_color;
         let thickness = px(1.0 / window.scale_factor());
         match painting.cursor_shape {
             muxy_protocol::CursorShape::Bar => window.paint_quad(fill(
@@ -731,14 +890,14 @@ fn paint(painting: Painting, palette: Palette, window: &mut Window, cx: &mut App
                             glyph.font,
                             glyph.id,
                             glyph.size,
-                            rgb(palette.background).into(),
+                            painting.cursor_text,
                         );
                     }
                     for (path, _) in &painting.paths {
-                        window.paint_path(path.clone(), rgb(palette.background));
+                        window.paint_path(path.clone(), painting.cursor_text);
                     }
                     for &(bounds, _) in &painting.blocks {
-                        window.paint_quad(fill(bounds, rgb(palette.background)));
+                        window.paint_quad(fill(bounds, painting.cursor_text));
                     }
                 });
             }
@@ -751,7 +910,7 @@ fn link_highlight(
     index: usize,
     position: Point<Pixels>,
     cell: gpui::Size<Pixels>,
-    palette: Palette,
+    palette: &Palette,
     painting: &mut Painting,
 ) {
     let Some(grid) = view.displayed_grid() else {
@@ -784,6 +943,161 @@ fn link_highlight(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn configured_selection_and_cursor_colors_use_the_actual_cell(cx: &mut gpui::TestAppContext) {
+        use muxy_app_core::settings::TerminalColor;
+        let (pane, cx) = cx.add_window_view(|_, cx| {
+            TerminalPane::new(
+                Palette::new(true),
+                muxy_app_core::settings::TerminalSettings::default(),
+                cx,
+            )
+        });
+        cx.update(|window, cx| {
+            pane.update(cx, |pane, _| {
+                pane.terminal.options.cursor_color = Some(TerminalColor::CellBackground);
+                pane.terminal.options.cursor_text = Some(TerminalColor::CellForeground);
+                pane.terminal.options.cursor_opacity = 0.4;
+                pane.terminal.options.selection_foreground = Some(TerminalColor::Rgb(0xff_ff00));
+                pane.terminal.options.selection_background = Some(TerminalColor::Rgb(0x12_34_56));
+                pane.palette = pane.palette.with_options(&pane.terminal.options);
+                pane.selection = Some(super::super::selection::Selection {
+                    anchor: super::super::selection::Point { row: 0, column: 0 },
+                    head: super::super::selection::Point { row: 0, column: 2 },
+                });
+                pane.grid = Some(muxy_client::RunGrid::from_saved(
+                    muxy_protocol::SavedScreen {
+                        graphics: muxy_protocol::Graphics::default(),
+                        size: Size { cols: 4, rows: 1 },
+                        rows: vec![muxy_protocol::Row {
+                            index: 0,
+                            runs: vec![Run {
+                                text: "abcd".into(),
+                                width: 4,
+                                style: Style {
+                                    fg: muxy_protocol::Color::Rgb(255, 0, 0),
+                                    bg: muxy_protocol::Color::Rgb(0, 0, 255),
+                                    ..Default::default()
+                                },
+                            }],
+                        }],
+                        cursor: muxy_protocol::Cursor {
+                            row: 0,
+                            col: 3,
+                            visible: true,
+                            shape: muxy_protocol::CursorShape::default(),
+                        },
+                        reason: None,
+                    },
+                ));
+                pane.focused = true;
+                pane.cursor_blink.visible = true;
+                if let Some(grid) = &mut pane.grid {
+                    grid.cursor.visible = true;
+                }
+                let painting = prepare(
+                    pane,
+                    point(px(0.0), px(0.0)),
+                    size(px(8.0), px(16.0)),
+                    &pane.palette,
+                    &font("Menlo"),
+                    px(12.0),
+                    window,
+                );
+                let mut cursor: Hsla = rgb(0x00_00ff).into();
+                cursor.a = 0.4;
+                assert_eq!(painting.cursor_color, cursor);
+                assert_eq!(painting.cursor_text, rgb(0xff_0000).into());
+                assert!(
+                    painting
+                        .selections
+                        .iter()
+                        .any(|(bounds, color)| bounds.size.width == px(16.0)
+                            && *color == rgb(0x12_34_56).into())
+                );
+                assert!(
+                    painting
+                        .glyphs
+                        .iter()
+                        .any(|glyph| glyph.color == rgb(0xff_ff00).into())
+                );
+                assert!(
+                    painting
+                        .glyphs
+                        .iter()
+                        .any(|glyph| glyph.color == rgb(0xff_0000).into())
+                );
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn configured_selection_background_covers_trimmed_spaces_and_blank_rows(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use super::super::selection::{Point as CellPoint, Selection};
+        let (pane, cx) = cx.add_window_view(|_, cx| {
+            TerminalPane::new(
+                Palette::new(true),
+                muxy_app_core::settings::TerminalSettings::default(),
+                cx,
+            )
+        });
+        cx.update(|window, cx| {
+            pane.update(cx, |pane, _| {
+                pane.palette.selection_background =
+                    Some(muxy_app_core::settings::TerminalColor::Rgb(0x12_34_56));
+                pane.selection = Some(Selection {
+                    anchor: CellPoint { row: 0, column: 0 },
+                    head: CellPoint { row: 1, column: 4 },
+                });
+                pane.grid = Some(muxy_client::RunGrid::from_saved(
+                    muxy_protocol::SavedScreen {
+                        graphics: muxy_protocol::Graphics::default(),
+                        size: Size { cols: 4, rows: 2 },
+                        rows: vec![muxy_protocol::Row {
+                            index: 0,
+                            runs: vec![Run {
+                                text: "a".into(),
+                                width: 1,
+                                style: Style::default(),
+                            }],
+                        }],
+                        cursor: muxy_protocol::Cursor {
+                            row: 0,
+                            col: 0,
+                            visible: false,
+                            shape: muxy_protocol::CursorShape::default(),
+                        },
+                        reason: None,
+                    },
+                ));
+                if let Some(grid) = &mut pane.grid {
+                    grid.rows.push(Vec::new());
+                }
+                let painting = prepare(
+                    pane,
+                    point(px(0.0), px(0.0)),
+                    size(px(8.0), px(16.0)),
+                    &pane.palette,
+                    &font("Menlo"),
+                    px(12.0),
+                    window,
+                );
+                for row in [0.0, 1.0] {
+                    assert!(
+                        painting
+                            .selections
+                            .iter()
+                            .any(|(bounds, color)| bounds.origin.y == px(16.0 * row)
+                                && bounds.size.width == px(32.0)
+                                && *color == rgb(0x12_34_56).into())
+                    );
+                }
+            });
+        });
+    }
 
     #[gpui::test]
     fn cursor_painting_follows_blink_phase_and_terminal_visibility(cx: &mut gpui::TestAppContext) {
@@ -825,7 +1139,7 @@ mod tests {
                         pane,
                         point(px(0.0), px(0.0)),
                         size(px(8.0), px(16.0)),
-                        pane.palette,
+                        &pane.palette,
                         &font("Menlo"),
                         px(12.0),
                         window,
@@ -874,7 +1188,7 @@ mod tests {
                     pane,
                     point(px(0.0), px(0.0)),
                     size(px(8.0), px(16.0)),
-                    pane.palette,
+                    &pane.palette,
                     &font("Menlo"),
                     px(12.0),
                     window,
@@ -947,7 +1261,7 @@ mod tests {
                     pane,
                     point(px(0.0), px(0.0)),
                     size(px(8.0), px(16.0)),
-                    pane.palette,
+                    &pane.palette,
                     &font("Menlo"),
                     px(12.0),
                     window,
@@ -1020,7 +1334,7 @@ mod tests {
                     &mut text,
                     &mut styles,
                     &mut columns,
-                    Palette::new(true),
+                    &Palette::new(true),
                     &font("Menlo"),
                 );
                 assert_eq!(&text[start..], format!("{value}\u{200c}"));
@@ -1050,7 +1364,7 @@ mod tests {
             &mut text,
             &mut styles,
             &mut columns,
-            palette,
+            &palette,
             &font("Menlo"),
         );
         append_run(
@@ -1063,7 +1377,7 @@ mod tests {
             &mut text,
             &mut styles,
             &mut columns,
-            palette,
+            &palette,
             &font("Menlo"),
         );
         assert_eq!(text, "x\u{200c}");

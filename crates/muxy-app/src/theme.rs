@@ -97,6 +97,41 @@ impl Catalog {
             .or_else(|| self.entries.iter().find(|entry| entry.name == fallback))
     }
 
+    pub(crate) fn terminal_palette(
+        &self,
+        fallback: &Palette,
+        options: &muxy_app_core::settings::TerminalOptions,
+        dark: bool,
+        directory: &Path,
+    ) -> Result<Palette, String> {
+        let Some(value) = &options.theme else {
+            return Ok(fallback.with_options(options));
+        };
+        let name = terminal_theme_name(value, dark)?;
+        let palette = if let Some(entry) = self.entries.iter().find(|entry| entry.name == name) {
+            Palette::from_scheme(&entry.scheme, dark)
+        } else {
+            let path = if let Some(rest) = name.strip_prefix("~/") {
+                std::env::var_os("HOME")
+                    .map(std::path::PathBuf::from)
+                    .ok_or("Cannot resolve theme without a home directory")?
+                    .join(rest)
+            } else {
+                directory.join(name)
+            };
+            let source = fs::read_to_string(&path)
+                .map_err(|error| format!("Could not load terminal theme {name:?}: {error}"))?;
+            let scheme = ColorScheme::parse(&source);
+            if scheme.background.is_none() || scheme.foreground.is_none() {
+                return Err(format!(
+                    "Terminal theme {name:?} needs valid background and foreground colors"
+                ));
+            }
+            Palette::from_scheme(&scheme, dark)
+        };
+        Ok(palette.with_options(options))
+    }
+
     pub(crate) fn active_name(&self, appearance: &Appearance, dark: bool) -> String {
         self.selected(appearance, dark)
             .map_or_else(String::new, |entry| entry.name.clone())
@@ -113,6 +148,34 @@ impl Catalog {
     }
 }
 
+fn terminal_theme_name(value: &str, dark: bool) -> Result<&str, String> {
+    let value = value.trim();
+    let name = if value.starts_with("dark:") || value.starts_with("light:") {
+        let prefix = if dark { "dark:" } else { "light:" };
+        value
+            .split(',')
+            .map(str::trim)
+            .find_map(|part| part.strip_prefix(prefix))
+            .ok_or_else(|| {
+                format!(
+                    "theme needs a {} entry",
+                    if dark { "dark" } else { "light" }
+                )
+            })?
+    } else {
+        value
+    }
+    .trim();
+    let name = name
+        .strip_prefix('"')
+        .and_then(|name| name.strip_suffix('"'))
+        .unwrap_or(name);
+    if name.is_empty() || name.contains('"') {
+        return Err("Invalid terminal theme name".into());
+    }
+    Ok(name)
+}
+
 pub(crate) fn is_dark(window: &Window) -> bool {
     matches!(
         window.appearance(),
@@ -123,6 +186,43 @@ pub(crate) fn is_dark(window: &Window) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terminal_theme_selection_and_color_overrides_follow_appearance() {
+        let catalog = Catalog {
+            entries: vec![
+                Entry {
+                    name: "Dark".into(),
+                    scheme: ColorScheme::parse("background = 123456\nforeground = abcdef"),
+                },
+                Entry {
+                    name: "Light".into(),
+                    scheme: ColorScheme::parse("background = fedcba\nforeground = 654321"),
+                },
+            ],
+            errors: Vec::new(),
+        };
+        let mut options = muxy_app_core::settings::TerminalOptions {
+            theme: Some("dark:\"Dark\",light:\"Light\"".into()),
+            ..Default::default()
+        };
+        for (dark, background) in [(true, 0x12_34_56), (false, 0xfe_dc_ba)] {
+            assert_eq!(
+                catalog
+                    .terminal_palette(&Palette::new(dark), &options, dark, Path::new("."))
+                    .expect("palette")
+                    .background,
+                background
+            );
+        }
+        options.background = Some(0x11_22_33);
+        options.palette.insert(196, 0x23_45_67);
+        let palette = catalog
+            .terminal_palette(&Palette::new(true), &options, true, Path::new("."))
+            .expect("palette");
+        assert_eq!(palette.background, 0x11_22_33);
+        assert_eq!(palette.indexed(196), 0x23_45_67);
+    }
 
     #[test]
     fn themes_are_discovered_reloaded_and_override_bundled_files()

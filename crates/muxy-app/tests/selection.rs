@@ -150,3 +150,56 @@ fn older_pages_do_not_move_selection_and_selected_rows_detect_changes() {
     grid.rows[0] = vec![run("changed", 7)];
     assert_ne!(selected.rows(&grid), before);
 }
+
+#[test]
+fn selected_content_ignores_redraw_styles_and_changes_outside_its_columns() {
+    let mut grid = grid();
+    let selected = selection((0, 0), (0, 3));
+    let before = selected.rows(&grid);
+    grid.rows[0] = vec![run("one updated footer", 18)];
+    assert_eq!(selected.rows(&grid), before);
+    grid.rows[0] = vec![run("o", 1), run("ne", 2), run(" changed again", 14)];
+    grid.rows[0][0].style.bold = true;
+    grid.rows[0][1].style.faint = true;
+    assert_eq!(selected.rows(&grid), before);
+    assert_eq!(selected.text(&grid), "one");
+    grid.rows[0][1].text = "ff".into();
+    assert_ne!(selected.rows(&grid), before);
+}
+
+#[test]
+fn selected_blank_cells_survive_equivalent_padding_but_detect_new_text() {
+    let mut grid = grid();
+    let selected = selection((2, 4), (2, 10));
+    let before = selected.rows(&grid);
+    grid.rows[2] = vec![run("last", 4)];
+    assert_eq!(selected.rows(&grid), before);
+    grid.rows[2] = vec![run("last      ", 10)];
+    grid.rows[2][0].style.bold = true;
+    assert_eq!(selected.rows(&grid), before);
+    grid.rows[2] = vec![run("last text", 9)];
+    assert_ne!(selected.rows(&grid), before);
+}
+
+#[test]
+fn multiline_and_wide_selections_track_only_selected_text_and_cell_boundaries() {
+    let mut grid = grid();
+    let selected = selection((0, 5), (1, 6));
+    let before = selected.rows(&grid);
+    grid.rows[0][0].text = "new: two.three   ".into();
+    grid.rows[1][4].text = " later".into();
+    grid.rows[1][4].width = 6;
+    for run in &mut grid.rows[1] {
+        run.style.italic = true;
+    }
+    assert_eq!(selected.rows(&grid), before);
+    grid.rows[1][3].text = "👨‍💻".into();
+    assert_ne!(selected.rows(&grid), before);
+
+    let wide = selection((1, 1), (1, 2));
+    let before = wide.rows(&grid);
+    grid.rows[1][1].width = 1;
+    assert_ne!(wide.rows(&grid), before);
+    grid.size.cols = 1;
+    assert!(wide.rows(&grid).is_empty());
+}

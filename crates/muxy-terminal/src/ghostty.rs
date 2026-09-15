@@ -118,6 +118,40 @@ impl Terminal {
         })
     }
 
+    pub fn set_defaults(
+        &mut self,
+        defaults: &muxy_protocol::TerminalColors,
+    ) -> Result<(), TerminalError> {
+        let colors = |error| TerminalError::wrap(TerminalStep::Colors, error);
+        self.engine
+            .set_default_color_palette(None)
+            .map_err(colors)?;
+        self.set_colors(
+            defaults.foreground,
+            defaults.background,
+            defaults.cursor,
+            defaults.ansi,
+        )?;
+        let mut palette = self.engine.default_color_palette().map_err(colors)?;
+        for (&index, &[r, g, b]) in &defaults.palette {
+            palette.set(PaletteIndex(index), RgbColor { r, g, b });
+        }
+        let style = defaults.cursor_style.map(|style| match style {
+            crate::CursorShape::Block => libghostty_vt::terminal::CursorStyle::Block,
+            crate::CursorShape::Bar => libghostty_vt::terminal::CursorStyle::Bar,
+            crate::CursorShape::Underline => libghostty_vt::terminal::CursorStyle::Underline,
+            crate::CursorShape::Hollow => libghostty_vt::terminal::CursorStyle::BlockHollow,
+        });
+        self.engine
+            .set_default_color_palette(Some(palette))
+            .map_err(colors)?
+            .set_default_cursor_style(style)
+            .map_err(colors)?
+            .set_default_cursor_blink(Some(defaults.cursor_blink.unwrap_or(true)))
+            .map_err(colors)?;
+        Ok(())
+    }
+
     pub fn set_colors(
         &mut self,
         foreground: [u8; 3],

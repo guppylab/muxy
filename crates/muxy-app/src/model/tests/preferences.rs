@@ -9,6 +9,45 @@ use crate::views::settings::{Change, SettingsEvent};
 use muxy_core::shortcuts::ShortcutSettings;
 
 #[gpui::test]
+fn unsupported_ghostty_settings_are_reported_in_preferences_without_workspace_errors(
+    cx: &mut TestAppContext,
+) {
+    let (mut boot, _requests) = stub_boot(AppState::bootstrap().expect("state"));
+    let path = boot.state_path.with_file_name("ghostty.conf");
+    std::fs::create_dir_all(path.parent().expect("directory")).expect("config directory");
+    std::fs::write(
+        &path,
+        "font-size = 21\nwindow-height = 510\nwindow-width = 1640\nwindow-save-state = always\nmacos-titlebar-style = native\n",
+    )
+    .expect("config");
+    boot.terminal = muxy_app_core::settings::TerminalSettings::load_with_seed(&path, None)
+        .expect("terminal settings");
+    let (view, cx) = settings_window(boot, cx);
+    view.read_with(cx, |model, _| {
+        assert!(model.configuration_error.is_none());
+        assert_eq!(model.terminal.font_size, 21.0);
+        assert_eq!(model.terminal.diagnostics.len(), 4);
+    });
+    click_preference(cx, "settings-category-Terminal");
+    assert!(
+        cx.debug_bounds("settings-terminal-configuration-warnings")
+            .is_some()
+    );
+    view.update(cx, |model, cx| {
+        std::fs::write(&path, "font-size = 20\n").expect("updated config");
+        model.reload_configuration(cx);
+        assert!(model.configuration_error.is_none());
+        assert!(model.terminal.diagnostics.is_empty());
+        assert_eq!(model.terminal.font_size, 20.0);
+    });
+    cx.run_until_parked();
+    assert!(
+        cx.debug_bounds("settings-terminal-configuration-warnings")
+            .is_none()
+    );
+}
+
+#[gpui::test]
 fn collapsed_sidebar_style_control_saves_without_expanding_the_sidebar(cx: &mut TestAppContext) {
     use muxy_app_core::settings::{Settings, SidebarCollapsedStyle};
     let (boot, _requests) = stub_boot(AppState::bootstrap().expect("state"));
@@ -105,6 +144,11 @@ fn settings_window(
     boot: Boot,
     cx: &mut TestAppContext,
 ) -> (Entity<AppModel>, &mut VisualTestContext) {
+    let config = boot.state_path.with_file_name("ghostty.conf");
+    if !config.exists() {
+        muxy_app_core::settings::TerminalSettings::load_with_seed(&config, None)
+            .expect("isolated terminal configuration");
+    }
     let (model, main) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
     main.update(|window, cx| model.update(cx, |model, cx| model.open_settings(window, cx)));
     let handle = model.read_with(main, |model, _| {

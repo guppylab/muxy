@@ -34,6 +34,7 @@ mod views {
         pub(crate) mod cursor;
         pub(crate) mod element;
         pub(crate) mod find;
+        pub(crate) mod ime;
         pub(crate) mod input;
         pub(crate) mod links;
         pub(crate) mod pane;
@@ -114,6 +115,10 @@ fn main() -> ExitCode {
             };
             if let Err(error) = cx.open_window(options, |window, cx| {
                 let model = cx.new(|cx| AppModel::new(boot, window, cx));
+                let configuration = model.downgrade();
+                cx.on_action(move |_: &views::workspace::ReloadConfiguration, cx| {
+                    let _ = configuration.update(cx, AppModel::reload_configuration);
+                });
                 let weak = model.downgrade();
                 window.on_window_should_close(cx, move |_, cx| {
                     if weak.update(cx, AppModel::quit).is_err() {
@@ -182,6 +187,10 @@ fn menus() -> Vec<Menu> {
             items: vec![
                 MenuItem::action("Settings…", OpenSettings),
                 MenuItem::action("Open Configuration…", OpenConfiguration),
+                MenuItem::action(
+                    "Reload Configuration",
+                    views::workspace::ReloadConfiguration,
+                ),
                 MenuItem::action("Check for Updates…", CheckForUpdates),
                 MenuItem::action("Install Command Line Tool…", InstallCommandLineTool),
                 MenuItem::separator(),

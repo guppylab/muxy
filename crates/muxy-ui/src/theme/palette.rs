@@ -5,8 +5,28 @@ use std::collections::HashMap;
 pub struct ColorScheme {
     pub background: Option<Rgba>,
     pub foreground: Option<Rgba>,
-    pub cursor_color: Option<Rgba>,
+    pub cursor_color: Option<CellColor>,
+    pub cursor_text: Option<CellColor>,
+    pub selection_foreground: Option<CellColor>,
+    pub selection_background: Option<CellColor>,
     pub palette: HashMap<usize, Rgba>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CellColor {
+    Rgb(Rgba),
+    Foreground,
+    Background,
+}
+
+impl CellColor {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "cell-foreground" => Some(Self::Foreground),
+            "cell-background" => Some(Self::Background),
+            _ => parse_hex(value).map(Self::Rgb),
+        }
+    }
 }
 
 impl ColorScheme {
@@ -21,7 +41,10 @@ impl ColorScheme {
             match key {
                 "background" => theme.background = parse_hex(value),
                 "foreground" => theme.foreground = parse_hex(value),
-                "cursor-color" => theme.cursor_color = parse_hex(value),
+                "cursor-color" => theme.cursor_color = CellColor::parse(value),
+                "cursor-text" => theme.cursor_text = CellColor::parse(value),
+                "selection-foreground" => theme.selection_foreground = CellColor::parse(value),
+                "selection-background" => theme.selection_background = CellColor::parse(value),
                 "palette" => {
                     let Some((index, color)) = value.split_once('=') else {
                         continue;

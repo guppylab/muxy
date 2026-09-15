@@ -331,3 +331,45 @@ fn cursor_blinks_by_default_and_honors_application_modes() -> TestResult {
     assert!(terminal.cursor()?.visible);
     Ok(())
 }
+
+#[test]
+fn configured_palette_and_cursor_defaults_preserve_application_overrides() -> TestResult {
+    use muxy_protocol::{CursorShape, TerminalColors};
+    let mut terminal = terminal()?;
+    let mut defaults = TerminalColors {
+        foreground: [200; 3],
+        background: [20; 3],
+        cursor: [200; 3],
+        ansi: [[40; 3]; 16],
+        palette: std::collections::BTreeMap::from([(196, [0x12, 0x34, 0x56])]),
+        cursor_style: Some(CursorShape::Bar),
+        cursor_blink: Some(false),
+    };
+    terminal.set_defaults(&defaults)?;
+    assert_eq!(terminal.cursor()?.shape, CursorShape::Bar);
+    assert!(!terminal.cursor_blinking()?);
+    terminal.feed(b"\x1b]4;196;?\x07");
+    assert_eq!(
+        terminal.take_pty_output(),
+        color_reply("4;196", [0x12, 0x34, 0x56])
+    );
+    terminal.feed(b"\x1b[3 q\x1b]4;196;#abcdef\x07");
+    defaults.palette.clear();
+    defaults.cursor_style = Some(CursorShape::Hollow);
+    terminal.set_defaults(&defaults)?;
+    assert_eq!(terminal.cursor()?.shape, CursorShape::Underline);
+    assert!(terminal.cursor_blinking()?);
+    terminal.feed(b"\x1b]4;196;?\x07");
+    assert_eq!(
+        terminal.take_pty_output(),
+        color_reply("4;196", [0xab, 0xcd, 0xef])
+    );
+    terminal.feed(b"\x1b[0 q\x1b]104;196\x07\x1b]4;196;?\x07");
+    assert_eq!(terminal.cursor()?.shape, CursorShape::Hollow);
+    assert!(!terminal.cursor_blinking()?);
+    assert_eq!(
+        terminal.take_pty_output(),
+        color_reply("4;196", [255, 0, 0])
+    );
+    Ok(())
+}

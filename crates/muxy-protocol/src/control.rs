@@ -73,12 +73,15 @@ pub enum RequestBody {
     Git(crate::GitRequest),
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TerminalColors {
     pub foreground: [u8; 3],
     pub background: [u8; 3],
     pub cursor: [u8; 3],
     pub ansi: [[u8; 3]; 16],
+    pub palette: std::collections::BTreeMap<u8, [u8; 3]>,
+    pub cursor_style: Option<crate::CursorShape>,
+    pub cursor_blink: Option<bool>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

@@ -47,6 +47,7 @@ impl AppModel {
         }
         self.settings_window = None;
         let snapshot = self.preferences_snapshot();
+        self.refresh_theme(cx);
         let included_keys = muxy_app_core::settings::TerminalSettings::included_keys(
             &self.path.with_file_name("ghostty.conf"),
         )
@@ -301,7 +302,9 @@ impl AppModel {
         value: &str,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        let mut requested = self.terminal.clone();
+        let mut requested = muxy_app_core::settings::TerminalSettings::load(
+            &self.path.with_file_name("ghostty.conf"),
+        )?;
         match id {
             "font-family" => requested.font_families = vec![value.into()],
             "font-size" => requested.font_size = value.parse()?,
@@ -311,6 +314,7 @@ impl AppModel {
         let effective = requested.save(&self.path.with_file_name("ghostty.conf"))?;
         let changed_size = self.terminal.font_size.to_bits() != effective.font_size.to_bits();
         self.terminal = effective;
+        self.configuration_error = None;
         if changed_size {
             self.font_sizes.clear();
         }
@@ -318,12 +322,14 @@ impl AppModel {
             pane.view.update(cx, |pane, cx| {
                 let zoom = pane.terminal.font_size;
                 pane.terminal = self.terminal.clone();
+                pane.configured_font_size = self.terminal.font_size;
                 if !changed_size {
                     pane.terminal.font_size = zoom;
                 }
                 cx.notify();
             });
         }
+        self.refresh_theme(cx);
         let included_keys = muxy_app_core::settings::TerminalSettings::included_keys(
             &self.path.with_file_name("ghostty.conf"),
         )?;

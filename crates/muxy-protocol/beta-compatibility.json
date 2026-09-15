@@ -1,5 +1,5 @@
 {
-  "identifier": 7,
+  "identifier": 8,
   "wire": {
     "CancelCreation.bin": "031bc6d86abd1ea3445835db6184a96951140b35449fdbd0e0782a05b6c87d26",
     "Catalog.bin": "02dace73c7b8d79c93c0e0f4cd15177764638901fdfc10fde3b8ed0454cd4c95",
@@ -21,8 +21,8 @@
     "git_changed.bin": "ef735c08af47ad09516c803c5385311516a2cf774e59614a979e9c23dd545003",
     "git_reply.bin": "9c01a05402bec1e268f00ab107ac0cdcd4c24bdcc47a56cb68407da9beefacf5",
     "git_request.bin": "56ad3fca98297fc98a2557b7e5038a69fa46a2b3e48a03ddb6bf8fca182afac2",
-    "hello.bin": "598722e018fc185525ec520a47712cf005498aa61b2f929fa276e22b52a540d1",
-    "hello_reply.bin": "7075ea6faab16bf26b31bad21d93b0508c150c9862f5cf856a8ff17af6d80b70",
+    "hello.bin": "fff0ac7c8733922b95d90624a123f53c17c04ed26c1199e37b17efb9ee45aa02",
+    "hello_reply.bin": "48c2d15bb76e998991bbbcc1d4a4fe926bb806f8abc14f99716dec1c87e6720a",
     "history_metadata.bin": "fffff1f770355489db28b9f7fd7f13eaccece41a7dec86813394e3035d7dba64",
     "history_reply.bin": "f3061b12a4d1779645c7cd21662df438b5bc5dab22daf9d46cbbb7e0f6e82df5",
     "history_request.bin": "6c231c15b10f8254b6950d904c0e83a7df86ac0dfa00d0dda7d64283c2475eda",
@@ -53,7 +53,7 @@
     "stop_server.bin": "6f6514626acbb4aebba0a430320ab2f73ed17c187acadbfa01bb1ead167a3360",
     "stop_server_if_idle.bin": "671b39c9ee823eefbc29d55b40d7783b4491a985590935c05c16cb6f30ac69e7",
     "terminal_colors_reply.bin": "924c3a6b0c6b62e383e393d780ef585f0ebd58bede5fdd20d3376e6126a4bcec",
-    "terminal_colors_request.bin": "50b79eb498ede1f23d157e7a32df3b4416bb0b3f6f9fdf28ea8fdc38403ef8f7",
+    "terminal_colors_request.bin": "888b49ed3eaf3df6f80a845eb5a95352c48cb5ebe0ec2634cae2b2eca0412e35",
     "version_unsupported.bin": "ee6ce00a4e4bbb224418d69cb2089f11c0600878b380b5dba038952d8840cdbb",
     "write_server_settings.bin": "d9c0207ae48c72a15c83bf76f6fb01d7186cb56bed3936f011f30fd94b2520f6"
   }

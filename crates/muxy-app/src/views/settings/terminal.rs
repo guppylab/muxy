@@ -1,5 +1,5 @@
 use super::{Category, Change, PickerKind, SettingsEvent, SettingsView};
-use gpui::{AnyElement, Context, Window};
+use gpui::{AnyElement, Context, InteractiveElement, IntoElement, Window};
 use muxy_app_core::settings::NewPaneDirectory;
 use muxy_ui::controls::{self, Choice};
 
@@ -74,6 +74,21 @@ pub(super) fn rows(
                 }),
             ),
         ));
+    }
+    if !pane.snapshot.terminal.diagnostics.is_empty()
+        && pane.matches(Category::Terminal, "Configuration warnings")
+    {
+        rows.push(
+            pane.note(
+                &format!(
+                    "Muxy ignored the following unsupported Ghostty settings:\n\n{}",
+                    pane.snapshot.terminal.diagnostics.join("\n")
+                ),
+                false,
+            )
+            .debug_selector(|| "settings-terminal-configuration-warnings".into())
+            .into_any_element(),
+        );
     }
     rows
 }

@@ -16,7 +16,7 @@ impl Category {
             Self::General => &["Closing terminals", "Window size"],
             Self::Appearance => &["Themes", "Interface"],
             Self::Keyboard => &["Shortcuts"],
-            Self::Terminal => &["Text", "Behavior"],
+            Self::Terminal => &["Text", "Behavior", "Configuration"],
             Self::Server => &["Connection", "Sessions", "Server control"],
         }
     }

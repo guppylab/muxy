@@ -5,6 +5,7 @@ use muxy_protocol::Modes;
 
 pub(crate) fn paste(text: &str, modes: Modes) -> Vec<u8> {
     let text = text.replace("\r\n", "\n").replace('\n', "\r");
+    let text = text.replace(['\x1b', '\u{009b}'], "");
     bracket(text.into_bytes(), modes)
 }
 
@@ -49,5 +50,41 @@ fn bracket(text: Vec<u8>, modes: Modes) -> Vec<u8> {
         [b"\x1b[200~".as_slice(), &text, b"\x1b[201~"].concat()
     } else {
         text
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn paste_normalizes_newlines_and_removes_embedded_escape_sequences() {
+        let text = "first\r\nsecond\n\x1b[201~\rthird\u{009b}201~界\t";
+        for bracketed_paste in [false, true] {
+            let bytes = paste(
+                text,
+                Modes {
+                    bracketed_paste,
+                    ..Modes::default()
+                },
+            );
+            let expected = "first\rsecond\r[201~\rthird201~界\t";
+            let expected = if bracketed_paste {
+                format!("\x1b[200~{expected}\x1b[201~")
+            } else {
+                expected.to_owned()
+            };
+            assert_eq!(bytes, expected.as_bytes());
+        }
+        assert!(
+            paste(
+                "",
+                Modes {
+                    bracketed_paste: true,
+                    ..Modes::default()
+                }
+            )
+            .is_empty()
+        );
     }
 }

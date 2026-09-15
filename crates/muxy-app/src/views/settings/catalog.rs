@@ -143,6 +143,13 @@ pub(super) const SETTINGS: &[Setting] = &[
         section: "Behavior",
     },
     Setting {
+        id: "terminal-configuration-warnings",
+        label: "Configuration warnings",
+        description: "Unsupported Ghostty options in ghostty.conf are ignored.",
+        category: Category::Terminal,
+        section: "Configuration",
+    },
+    Setting {
         id: "server",
         label: "Current device",
         description: "Manage the local server that keeps your terminal sessions running.",
