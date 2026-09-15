@@ -1,3 +1,5 @@
+mod resize;
+
 use super::*;
 use gpui::{Bounds, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point};
 

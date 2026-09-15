@@ -89,6 +89,7 @@ pub(crate) struct AppModel {
     pub(crate) overlay_focus: FocusHandle,
     pub(crate) focus_requested: bool,
     pub(crate) split_resize: crate::views::splits::SplitResizeState,
+    pub(crate) sidebar_resize: Option<crate::views::sidebar::SidebarResize>,
     pub(crate) tab_drag: crate::views::tab_strip::TabDragState,
     pub(crate) tab_sidebar_selection: Option<(ProjectId, Option<TabId>)>,
     #[cfg(target_os = "macos")]
@@ -225,6 +226,7 @@ impl AppModel {
             self.refresh_quick_monitoring(cx);
         } else {
             self.cancel_titlebar_drag(cx);
+            self.finish_sidebar_resize(cx);
         }
         if let Some(pane) = self.active_pane().and_then(|id| self.terminal(&id)) {
             pane.view.update(cx, |pane, cx| {
@@ -287,6 +289,7 @@ impl AppModel {
             overlay_focus: cx.focus_handle(),
             focus_requested: false,
             split_resize: crate::views::splits::SplitResizeState::default(),
+            sidebar_resize: None,
             tab_drag: crate::views::tab_strip::TabDragState::default(),
             #[cfg(target_os = "macos")]
             window_drag: muxy_ui::window_drag::WindowDrag::new(&window.window_title()),

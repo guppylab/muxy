@@ -1,3 +1,8 @@
+mod resize;
+
+pub(crate) use resize::SidebarResize;
+pub(super) use resize::handle as resize_handle;
+
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -48,7 +53,15 @@ pub(crate) fn sidebar(model: &AppModel, window: &Window, cx: &mut Context<AppMod
 impl AppModel {
     pub(crate) fn sidebar_width(&self) -> f32 {
         if self.appearance.sidebar_expanded {
-            f32::from(self.metrics.sidebar_expanded_width())
+            let width = self
+                .appearance
+                .sidebar_expanded_width
+                .filter(|width| width.is_finite())
+                .map_or_else(
+                    || self.metrics.sidebar_expanded_width(),
+                    |width| self.metrics.scaled(width),
+                );
+            f32::from(self.clamp_expanded_sidebar_width(width))
         } else if self.appearance.layout == AppLayout::ProjectFocused
             && self.appearance.sidebar_collapsed_style == SidebarCollapsedStyle::Icons
         {
@@ -56,6 +69,13 @@ impl AppModel {
         } else {
             0.0
         }
+    }
+
+    fn clamp_expanded_sidebar_width(&self, width: Pixels) -> Pixels {
+        width.clamp(
+            self.metrics.sidebar_expanded_min_width(),
+            self.metrics.sidebar_expanded_max_width(),
+        )
     }
 
     pub(crate) fn sidebar_projects(&self) -> Vec<&Project> {

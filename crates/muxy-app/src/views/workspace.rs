@@ -369,6 +369,12 @@ impl Render for AppModel {
         if self.overlay.is_some() || self.close_prompt.is_some() {
             self.cancel_titlebar_drag(cx);
         }
+        if !self.appearance.sidebar_expanded
+            || self.overlay.is_some()
+            || self.close_prompt.is_some()
+        {
+            self.finish_sidebar_resize(cx);
+        }
         self.tab_drag
             .cancel_unavailable(self.state.current_project(), false);
         self.sync_pane_focus(cx);
@@ -438,6 +444,12 @@ impl Render for AppModel {
                     .bg(theme.border),
             )
             .child(titlebar::navigation(self, sidebar_width, cx))
+            .when(self.appearance.sidebar_expanded, |body| {
+                body.child(sidebar::resize_handle(self, cx))
+            })
+            .when(self.sidebar_resize.is_some(), |body| {
+                body.child(div().absolute().inset_0().cursor_ew_resize().occlude())
+            })
             .child(overlays::layer(self, window, cx))
     }
 }
