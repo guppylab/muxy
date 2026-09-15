@@ -24,6 +24,7 @@ use objc2_app_kit::{
     NSTextInputContextKeyboardSelectionDidChangeNotification, NSView, NSWindow,
     NSWindowCollectionBehavior, NSWindowStyleMask, NSWorkspace,
     NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification,
+    NSWorkspaceDidActivateApplicationNotification,
 };
 use objc2_core_foundation::{
     CFMachPort, CFRetained, CFRunLoop, CFRunLoopSource, kCFRunLoopCommonModes,
@@ -69,10 +70,16 @@ impl SystemObservers {
         let observers = unsafe {
             vec![
                 system_observer(
-                    workspace_center,
+                    workspace_center.clone(),
                     NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification,
                     sender.clone(),
                     SystemMutation::Accessibility,
+                ),
+                system_observer(
+                    workspace_center,
+                    NSWorkspaceDidActivateApplicationNotification,
+                    sender.clone(),
+                    SystemMutation::InputMonitoring,
                 ),
                 system_observer(
                     default_center.clone(),
@@ -254,7 +261,8 @@ pub struct PanelProperties {
     pub borderless: bool,
     pub nonactivating: bool,
     pub status_level: bool,
-    pub joins_all_spaces: bool,
+    pub moves_to_active_space: bool,
+    pub joins_all_applications: bool,
     pub full_screen_auxiliary: bool,
     pub ignores_cycle: bool,
     pub floating: bool,
@@ -270,7 +278,8 @@ impl PanelProperties {
         self.borderless
             && self.nonactivating
             && self.status_level
-            && self.joins_all_spaces
+            && self.moves_to_active_space
+            && self.joins_all_applications
             && self.full_screen_auxiliary
             && self.ignores_cycle
             && self.floating
@@ -331,7 +340,8 @@ impl PanelAdapter {
         let class = panel_class(original_window_class)?;
         native_window.setStyleMask(NSWindowStyleMask::NonactivatingPanel);
         native_window.setCollectionBehavior(
-            NSWindowCollectionBehavior::CanJoinAllSpaces
+            NSWindowCollectionBehavior::MoveToActiveSpace
+                | NSWindowCollectionBehavior::CanJoinAllApplications
                 | NSWindowCollectionBehavior::FullScreenAuxiliary
                 | NSWindowCollectionBehavior::IgnoresCycle,
         );
@@ -650,7 +660,9 @@ impl PanelAdapter {
             ),
             nonactivating: style.contains(NSWindowStyleMask::NonactivatingPanel),
             status_level: self.window.level() == NSStatusWindowLevel,
-            joins_all_spaces: behavior.contains(NSWindowCollectionBehavior::CanJoinAllSpaces),
+            moves_to_active_space: behavior.contains(NSWindowCollectionBehavior::MoveToActiveSpace),
+            joins_all_applications: behavior
+                .contains(NSWindowCollectionBehavior::CanJoinAllApplications),
             full_screen_auxiliary: behavior
                 .contains(NSWindowCollectionBehavior::FullScreenAuxiliary),
             ignores_cycle: behavior.contains(NSWindowCollectionBehavior::IgnoresCycle),
@@ -817,6 +829,9 @@ impl DoubleShiftBackend {
     }
 
     fn receive_local_event(&mut self, event: &NSEvent) {
+        if self.event_tap.is_some() {
+            return;
+        }
         let flags = NSEventModifierFlags(
             event.modifierFlags().0 & NSEventModifierFlags::DeviceIndependentFlagsMask.0,
         );
@@ -855,12 +870,6 @@ impl DoubleShiftBackend {
             || event_type == CGEventType::TapDisabledByUserInput
         {
             self.recover_disabled_event_tap();
-            return;
-        }
-        let Some(mtm) = MainThreadMarker::new() else {
-            return;
-        };
-        if NSApplication::sharedApplication(mtm).isActive() {
             return;
         }
         let flags = CGEvent::flags(Some(event));
@@ -1326,11 +1335,37 @@ unsafe extern "C-unwind" {
 )]
 mod tests {
     use super::{
-        CALayer, MacShortcutBackendFactory, NSPoint, NSRect, NSSize, carbon_modifiers,
-        set_mask_frame, sync_reveal_mask,
+        CALayer, CGEvent, CGEventFlags, CGEventType, DoubleShiftBackend, MacShortcutBackendFactory,
+        NSPoint, NSRect, NSSize, carbon_modifiers, set_mask_frame, sync_reveal_mask,
     };
     use muxy_core::quick_terminal::keys::{COMMAND, CONTROL, OPTION, SHIFT};
+    use std::cell::Cell;
+    use std::rc::Rc;
     use std::time::Duration;
+
+    #[test]
+    fn quick_terminal_global_double_shift_does_not_depend_on_app_focus() {
+        let count = Rc::new(Cell::new(0));
+        let observed = count.clone();
+        let mut backend = DoubleShiftBackend::new();
+        backend.trigger = Some(Rc::new(move || observed.set(observed.get() + 1)));
+        let event = CGEvent::new(None).unwrap();
+        for gesture in 0..3 {
+            for (offset, shift) in [(0, true), (100, false), (200, true), (300, false)] {
+                CGEvent::set_timestamp(Some(&event), (gesture * 1000 + offset) * 1_000_000);
+                CGEvent::set_flags(
+                    Some(&event),
+                    if shift {
+                        CGEventFlags::MaskShift
+                    } else {
+                        CGEventFlags::empty()
+                    },
+                );
+                backend.receive_global_event(CGEventType::FlagsChanged, &event);
+            }
+            assert_eq!(count.get(), gesture + 1);
+        }
+    }
 
     #[test]
     fn quick_terminal_shortcut_factory_owns_carbon_identifiers() {

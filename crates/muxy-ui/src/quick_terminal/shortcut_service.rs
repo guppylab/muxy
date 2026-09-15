@@ -301,6 +301,9 @@ impl QuickTerminalShortcutService {
         {
             return false;
         }
+        if self.refresh_input_monitoring_access() {
+            return true;
+        }
         if !self.factory.request_input_monitoring_access() {
             return false;
         }
@@ -457,6 +460,7 @@ mod tests {
         starts: usize,
         stops: usize,
         refreshes: usize,
+        refresh_states: VecDeque<MonitoringState>,
         trigger: Option<Rc<dyn Fn()>>,
         events: Vec<String>,
     }
@@ -493,8 +497,12 @@ mod tests {
         }
 
         fn refresh_system_wide_monitoring(&mut self) -> bool {
-            self.record.borrow_mut().refreshes += 1;
-            self.state = self.refreshed_state;
+            let mut record = self.record.borrow_mut();
+            record.refreshes += 1;
+            self.state = record
+                .refresh_states
+                .pop_front()
+                .unwrap_or(self.refreshed_state);
             self.state == MonitoringState::SystemWide
         }
     }
@@ -789,7 +797,7 @@ mod tests {
     }
 
     #[test]
-    fn quick_terminal_shortcut_explicit_grant_and_passive_refresh_are_distinct() {
+    fn quick_terminal_shortcut_existing_permission_does_not_prompt_again() {
         let (first, first_record) = backend(
             "first",
             MonitoringState::LocalOnly,
@@ -808,9 +816,62 @@ mod tests {
         assert!(service.refresh_input_monitoring_access());
         assert_eq!(requests.get(), 0);
         assert!(service.request_input_monitoring_access());
-        assert_eq!(requests.get(), 1);
+        assert_eq!(requests.get(), 0);
         assert_eq!(first_record.borrow().refreshes, 2);
         assert_eq!(service.monitoring_state(), MonitoringState::SystemWide);
+    }
+
+    #[test]
+    fn quick_terminal_shortcut_permission_grant_recovers_without_restarting() {
+        let (first, record) = backend(
+            "first",
+            MonitoringState::LocalOnly,
+            MonitoringState::SystemWide,
+            None,
+        );
+        record
+            .borrow_mut()
+            .refresh_states
+            .push_back(MonitoringState::LocalOnly);
+        let (mut service, requests) = service(
+            QuickTerminalShortcut::DoubleShift,
+            true,
+            vec![first],
+            vec![],
+            false,
+            |_| Ok(()),
+        );
+        service.start().unwrap();
+        assert!(!service.request_input_monitoring_access());
+        assert_eq!(requests.get(), 1);
+        assert_eq!(service.monitoring_state(), MonitoringState::LocalOnly);
+        assert!(service.refresh_input_monitoring_access());
+        assert_eq!(service.monitoring_state(), MonitoringState::SystemWide);
+        assert_eq!(record.borrow().starts, 1);
+        assert_eq!(requests.get(), 1);
+        record.borrow().trigger.as_ref().unwrap()();
+        assert!(service.try_receive_trigger());
+        assert!(!service.try_receive_trigger());
+    }
+
+    #[test]
+    fn quick_terminal_custom_shortcut_is_global_without_input_monitoring() {
+        let (first, record) = backend(
+            "first",
+            MonitoringState::CarbonHotKey,
+            MonitoringState::CarbonHotKey,
+            None,
+        );
+        let (mut service, requests) =
+            service(key_combo(), true, vec![], vec![first], false, |_| Ok(()));
+        service.start().unwrap();
+        assert!(!service.request_input_monitoring_access());
+        assert_eq!(requests.get(), 0);
+        assert_eq!(record.borrow().refreshes, 0);
+        assert_eq!(service.monitoring_state(), MonitoringState::CarbonHotKey);
+        record.borrow().trigger.as_ref().unwrap()();
+        assert!(service.try_receive_trigger());
+        assert!(!service.try_receive_trigger());
     }
 
     #[test]
@@ -849,7 +910,7 @@ mod tests {
             MonitoringState::LocalOnly,
             None,
         );
-        let (mut service, _) = service(
+        let (mut service, requests) = service(
             QuickTerminalShortcut::DoubleShift,
             false,
             vec![first],
@@ -858,6 +919,8 @@ mod tests {
             |_| Ok(()),
         );
         service.start().unwrap();
+        assert!(!service.request_input_monitoring_access());
+        assert_eq!(requests.get(), 0);
         assert_eq!(first_record.borrow().starts, 0);
         assert_eq!(service.monitoring_state(), MonitoringState::Stopped);
     }

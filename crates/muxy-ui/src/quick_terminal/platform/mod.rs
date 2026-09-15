@@ -10,6 +10,7 @@ use async_channel::Sender;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SystemMutation {
     Accessibility,
+    InputMonitoring,
     KeyboardLayout,
     Screens,
 }

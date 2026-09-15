@@ -57,6 +57,7 @@ impl QuickTerminalRuntime {
         );
         // Settings owns persistence; a prepared native registration commits only after a successful save.
         let _ = shortcuts.start();
+        shortcuts.request_input_monitoring_access();
         let triggers = shortcuts.trigger_receiver();
         let trigger_task = cx.spawn(async move |model, cx| {
             while triggers.recv().await.is_ok() {
@@ -77,6 +78,10 @@ impl QuickTerminalRuntime {
             while let Ok(mutation) = receiver.recv().await {
                 let _ = model.update(cx, |model, cx| {
                     match mutation {
+                        SystemMutation::InputMonitoring => {
+                            model.refresh_quick_monitoring(cx);
+                            return;
+                        }
                         SystemMutation::Accessibility => {
                             model.quick.accessibility = Self::accessibility();
                         }
@@ -453,8 +458,14 @@ impl AppModel {
             self.quick.shortcuts.cancel_prepared(prepared);
             return Err(error.to_string());
         }
+        let shortcut_activated = settings.enabled
+            && (!self.settings.quick_terminal.enabled
+                || settings.shortcut != self.settings.quick_terminal.shortcut);
         self.quick.shortcuts.commit_prepared(prepared);
         self.settings.quick_terminal = settings;
+        if shortcut_activated {
+            self.quick.shortcuts.request_input_monitoring_access();
+        }
         if !self.settings.quick_terminal.enabled {
             self.close_quick_terminal(cx);
         }
