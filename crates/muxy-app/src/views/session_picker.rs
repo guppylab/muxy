@@ -5,12 +5,10 @@ use crate::{boot::Work, model::AppModel};
 use gpui::{AppContext, Context, Focusable, Window};
 use muxy_app_core::ProjectId;
 use muxy_protocol::{ProjectSession, ProjectSessions, SessionId};
-use muxy_ui::command_popover::{
-    CommandPopover, CommandPopoverConfig, CommandPopoverDensity, CommandPopoverEvent,
-    CommandPopoverItem, CommandPopoverLeading, CommandPopoverPresentation, CommandPopoverRow,
-    CommandPopoverStatus, CommandPopoverTab,
-};
 use muxy_ui::icon::Icon;
+use muxy_ui::picker::{
+    Picker, PickerConfig, PickerEvent, PickerItem, PickerLeading, PickerRow, PickerStatus,
+};
 
 #[derive(Default)]
 pub(crate) struct ExistingSessions {
@@ -28,7 +26,7 @@ struct Listing {
 
 pub(crate) struct SessionPicker {
     pub(crate) project: ProjectId,
-    pub(crate) picker: gpui::Entity<CommandPopover>,
+    pub(crate) picker: gpui::Entity<Picker>,
 }
 
 impl AppModel {
@@ -39,21 +37,8 @@ impl AppModel {
         cx: &mut Context<Self>,
     ) {
         let picker = cx.new(|cx| {
-            CommandPopover::new(
-                CommandPopoverConfig {
-                    id: "project-terminals".into(),
-                    presentation: CommandPopoverPresentation::Modal,
-                    density: CommandPopoverDensity::Comfortable,
-                    tabs: vec![CommandPopoverTab::new("sessions", "Existing Terminals")],
-                    placeholder: "Filter terminals or owners…".into(),
-                    footer_actions: Vec::new(),
-                    footer_hints: Vec::new(),
-                    width: Some(640.0),
-                    height: Some(460.0),
-                    max_height: None,
-                    completion_on_tab: false,
-                    confirm_on_click: true,
-                },
+            Picker::new(
+                PickerConfig::new("project-terminals", "Filter terminals or owners…"),
                 self.theme.clone(),
                 self.metrics,
                 cx,
@@ -62,11 +47,11 @@ impl AppModel {
         picker.focus_handle(cx).focus(window);
         self.overlay_subscription =
             Some(cx.subscribe(&picker, |model, _, event, cx| match event {
-                CommandPopoverEvent::Confirmed(selection) => {
+                PickerEvent::Confirmed(selection) => {
                     model.choose_existing_session(selection.id.as_ref(), cx);
                 }
-                CommandPopoverEvent::Dismissed => model.dismiss_overlay(cx),
-                CommandPopoverEvent::QueryChanged { .. } => model.update_session_picker(cx),
+                PickerEvent::Dismissed => model.dismiss_overlay(cx),
+                PickerEvent::QueryChanged { .. } => model.update_session_picker(cx),
                 _ => {}
             }));
         self.overlay = Some(Overlay::Sessions(SessionPicker { project, picker }));
@@ -158,7 +143,6 @@ impl AppModel {
         };
         let query = picker.picker.read(cx).query().to_lowercase();
         let available = self.available_sessions(picker.project);
-        let count = available.len();
         let items: Vec<_> = available
             .into_iter()
             .filter_map(|session| {
@@ -173,22 +157,22 @@ impl AppModel {
                 {
                     return None;
                 }
-                let mut row = CommandPopoverRow::new(session.info.id.get().to_string(), title);
-                row.subtitle = Some(directory.into_owned().into());
-                row.leading = Some(CommandPopoverLeading::Icon(Icon::Terminal));
+                let mut row = PickerRow::new(session.info.id.get().to_string(), title);
+                row.detail = Some(directory.into_owned().into());
+                row.leading = Some(PickerLeading::Icon(Icon::Terminal));
                 row.trailing = Some(owner.into());
-                Some(CommandPopoverItem::Row(row))
+                Some(PickerItem::Row(row))
             })
             .collect();
         let listing = self.existing_sessions.projects.get(&picker.project);
         let status = if !self.session_listing_ready() {
-            CommandPopoverStatus::Error("Reconnect to see existing terminals".into())
+            PickerStatus::Error("Reconnect to see existing terminals".into())
         } else if let Some(error) = listing.and_then(|listing| listing.error.as_ref()) {
-            CommandPopoverStatus::Error(error.clone().into())
+            PickerStatus::Error(error.clone().into())
         } else if listing.is_none_or(|listing| listing.revision.is_none() && listing.pending) {
-            CommandPopoverStatus::Loading("Loading terminals…".into())
+            PickerStatus::Loading("Loading terminals…".into())
         } else if items.is_empty() {
-            CommandPopoverStatus::Empty(
+            PickerStatus::Empty(
                 if query.is_empty() {
                     "No other terminals in this project"
                 } else {
@@ -197,10 +181,9 @@ impl AppModel {
                 .into(),
             )
         } else {
-            CommandPopoverStatus::Ready
+            PickerStatus::Ready
         };
         picker.picker.update(cx, |picker, cx| {
-            picker.set_header_detail(Some(format!("{count} available")), cx);
             picker.set_items(items, cx);
             picker.set_status(status, cx);
         });

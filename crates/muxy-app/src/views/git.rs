@@ -7,10 +7,9 @@ use gpui::{
 use muxy_protocol::{
     GitAction, OperationId, ProjectId, ServerPath, WorktreeAction, WorktreeIntent,
 };
-use muxy_ui::command_popover::{
-    CommandPopover, CommandPopoverAction, CommandPopoverConfig, CommandPopoverDensity,
-    CommandPopoverEvent, CommandPopoverItem, CommandPopoverPresentation, CommandPopoverRow,
-    CommandPopoverSelectionStyle, CommandPopoverStatus, CommandPopoverTab,
+use muxy_ui::picker::{
+    Picker, PickerAction, PickerConfig, PickerEvent, PickerItem, PickerRow, PickerSelectionStyle,
+    PickerStatus,
 };
 use muxy_ui::text_input::{InputEvent, InputStyle, TextInput};
 
@@ -39,7 +38,7 @@ impl Kind {
 pub(crate) struct GitPicker {
     pub(crate) project: ProjectId,
     pub(crate) kind: Kind,
-    pub(crate) picker: Entity<CommandPopover>,
+    pub(crate) picker: Entity<Picker>,
     pub(crate) anchor: muxy_ui::popover::PopoverAnchor,
     selected: Vec<ServerPath>,
 }
@@ -47,7 +46,7 @@ pub(crate) struct Form {
     project: ProjectId,
     worktree: bool,
     existing: bool,
-    chooser: Option<Entity<CommandPopover>>,
+    chooser: Option<Entity<Picker>>,
     branch: Entity<TextInput>,
     directory: Entity<TextInput>,
     base: Entity<TextInput>,
@@ -72,26 +71,19 @@ impl AppModel {
             Kind::Changes => self.git.changes_anchor.clone(),
             Kind::Worktrees => self.git.worktrees_anchor.clone(),
         };
-        let (width, height) = match kind {
-            Kind::Branches => (440.0, 320.0),
-            Kind::Worktrees => (480.0, 320.0),
-            Kind::Changes => (400.0, 320.0),
+        let width = match kind {
+            Kind::Branches => 440.0,
+            Kind::Worktrees => 480.0,
+            Kind::Changes => 400.0,
         };
         let picker = cx.new(|cx| {
-            CommandPopover::new(
-                CommandPopoverConfig {
-                    id: "git-picker".into(),
-                    presentation: CommandPopoverPresentation::Popover,
-                    density: CommandPopoverDensity::Compact,
-                    tabs: vec![CommandPopoverTab::new("git", kind.title())],
-                    placeholder: format!("Search {}…", kind.title().to_lowercase()).into(),
-                    footer_actions: vec![],
-                    footer_hints: vec![],
+            Picker::new(
+                PickerConfig {
                     width: Some(width),
-                    height: Some(height),
-                    max_height: None,
-                    completion_on_tab: false,
-                    confirm_on_click: true,
+                    ..PickerConfig::popover(
+                        "git-picker",
+                        format!("Search {}…", kind.title().to_lowercase()),
+                    )
                 },
                 self.theme.clone(),
                 self.metrics,
@@ -101,15 +93,15 @@ impl AppModel {
         picker.focus_handle(cx).focus(window);
         self.overlay_subscription =
             Some(cx.subscribe(&picker, |model, _, event, cx| match event {
-                CommandPopoverEvent::Dismissed => model.dismiss_overlay(cx),
-                CommandPopoverEvent::QueryChanged { .. } => model.update_git_picker(cx),
-                CommandPopoverEvent::Confirmed(selection) => {
+                PickerEvent::Dismissed => model.dismiss_overlay(cx),
+                PickerEvent::QueryChanged { .. } => model.update_git_picker(cx),
+                PickerEvent::Confirmed(selection) => {
                     model.git_selection(selection.id.as_ref(), None, cx);
                 }
-                CommandPopoverEvent::RowAction { row, action } => {
+                PickerEvent::RowAction { row, action } => {
                     model.git_selection(row.as_ref(), Some(action.as_ref()), cx);
                 }
-                CommandPopoverEvent::FooterAction(action) => model.git_footer(action.as_ref(), cx),
+                PickerEvent::FooterAction(action) => model.git_footer(action.as_ref(), cx),
                 _ => (),
             }));
         self.overlay = Some(Overlay::Git(GitPicker {
@@ -139,13 +131,12 @@ impl AppModel {
             match picker.kind {
                 Kind::Branches => {
                     for branch in &repository.branches {
-                        let mut row =
-                            CommandPopoverRow::new(branch.name.clone(), branch.name.clone());
+                        let mut row = PickerRow::new(branch.name.clone(), branch.name.clone());
                         row.current = branch.current;
                         row.trailing = branch.checked_out.then(|| "Checked out".into());
                         if !branch.checked_out {
                             row.actions.push(
-                                CommandPopoverAction::new("delete", "Delete")
+                                PickerAction::new("delete", "Delete")
                                     .destructive(true)
                                     .disabled(busy),
                             );
@@ -156,13 +147,13 @@ impl AppModel {
                 }
                 Kind::Changes => {
                     for file in &repository.files {
-                        let mut row = CommandPopoverRow::new(
+                        let mut row = PickerRow::new(
                             path_key(&file.path),
                             String::from_utf8_lossy(&file.path.0).into_owned(),
                         );
                         row.selected = picker.selected.contains(&file.path);
-                        row.selection_style = CommandPopoverSelectionStyle::Highlight;
-                        row.subtitle = Some(
+                        row.selection_style = PickerSelectionStyle::Highlight;
+                        row.detail = Some(
                             if file.conflicted() {
                                 "Conflict"
                             } else if file.untracked() {
@@ -182,16 +173,15 @@ impl AppModel {
                             .map(|(a, d)| format!("+{a} −{d}").into());
                         if file.unstaged() || file.untracked() {
                             row.actions
-                                .push(CommandPopoverAction::new("stage", "Stage").disabled(busy));
+                                .push(PickerAction::new("stage", "Stage").disabled(busy));
                         }
                         if file.staged() {
-                            row.actions.push(
-                                CommandPopoverAction::new("unstage", "Unstage").disabled(busy),
-                            );
+                            row.actions
+                                .push(PickerAction::new("unstage", "Unstage").disabled(busy));
                         }
                         if !file.conflicted() && (file.unstaged() || file.untracked()) {
                             row.actions.push(
-                                CommandPopoverAction::new("discard", "Discard")
+                                PickerAction::new("discard", "Discard")
                                     .destructive(true)
                                     .disabled(busy),
                             );
@@ -202,14 +192,14 @@ impl AppModel {
                 }
                 Kind::Worktrees => {
                     for worktree in &repository.worktrees {
-                        let mut row = CommandPopoverRow::new(
+                        let mut row = PickerRow::new(
                             path_key(&worktree.directory),
                             worktree
                                 .branch
                                 .clone()
                                 .unwrap_or_else(|| "Detached HEAD".into()),
                         );
-                        row.subtitle = Some(
+                        row.detail = Some(
                             String::from_utf8_lossy(&worktree.directory.0)
                                 .into_owned()
                                 .into(),
@@ -231,18 +221,18 @@ impl AppModel {
             }
         }
         let items = picker_items(items, &query, picker.kind == Kind::Changes);
-        let mut actions = vec![CommandPopoverAction::new("refresh", "Refresh").disabled(busy)];
+        let mut actions = vec![PickerAction::new("refresh", "Refresh").disabled(busy)];
         match picker.kind {
             Kind::Branches => {
-                actions.push(CommandPopoverAction::new("create", "New Branch…").disabled(busy));
+                actions.push(PickerAction::new("create", "New Branch…").disabled(busy));
             }
             Kind::Worktrees => {
-                actions.push(CommandPopoverAction::new("create", "New Worktree…").disabled(busy));
+                actions.push(PickerAction::new("create", "New Worktree…").disabled(busy));
             }
             Kind::Changes => {
                 let selected = !picker.selected.is_empty();
                 actions.push(
-                    CommandPopoverAction::new(
+                    PickerAction::new(
                         "stage",
                         if selected {
                             "Stage Selected"
@@ -253,7 +243,7 @@ impl AppModel {
                     .disabled(busy),
                 );
                 actions.push(
-                    CommandPopoverAction::new(
+                    PickerAction::new(
                         "unstage",
                         if selected {
                             "Unstage Selected"
@@ -266,17 +256,17 @@ impl AppModel {
             }
         }
         let status = if !self.session_listing_ready() {
-            CommandPopoverStatus::Error("Reconnect to use Git".into())
+            PickerStatus::Error("Reconnect to use Git".into())
         } else if let Some(error) = repository.and_then(|r| r.load_error(&picker.kind.action())) {
-            CommandPopoverStatus::Error(error.clone().into())
+            PickerStatus::Error(error.clone().into())
         } else if repository.is_none_or(|r| !r.has_loaded(&picker.kind.action()))
             && items.is_empty()
         {
-            CommandPopoverStatus::Loading("Loading…".into())
+            PickerStatus::Loading("Loading…".into())
         } else if items.is_empty() {
-            CommandPopoverStatus::Empty("No matches".into())
+            PickerStatus::Empty("No matches".into())
         } else {
-            CommandPopoverStatus::Ready
+            PickerStatus::Ready
         };
         picker.picker.update(cx, |view, cx| {
             view.set_items(items, cx);
@@ -526,27 +516,10 @@ impl AppModel {
         };
         let project = form.project;
         let chooser = cx.new(|cx| {
-            CommandPopover::new(
-                CommandPopoverConfig {
-                    id: "worktree-branch".into(),
-                    presentation: CommandPopoverPresentation::Popover,
-                    density: CommandPopoverDensity::Compact,
-                    tabs: vec![CommandPopoverTab::new(
-                        "branch",
-                        if base {
-                            "Base Branch"
-                        } else {
-                            "Existing Branch"
-                        },
-                    )],
-                    placeholder: "Search branches…".into(),
-                    footer_actions: vec![],
-                    footer_hints: vec![],
+            Picker::new(
+                PickerConfig {
                     width: Some(450.0),
-                    height: None,
-                    max_height: Some(360.0),
-                    completion_on_tab: false,
-                    confirm_on_click: true,
+                    ..PickerConfig::popover("worktree-branch", "Search branches…")
                 },
                 self.theme.clone(),
                 self.metrics,
@@ -560,7 +533,7 @@ impl AppModel {
         };
         let subscription = cx.subscribe(&chooser, move |model, chooser, event, cx| {
             match event {
-                CommandPopoverEvent::Confirmed(selection) => {
+                PickerEvent::Confirmed(selection) => {
                     target.update(cx, |input, cx| input.set_text(selection.id.clone(), cx));
                     if let Some(Overlay::GitForm(form)) = &mut model.overlay {
                         form.chooser = None;
@@ -568,12 +541,12 @@ impl AppModel {
                     let focus = target.focus_handle(cx);
                     let _ = model.window.update(cx, |_, window, _| focus.focus(window));
                 }
-                CommandPopoverEvent::Dismissed => {
+                PickerEvent::Dismissed => {
                     if let Some(Overlay::GitForm(form)) = &mut model.overlay {
                         form.chooser = None;
                     }
                 }
-                CommandPopoverEvent::QueryChanged { query, .. } => {
+                PickerEvent::QueryChanged { query, .. } => {
                     model.worktree_branch_choices(project, &chooser, query.as_ref(), base, cx);
                 }
                 _ => (),
@@ -593,7 +566,7 @@ impl AppModel {
     fn worktree_branch_choices(
         &self,
         project: ProjectId,
-        chooser: &Entity<CommandPopover>,
+        chooser: &Entity<Picker>,
         query: &str,
         base: bool,
         cx: &mut Context<Self>,
@@ -607,12 +580,7 @@ impl AppModel {
                 r.branches
                     .iter()
                     .filter(|b| (base || !b.checked_out) && b.name.to_lowercase().contains(&query))
-                    .map(|b| {
-                        CommandPopoverItem::Row(CommandPopoverRow::new(
-                            b.name.clone(),
-                            b.name.clone(),
-                        ))
-                    })
+                    .map(|b| PickerItem::Row(PickerRow::new(b.name.clone(), b.name.clone())))
                     .collect()
             })
             .unwrap_or_default();
@@ -771,35 +739,31 @@ pub(crate) fn render_form(
     .into_any_element()
 }
 
-fn picker_items(
-    mut rows: Vec<CommandPopoverRow>,
-    query: &str,
-    group_by_status: bool,
-) -> Vec<CommandPopoverItem> {
+fn picker_items(mut rows: Vec<PickerRow>, query: &str, group_by_status: bool) -> Vec<PickerItem> {
     rows.retain(|row| {
         format!(
             "{} {}",
             row.title,
-            row.subtitle.as_ref().map_or("", |s| s.as_ref())
+            row.detail.as_ref().map_or("", |s| s.as_ref())
         )
         .to_lowercase()
         .contains(query)
     });
     if !group_by_status {
-        return rows.into_iter().map(CommandPopoverItem::Row).collect();
+        return rows.into_iter().map(PickerItem::Row).collect();
     }
-    rows.sort_by(|a, b| a.subtitle.cmp(&b.subtitle));
+    rows.sort_by(|a, b| a.detail.cmp(&b.detail));
     let mut items = Vec::new();
     let mut section = None;
     for mut row in rows {
-        let status = row.subtitle.take();
+        let status = row.detail.take();
         if status != section {
             if let Some(label) = &status {
-                items.push(CommandPopoverItem::section(label.clone()));
+                items.push(PickerItem::section(label.clone()));
             }
             section = status;
         }
-        items.push(CommandPopoverItem::Row(row));
+        items.push(PickerItem::Row(row));
     }
     items
 }
@@ -833,8 +797,8 @@ mod tests {
         ]
         .into_iter()
         .map(|(path, status)| {
-            let mut row = CommandPopoverRow::new(path, path);
-            row.subtitle = Some(status.into());
+            let mut row = PickerRow::new(path, path);
+            row.detail = Some(status.into());
             row
         })
         .collect();
@@ -843,8 +807,8 @@ mod tests {
         let mut grouped_files = Vec::new();
         for item in &items {
             match item {
-                CommandPopoverItem::Section(label) => group = label.as_ref(),
-                CommandPopoverItem::Row(row) => {
+                PickerItem::Section(label) => group = label.as_ref(),
+                PickerItem::Row(row) => {
                     grouped_files.push((group, row.id.as_ref()));
                 }
             }
@@ -863,17 +827,11 @@ mod tests {
         let filtered = picker_items(rows.clone(), "other", true);
         assert_eq!(
             filtered,
-            vec![
-                CommandPopoverItem::section("Unstaged"),
-                CommandPopoverItem::row("other.rs"),
-            ]
+            vec![PickerItem::section("Unstaged"), PickerItem::row("other.rs"),]
         );
         assert_eq!(
             picker_items(rows.clone(), "untracked", true),
-            vec![
-                CommandPopoverItem::section("Untracked"),
-                CommandPopoverItem::row("new.rs"),
-            ]
+            vec![PickerItem::section("Untracked"), PickerItem::row("new.rs"),]
         );
         assert!(picker_items(rows, "missing", true).is_empty());
     }

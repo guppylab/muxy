@@ -659,9 +659,7 @@ fn aliases_yield_to_explicit_bindings_and_conflicts_are_scoped() -> Result {
         ["cmd-]"]
     );
     assert_eq!(
-        settings
-            .keymap
-            .keys("popover.dismiss", Some("CommandPopover")),
+        settings.keymap.keys("popover.dismiss", Some("Picker")),
         ["ctrl-k"]
     );
     assert!(
@@ -678,7 +676,7 @@ fn aliases_yield_to_explicit_bindings_and_conflicts_are_scoped() -> Result {
     assert_eq!(
         remapped
             .keymap
-            .keys("popover.secondary_confirm", Some("CommandPopover")),
+            .keys("popover.secondary_confirm", Some("Picker")),
         ["ctrl-k"]
     );
     Ok(())
@@ -850,9 +848,7 @@ fn runtime_keymap_rebinding_reset_and_persistence_preserve_contexts_and_other_se
         vec!["cmd-c"]
     );
     assert_eq!(
-        loaded
-            .keymap
-            .keys("popover.dismiss", Some("CommandPopover")),
+        loaded.keymap.keys("popover.dismiss", Some("Picker")),
         vec!["escape"]
     );
     let reset = loaded.keymap.with_binding("new_tab", None)?;

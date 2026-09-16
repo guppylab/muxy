@@ -2,7 +2,7 @@
 //! app settings resolve them through the registration interface.
 
 pub mod assets;
-pub mod command_popover;
+pub mod command_palette;
 pub mod components;
 pub mod controls;
 #[cfg(target_os = "macos")]
@@ -17,6 +17,7 @@ pub mod motion;
 pub mod native_scroll;
 pub mod navigation;
 pub mod panel;
+pub mod picker;
 pub mod popover;
 pub mod scrollbar;
 pub mod shortcuts;

@@ -310,7 +310,7 @@ fn recorder_intercepts_app_actions_and_rebinding_keeps_widget_shortcuts(cx: &mut
             model
                 .settings
                 .keymap
-                .keys("popover.dismiss", Some("CommandPopover")),
+                .keys("popover.dismiss", Some("Picker")),
             vec!["escape"]
         );
         assert_eq!(

@@ -1,5 +1,5 @@
-use crate::command_popover::CommandPopover;
 use crate::components::{ButtonInteraction, SymbolGlyph};
+use crate::picker::Picker;
 use crate::text_input::TextInput;
 use crate::theme::{Metrics, Theme};
 use gpui::prelude::FluentBuilder;
@@ -117,7 +117,7 @@ pub fn picker(
     id: &str,
     choices: &[Choice],
     selected: &str,
-    popover: Option<Entity<CommandPopover>>,
+    popover: Option<Entity<Picker>>,
     on_toggle: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> AnyElement {
     let metrics = style.metrics;

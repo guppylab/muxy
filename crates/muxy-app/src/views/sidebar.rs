@@ -27,6 +27,58 @@ use muxy_ui::theme::{contrasting_foreground, parse_hex};
 
 use crate::model::AppModel;
 
+pub(crate) fn register_commands(
+    registry: &mut muxy_ui::command_palette::Registry<super::command_palette::Handler>,
+    model: &AppModel,
+    cx: &Context<AppModel>,
+) {
+    use super::command_palette::{Handler, action};
+    use muxy_core::shortcuts::ShortcutId;
+    use muxy_ui::command_palette::{Command, Registry};
+
+    registry.register(action(
+        model,
+        ShortcutId::AddProject,
+        "Open Project…",
+        super::workspace::AddProject,
+    ));
+    let model = cx.weak_entity();
+    registry.register(Command::list(
+        "switch_project",
+        "Switch Project…",
+        move |cx| {
+            let mut projects = Registry::default();
+            let Some(model) = model.upgrade() else {
+                return projects;
+            };
+            let model = model.read(cx);
+            for project in model.state.projects() {
+                let id = project.id;
+                let handler: Handler = Rc::new(move |model, _, cx| model.select_project(id, cx));
+                let title = project
+                    .parent_id
+                    .and_then(|parent| {
+                        model
+                            .state
+                            .projects()
+                            .iter()
+                            .find(|project| project.id == parent)
+                    })
+                    .map_or_else(
+                        || project.name.clone(),
+                        |parent| format!("{} / {}", parent.name, project.name),
+                    );
+                projects.register(
+                    Command::new(id.to_string(), title, handler)
+                        .keywords(project.directory.to_string_lossy())
+                        .disabled(project.status() == ProjectStatus::Missing),
+                );
+            }
+            projects
+        },
+    ));
+}
+
 pub(crate) fn sidebar(model: &AppModel, window: &Window, cx: &mut Context<AppModel>) -> AnyElement {
     let m = model.metrics;
     let header = header(model, cx);

@@ -66,6 +66,16 @@ fn existing_modal_filters_attached_sessions_preserves_owner_search_and_opens_one
         model.receive_session_page(project, Ok(page(5, entries.clone())), cx);
     });
     cx.run_until_parked();
+    let panel = cx
+        .debug_bounds("project-terminals")
+        .expect("compact terminal picker");
+    let row = cx.debug_bounds("picker-row-3").expect("terminal row");
+    let (width, row_height) = view.read_with(cx, |model, _| {
+        (model.metrics.scaled(480.0), model.metrics.scaled(32.0))
+    });
+    assert_eq!(panel.size.width, width);
+    assert_eq!(row.size.height, row_height);
+    assert!(panel.size.height < px(160.0));
     picker.update(cx, |picker, cx| {
         assert!(picker.select_row("1", cx).is_err());
         assert!(picker.select_row("2", cx).is_err());

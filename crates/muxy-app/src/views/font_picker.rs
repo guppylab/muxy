@@ -2,11 +2,7 @@ use gpui::{
     App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, Render,
     Subscription,
 };
-use muxy_ui::command_popover::{
-    CommandPopover, CommandPopoverConfig, CommandPopoverDensity, CommandPopoverEvent,
-    CommandPopoverItem, CommandPopoverPresentation, CommandPopoverRow, CommandPopoverStatus,
-    CommandPopoverTab,
-};
+use muxy_ui::picker::{Picker, PickerConfig, PickerEvent, PickerItem, PickerRow, PickerStatus};
 use muxy_ui::theme::{Metrics, Theme};
 
 pub(crate) enum FontEvent {
@@ -17,7 +13,7 @@ pub(crate) enum FontEvent {
 pub(crate) struct FontPicker {
     names: Vec<String>,
     active: String,
-    picker: Entity<CommandPopover>,
+    picker: Entity<Picker>,
     _subscription: Subscription,
 }
 
@@ -41,30 +37,16 @@ impl FontPicker {
         names.sort_unstable_by_key(|name| name.to_lowercase());
         names.dedup();
         let picker = cx.new(|cx| {
-            CommandPopover::new(
-                CommandPopoverConfig {
-                    id: "font-browser".into(),
-                    presentation: CommandPopoverPresentation::Popover,
-                    density: CommandPopoverDensity::Compact,
-                    tabs: vec![CommandPopoverTab::new("fonts", "Fonts")],
-                    placeholder: "Search fonts…".into(),
-                    footer_actions: Vec::new(),
-                    footer_hints: Vec::new(),
-                    width: Some(340.0),
-                    height: None,
-                    max_height: Some(360.0),
-                    completion_on_tab: false,
-                    confirm_on_click: true,
-                },
+            Picker::new(
+                PickerConfig::popover("font-browser", "Search fonts…"),
                 theme,
                 metrics,
                 cx,
             )
         });
         let subscription = cx.subscribe(&picker, |browser: &mut Self, _, event, cx| match event {
-            CommandPopoverEvent::QueryChanged { query, .. } => browser.sync_picker(query, cx),
-            CommandPopoverEvent::Confirmed(selection)
-            | CommandPopoverEvent::SecondaryConfirmed(selection) => {
+            PickerEvent::QueryChanged { query, .. } => browser.sync_picker(query, cx),
+            PickerEvent::Confirmed(selection) | PickerEvent::SecondaryConfirmed(selection) => {
                 if let Some(name) = selection
                     .id
                     .strip_prefix("font-")
@@ -74,7 +56,7 @@ impl FontPicker {
                     cx.emit(FontEvent::Selected(name.clone()));
                 }
             }
-            CommandPopoverEvent::Dismissed => cx.emit(FontEvent::Dismiss),
+            PickerEvent::Dismissed => cx.emit(FontEvent::Dismiss),
             _ => {}
         });
         let browser = Self {
@@ -100,15 +82,15 @@ impl FontPicker {
             .enumerate()
             .filter(|(_, name)| name.to_lowercase().contains(&query))
             .map(|(index, name)| {
-                let mut row = CommandPopoverRow::new(format!("font-{index}"), name.clone());
+                let mut row = PickerRow::new(format!("font-{index}"), name.clone());
                 row.current = *name == self.active;
-                CommandPopoverItem::Row(row)
+                PickerItem::Row(row)
             })
             .collect();
         let status = if items.is_empty() {
-            CommandPopoverStatus::Empty("No fonts found".into())
+            PickerStatus::Empty("No fonts found".into())
         } else {
-            CommandPopoverStatus::Ready
+            PickerStatus::Ready
         };
         self.picker.update(cx, |picker, cx| {
             picker.set_items(items, cx);

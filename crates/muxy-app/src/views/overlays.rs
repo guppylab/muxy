@@ -11,6 +11,7 @@ use super::{
 use crate::model::AppModel;
 
 pub(crate) enum Overlay {
+    Commands(Entity<muxy_ui::command_palette::CommandPalette<super::command_palette::Handler>>),
     Git(super::git::GitPicker),
     GitForm(super::git::Form),
     Sessions(super::session_picker::SessionPicker),
@@ -149,6 +150,7 @@ pub(crate) fn layer(model: &AppModel, window: &Window, cx: &mut Context<AppModel
         }
         Some(Overlay::Sessions(picker)) => picker.picker.clone().into_any_element(),
         Some(Overlay::Projects(picker)) => picker.clone().into_any_element(),
+        Some(Overlay::Commands(palette)) => palette.clone().into_any_element(),
         Some(Overlay::Themes { picker, anchor, .. }) => {
             let origin = anchor.map_or(point(px(8.0), viewport.height - px(12.0)), |anchor| {
                 anchor.origin

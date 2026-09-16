@@ -494,10 +494,10 @@ fn confirmation_dialog(
     let confirm_owner = owner.clone();
     div()
         .track_focus(focus)
-        .on_action(move |_: &muxy_ui::command_popover::Dismiss, _, cx| {
+        .on_action(move |_: &muxy_ui::picker::Dismiss, _, cx| {
             resolve_confirmation(&cancel_owner, false, cx);
         })
-        .on_action(move |_: &muxy_ui::command_popover::Confirm, _, cx| {
+        .on_action(move |_: &muxy_ui::picker::Confirm, _, cx| {
             resolve_confirmation(&confirm_owner, true, cx);
         })
         .absolute()

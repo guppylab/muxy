@@ -20,10 +20,6 @@ impl DirectoryItem {
     pub(crate) fn is_parent(&self) -> bool {
         matches!(self, Self::Parent)
     }
-
-    pub(crate) fn is_symlink(&self) -> bool {
-        matches!(self, Self::DirectorySymlink(_))
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

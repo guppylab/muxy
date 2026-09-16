@@ -2,11 +2,7 @@ use gpui::{
     App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, Render,
     Subscription,
 };
-use muxy_ui::command_popover::{
-    CommandPopover, CommandPopoverConfig, CommandPopoverDensity, CommandPopoverEvent,
-    CommandPopoverItem, CommandPopoverPresentation, CommandPopoverRow, CommandPopoverStatus,
-    CommandPopoverTab,
-};
+use muxy_ui::picker::{Picker, PickerConfig, PickerEvent, PickerItem, PickerRow, PickerStatus};
 use muxy_ui::theme::{Metrics, Theme};
 
 use crate::theme::Entry;
@@ -19,7 +15,7 @@ pub(crate) enum ThemeEvent {
 pub(crate) struct ThemePicker {
     entries: Vec<Entry>,
     active: String,
-    picker: Entity<CommandPopover>,
+    picker: Entity<Picker>,
     metrics: Metrics,
     _subscription: Subscription,
 }
@@ -41,30 +37,16 @@ impl ThemePicker {
         cx: &mut Context<Self>,
     ) -> Self {
         let picker = cx.new(|cx| {
-            CommandPopover::new(
-                CommandPopoverConfig {
-                    id: "theme-browser".into(),
-                    presentation: CommandPopoverPresentation::Popover,
-                    density: CommandPopoverDensity::Compact,
-                    tabs: vec![CommandPopoverTab::new("themes", "Themes")],
-                    placeholder: "Search themes…".into(),
-                    footer_actions: Vec::new(),
-                    footer_hints: Vec::new(),
-                    width: Some(340.0),
-                    height: None,
-                    max_height: Some(360.0),
-                    completion_on_tab: false,
-                    confirm_on_click: true,
-                },
+            Picker::new(
+                PickerConfig::popover("theme-browser", "Search themes…"),
                 theme,
                 metrics,
                 cx,
             )
         });
         let subscription = cx.subscribe(&picker, |browser: &mut Self, _, event, cx| match event {
-            CommandPopoverEvent::QueryChanged { query, .. } => browser.sync_picker(query, cx),
-            CommandPopoverEvent::Confirmed(selection)
-            | CommandPopoverEvent::SecondaryConfirmed(selection) => {
+            PickerEvent::QueryChanged { query, .. } => browser.sync_picker(query, cx),
+            PickerEvent::Confirmed(selection) | PickerEvent::SecondaryConfirmed(selection) => {
                 if let Some(entry) = selection
                     .id
                     .strip_prefix("theme-")
@@ -74,7 +56,7 @@ impl ThemePicker {
                     cx.emit(ThemeEvent::Selected(entry.name.clone()));
                 }
             }
-            CommandPopoverEvent::Dismissed => cx.emit(ThemeEvent::Dismiss),
+            PickerEvent::Dismissed => cx.emit(ThemeEvent::Dismiss),
             _ => {}
         });
         let browser = Self {
@@ -105,18 +87,18 @@ impl ThemePicker {
             .enumerate()
             .filter(|(_, entry)| entry.name.to_lowercase().contains(&query))
             .map(|(index, entry)| {
-                let mut row = CommandPopoverRow::new(format!("theme-{index}"), entry.name.clone());
+                let mut row = PickerRow::new(format!("theme-{index}"), entry.name.clone());
                 row.current = entry.name == self.active;
                 row.swatches = (0..16)
                     .filter_map(|slot| entry.scheme.palette_color(slot).map(Into::into))
                     .collect();
-                CommandPopoverItem::Row(row)
+                PickerItem::Row(row)
             })
             .collect();
         let status = if items.is_empty() {
-            CommandPopoverStatus::Empty("No themes found".into())
+            PickerStatus::Empty("No themes found".into())
         } else {
-            CommandPopoverStatus::Ready
+            PickerStatus::Ready
         };
         self.picker.update(cx, |picker, cx| {
             picker.set_items(items, cx);

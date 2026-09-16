@@ -7,12 +7,11 @@ use gpui::{
     App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, Render,
     Subscription,
 };
-use muxy_ui::command_popover::{
-    CommandPopover, CommandPopoverAction, CommandPopoverConfig, CommandPopoverDensity,
-    CommandPopoverEvent, CommandPopoverItem, CommandPopoverLeading, CommandPopoverPresentation,
-    CommandPopoverRow, CommandPopoverStatus, CommandPopoverTab,
-};
 use muxy_ui::icon::Icon;
+use muxy_ui::picker::{
+    Picker, PickerAction, PickerConfig, PickerEvent as ListEvent, PickerItem, PickerLeading,
+    PickerRow, PickerStatus,
+};
 use muxy_ui::theme::{Metrics, Theme};
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -44,7 +43,7 @@ pub(crate) enum PickerEvent {
 pub(crate) struct ProjectPicker {
     session: Session,
     search: SearchService,
-    picker: Entity<CommandPopover>,
+    picker: Entity<Picker>,
     generation: usize,
     cancelled: Arc<AtomicBool>,
     directory_cache: std::collections::HashMap<String, Vec<DirectoryItem>>,
@@ -70,26 +69,10 @@ impl ProjectPicker {
         cx: &mut Context<Self>,
     ) -> Self {
         let picker = cx.new(|cx| {
-            CommandPopover::new(
-                CommandPopoverConfig {
-                    id: "project-picker".into(),
-                    presentation: CommandPopoverPresentation::Modal,
-                    density: CommandPopoverDensity::Comfortable,
-                    tabs: vec![CommandPopoverTab::new("projects", "Projects")],
-                    placeholder: "Search folders or enter a path…".into(),
-                    footer_actions: vec![
-                        CommandPopoverAction::new("confirm-path", "Open")
-                            .icon(CommandPopoverLeading::Icon(Icon::Plus)),
-                        CommandPopoverAction::new("back", "Back"),
-                        CommandPopoverAction::new("finder", "Choose with Finder"),
-                        CommandPopoverAction::new("location", "Edit Search Location"),
-                    ],
-                    footer_hints: Vec::new(),
-                    width: Some(640.0),
-                    height: Some(460.0),
-                    max_height: None,
+            Picker::new(
+                PickerConfig {
                     completion_on_tab: true,
-                    confirm_on_click: true,
+                    ..PickerConfig::new("project-picker", "Search folders or enter a path…")
                 },
                 theme,
                 metrics,
@@ -100,35 +83,33 @@ impl ProjectPicker {
             cx.subscribe(
                 &picker,
                 |project_picker: &mut Self, _, event, cx| match event {
-                    CommandPopoverEvent::QueryChanged { query, .. } => {
+                    ListEvent::QueryChanged { query, .. } => {
                         project_picker.session.set_input(query.as_ref());
                         project_picker.reload(cx);
                     }
-                    CommandPopoverEvent::Confirmed(selection) => {
+                    ListEvent::Confirmed(selection) => {
                         project_picker.activate(selection.id.as_ref(), cx);
                     }
-                    CommandPopoverEvent::SelectionChanged(selection) => {
+                    ListEvent::SelectionChanged(selection) => {
                         project_picker.select(selection.id.as_ref(), cx);
                     }
-                    CommandPopoverEvent::SecondaryConfirmed(_)
-                    | CommandPopoverEvent::Submitted { secondary: true } => {
+                    ListEvent::SecondaryConfirmed(_) | ListEvent::Submitted { secondary: true } => {
                         project_picker.confirm(true, cx);
                     }
-                    CommandPopoverEvent::Submitted { secondary: false } => {
+                    ListEvent::Submitted { secondary: false } => {
                         project_picker.confirm(false, cx);
                     }
-                    CommandPopoverEvent::CompletionRequested => {
+                    ListEvent::CompletionRequested => {
                         project_picker.complete_highlighted(cx);
                     }
-                    CommandPopoverEvent::NavigateBackRequested => project_picker.go_back(cx),
-                    CommandPopoverEvent::FooterAction(action) => match action.as_ref() {
+                    ListEvent::NavigateBackRequested => project_picker.go_back(cx),
+                    ListEvent::FooterAction(action) => match action.as_ref() {
                         "confirm-path" => project_picker.confirm(true, cx),
-                        "back" => project_picker.go_back(cx),
                         "finder" => project_picker.choose_finder(cx),
                         "location" => project_picker.edit_search_location(cx),
                         _ => {}
                     },
-                    CommandPopoverEvent::Dismissed => cx.emit(PickerEvent::Dismiss),
+                    ListEvent::Dismissed => cx.emit(PickerEvent::Dismiss),
                     _ => {}
                 },
             );
@@ -268,10 +249,10 @@ impl ProjectPicker {
                     .enumerate()
                     .map(|(index, result)| {
                         let mut row =
-                            CommandPopoverRow::new(format!("search-{index}"), result.name.clone());
-                        row.subtitle = Some(result.display_path.clone().into());
-                        row.leading = Some(CommandPopoverLeading::Icon(Icon::Folder));
-                        CommandPopoverItem::Row(row)
+                            PickerRow::new(format!("search-{index}"), result.name.clone());
+                        row.detail = Some(result.display_path.clone().into());
+                        row.leading = Some(PickerLeading::Icon(Icon::Folder));
+                        PickerItem::Row(row)
                     })
                     .collect(),
                 InputMode::Path => self
@@ -280,7 +261,7 @@ impl ProjectPicker {
                     .iter()
                     .enumerate()
                     .map(|(index, item)| {
-                        let mut row = CommandPopoverRow::new(
+                        let mut row = PickerRow::new(
                             format!("path-{index}"),
                             if item.is_parent() {
                                 "Parent Directory".to_owned()
@@ -288,13 +269,12 @@ impl ProjectPicker {
                                 item.name().to_owned()
                             },
                         );
-                        row.subtitle = item.is_symlink().then(|| "Symbolic link".into());
-                        row.leading = Some(CommandPopoverLeading::Icon(if item.is_parent() {
+                        row.leading = Some(PickerLeading::Icon(if item.is_parent() {
                             Icon::ChevronLeft
                         } else {
                             Icon::Folder
                         }));
-                        CommandPopoverItem::Row(row)
+                        PickerItem::Row(row)
                     })
                     .collect(),
             }
@@ -307,35 +287,34 @@ impl ProjectPicker {
             } else {
                 "No matching folders"
             };
-            let mut row = CommandPopoverRow::new("path-unavailable", label);
+            let mut row = PickerRow::new("path-unavailable", label);
             row.disabled = true;
-            items.push(CommandPopoverItem::Row(row));
+            items.push(PickerItem::Row(row));
         }
         let status = match self.session.load_state {
             LoadState::Loading {
                 shows_message: true,
-            } => CommandPopoverStatus::Loading("Loading folders…".into()),
+            } => PickerStatus::Loading("Loading folders…".into()),
             LoadState::Loading {
                 shows_message: false,
-            } => CommandPopoverStatus::Loading("".into()),
-            LoadState::Failed if !items.is_empty() => CommandPopoverStatus::Ready,
-            LoadState::Failed => CommandPopoverStatus::Error("Could not read this folder".into()),
+            } => PickerStatus::Loading("".into()),
+            LoadState::Failed if !items.is_empty() => PickerStatus::Ready,
+            LoadState::Failed => PickerStatus::Error("Could not read this folder".into()),
             LoadState::Loaded if self.session.shows_unavailable_state() && !items.is_empty() => {
-                CommandPopoverStatus::Ready
+                PickerStatus::Ready
             }
             LoadState::Loaded if self.session.shows_unavailable_state() => {
-                CommandPopoverStatus::Empty("No matching folders".into())
+                PickerStatus::Empty("No matching folders".into())
             }
-            LoadState::Loaded => CommandPopoverStatus::Ready,
+            LoadState::Loaded => PickerStatus::Ready,
         };
         let ghost = self.session.ghost_text();
         let actions = vec![
-            CommandPopoverAction::new("confirm-path", self.session.top_right_action_title())
-                .icon(CommandPopoverLeading::Icon(Icon::Plus))
+            PickerAction::new("confirm-path", self.session.top_right_action_title())
+                .icon(PickerLeading::Icon(Icon::Plus))
                 .disabled(self.session.confirmation_path().is_none()),
-            CommandPopoverAction::new("back", "Back"),
-            CommandPopoverAction::new("finder", "Choose with Finder"),
-            CommandPopoverAction::new("location", "Edit Search Location"),
+            PickerAction::new("finder", "Finder…"),
+            PickerAction::new("location", "Search Location…"),
         ];
         self.picker.update(cx, |picker, cx| {
             picker.set_items(items, cx);
@@ -348,6 +327,7 @@ impl ProjectPicker {
                 let _ = picker.select_row(&format!("{prefix}-{index}"), cx);
             }
             picker.set_footer_actions(actions, cx);
+            picker.set_can_navigate_back(self.session.input_mode() == InputMode::Path, cx);
             picker
                 .input()
                 .update(cx, |input, cx| input.set_ghost(ghost, cx));
@@ -591,7 +571,7 @@ impl AppModel {
         if let Some(Overlay::Projects(picker)) = &self.overlay {
             picker.update(cx, |picker, cx| {
                 picker.picker.update(cx, |picker, cx| {
-                    picker.set_status(CommandPopoverStatus::Error(error.into()), cx);
+                    picker.set_status(PickerStatus::Error(error.into()), cx);
                 });
             });
         } else {
@@ -752,7 +732,7 @@ mod tests {
         std::fs::create_dir_all(root.join("Alpha/Child")).expect("mkdir");
         cx.update(|cx| {
             cx.bind_keys(muxy_ui::text_input::key_bindings());
-            cx.bind_keys(muxy_ui::command_popover::key_bindings());
+            cx.bind_keys(muxy_ui::picker::key_bindings());
         });
         let (view, cx) = cx.add_window_view(|window, cx| {
             let picker = ProjectPicker::new(
@@ -778,12 +758,27 @@ mod tests {
             assert!(picker.session.rows[0].is_parent());
             assert_eq!(picker.session.ghost_text(), "Alpha/");
         });
+        let panel = cx
+            .debug_bounds("project-picker")
+            .expect("compact project picker");
+        assert_eq!(panel.size.width, gpui::px(480.0));
+        let row = cx.debug_bounds("picker-row-path-1").expect("directory row");
+        assert_eq!(row.size.height, gpui::px(32.0));
         cx.simulate_keystrokes("tab");
         cx.run_until_parked();
         assert_eq!(
             view.read_with(cx, |picker, _| picker.session.input.clone()),
             format!("{}/Alpha/", root.display())
         );
+        let back = cx.debug_bounds("picker-back").expect("back button");
+        cx.simulate_click(back.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert_eq!(
+            view.read_with(cx, |picker, _| picker.session.input.clone()),
+            format!("{}/", root.display())
+        );
+        cx.simulate_keystrokes("tab");
+        cx.run_until_parked();
         cx.simulate_keystrokes("alt-backspace");
         cx.run_until_parked();
         assert_eq!(

@@ -25,6 +25,26 @@ use muxy_ui::form;
 use muxy_ui::text_input::{InputEvent, InputStyle, TextInput};
 use muxy_ui::theme::{Metrics, Theme};
 
+pub(crate) fn register_commands(
+    registry: &mut muxy_ui::command_palette::Registry<super::command_palette::Handler>,
+    model: &crate::model::AppModel,
+) {
+    use super::command_palette::action;
+    use muxy_core::shortcuts::ShortcutId;
+    registry.register(action(
+        model,
+        ShortcutId::OpenSettings,
+        "Open Settings",
+        super::workspace::OpenSettings,
+    ));
+    registry.register(action(
+        model,
+        ShortcutId::ToggleThemePicker,
+        "Change Theme…",
+        super::workspace::ToggleThemePicker,
+    ));
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum Category {
     General,

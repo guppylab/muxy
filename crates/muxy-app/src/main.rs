@@ -8,6 +8,7 @@ mod server;
 mod theme;
 mod updater;
 mod views {
+    pub(crate) mod command_palette;
     pub(crate) mod confirm;
     pub(crate) mod disconnected;
     pub(crate) mod font_picker;
@@ -59,8 +60,8 @@ use views::workspace::{
     HideApp, HideOthers, IncreaseFontSize, InstallCommandLineTool, Minimize, NewHomeTab, NewTab,
     NextProject, NextPrompt, NextTab, OpenConfiguration, OpenSettings, PreviousProject,
     PreviousPrompt, PreviousTab, Quit, SelectCommandOutput, SelectTab, ShowAll, SplitDown,
-    SplitRight, ToggleFullScreen, ToggleSidebar, ToggleThemePicker, ToggleZoomPane, Zoom,
-    bind_keys,
+    SplitRight, ToggleCommandPalette, ToggleFullScreen, ToggleSidebar, ToggleThemePicker,
+    ToggleZoomPane, Zoom, bind_keys,
 };
 
 fn main() -> ExitCode {
@@ -234,6 +235,8 @@ fn menus() -> Vec<Menu> {
         Menu {
             name: "View".into(),
             items: vec![
+                MenuItem::action("Command Palette…", ToggleCommandPalette),
+                MenuItem::separator(),
                 MenuItem::action("Toggle Sidebar", ToggleSidebar),
                 MenuItem::action("Toggle Full Screen", ToggleFullScreen),
                 MenuItem::separator(),

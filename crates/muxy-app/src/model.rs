@@ -157,6 +157,11 @@ impl AppModel {
         }
         self.refresh_quick_terminal(cx);
         self.sync_preferences(cx);
+        if let Some(Overlay::Commands(palette)) = &self.overlay {
+            palette.update(cx, |palette, cx| {
+                palette.set_appearance(self.theme.clone(), self.metrics, cx);
+            });
+        }
         if let Some(Overlay::Themes { picker, dark, .. }) = &self.overlay {
             let name = self.themes.active_name(&self.appearance, *dark);
             picker.update(cx, |picker, cx| {
@@ -1982,6 +1987,7 @@ mod tests {
     use muxy_protocol::ExitReason;
     mod clipboard;
     mod colors;
+    mod command_palette;
     mod detach;
     mod find;
     mod git;

@@ -40,6 +40,7 @@ actions!(
         ToggleSidebar,
         ToggleFullScreen,
         ToggleThemePicker,
+        ToggleCommandPalette,
         NavigateBack,
         NavigateForward,
         Quit,
@@ -80,6 +81,7 @@ fn workspace_bindings(keymap: &impl muxy_core::shortcuts::ShortcutSettings) -> V
     registry.register(ShortcutId::ToggleSidebar, &ToggleSidebar);
     registry.register(ShortcutId::ToggleFullScreen, &ToggleFullScreen);
     registry.register(ShortcutId::ToggleThemePicker, &ToggleThemePicker);
+    registry.register(ShortcutId::ToggleCommandPalette, &ToggleCommandPalette);
     registry.register(ShortcutId::NavigateBack, &NavigateBack);
     registry.register(ShortcutId::NavigateForward, &NavigateForward);
     registry.register(ShortcutId::Quit, &Quit);
@@ -124,7 +126,7 @@ fn workspace_bindings(keymap: &impl muxy_core::shortcuts::ShortcutSettings) -> V
     registry.register(ShortcutId::IncreaseFontSize, &IncreaseFontSize);
     registry.register(ShortcutId::DecreaseFontSize, &DecreaseFontSize);
     muxy_ui::text_input::register_shortcuts(&mut registry);
-    muxy_ui::command_popover::register_shortcuts(&mut registry);
+    muxy_ui::picker::register_shortcuts(&mut registry);
     muxy_ui::components::register_shortcuts(&mut registry);
     menu::register_shortcuts(&mut registry);
     super::project_editor::register_shortcuts(&mut registry);
@@ -323,6 +325,44 @@ fn action_handlers(cx: &mut Context<AppModel>) -> gpui::Div {
         .on_action(cx.listener(|model, _: &DecreaseFontSize, _, cx| model.zoom_terminal(-1.0, cx)))
 }
 
+pub(crate) fn register_commands(
+    registry: &mut muxy_ui::command_palette::Registry<super::command_palette::Handler>,
+    model: &AppModel,
+) {
+    use super::command_palette::action;
+
+    let missing = model.state.current_project().status() == muxy_app_core::ProjectStatus::Missing;
+    let no_pane = missing || model.active_pane().is_none();
+    for command in [
+        action(model, ShortcutId::NewTab, "New Tab", NewTab).disabled(missing),
+        action(model, ShortcutId::NewHomeTab, "New Home Tab", NewHomeTab),
+        action(model, ShortcutId::CloseTab, "Close Tab", CloseTab)
+            .disabled(model.active_tab().is_none()),
+        action(model, ShortcutId::SplitRight, "Split Right", SplitRight).disabled(no_pane),
+        action(model, ShortcutId::SplitDown, "Split Down", SplitDown).disabled(no_pane),
+        action(model, ShortcutId::ClosePane, "Close Pane", ClosePane).disabled(no_pane),
+        action(
+            model,
+            ShortcutId::ToggleZoomPane,
+            "Toggle Pane Zoom",
+            ToggleZoomPane,
+        )
+        .disabled(no_pane),
+        action(model, ShortcutId::NextTab, "Next Tab", NextTab)
+            .disabled(model.navigation_tabs().len() < 2),
+        action(model, ShortcutId::PreviousTab, "Previous Tab", PreviousTab)
+            .disabled(model.navigation_tabs().len() < 2),
+        action(
+            model,
+            ShortcutId::ToggleSidebar,
+            "Toggle Sidebar",
+            ToggleSidebar,
+        ),
+    ] {
+        registry.register(command);
+    }
+}
+
 impl AppModel {
     fn sync_pane_focus(&mut self, cx: &mut Context<Self>) {
         let active = self.active_pane();
@@ -389,6 +429,9 @@ impl Render for AppModel {
         let content = super::splits::render(self, cx).unwrap_or_else(|| empty(self, cx));
         let error = self.error.as_ref().map(|message| banner(message, theme));
         action_handlers(cx)
+            .on_action(cx.listener(|model, _: &ToggleCommandPalette, window, cx| {
+                model.toggle_command_palette(window, cx);
+            }))
             .track_focus(&self.focus)
             .on_modifiers_changed(cx.listener(|_, _, _, cx| cx.notify()))
             .relative()
