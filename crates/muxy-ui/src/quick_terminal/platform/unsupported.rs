@@ -1,6 +1,6 @@
 use crate::quick_terminal::ShortcutRecordingEvent;
 use crate::quick_terminal::shortcut_service::{
-    MonitoringState, ShortcutBackend, ShortcutBackendFactory,
+    ShortcutBackend, ShortcutBackendFactory, ShortcutState,
 };
 use muxy_core::quick_terminal::QuickTerminalShortcut;
 use std::rc::Rc;
@@ -22,10 +22,6 @@ impl ShortcutBackendFactory for UnsupportedShortcutBackendFactory {
         (!matches!(shortcut, QuickTerminalShortcut::Unassigned))
             .then(|| Box::new(UnsupportedShortcutBackend) as Box<dyn ShortcutBackend>)
     }
-
-    fn request_input_monitoring_access(&mut self) -> bool {
-        false
-    }
 }
 
 struct UnsupportedShortcutBackend;
@@ -37,7 +33,7 @@ impl ShortcutBackend for UnsupportedShortcutBackend {
 
     fn stop(&mut self) {}
 
-    fn monitoring_state(&self) -> MonitoringState {
-        MonitoringState::Unavailable
+    fn state(&self) -> ShortcutState {
+        ShortcutState::Unavailable
     }
 }

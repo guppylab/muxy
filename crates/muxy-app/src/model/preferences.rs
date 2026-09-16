@@ -104,7 +104,7 @@ impl AppModel {
         let mut settings = self.settings.clone();
         settings.appearance = self.appearance.clone();
         Snapshot {
-            quick_monitoring: self.quick_monitoring_label(),
+            quick_shortcut_status: self.quick_shortcut_status(),
             settings,
             terminal: self.terminal.clone(),
             server: self.server_preferences.document.clone(),

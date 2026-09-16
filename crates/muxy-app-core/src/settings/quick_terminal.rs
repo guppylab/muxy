@@ -63,11 +63,15 @@ impl QuickTerminalSettings {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use muxy_core::quick_terminal::keys::{CONTROL, KeyCombo, OPTION};
 
     #[test]
     fn settings_preserve_shortcut_and_enforce_original_ranges() {
         let mut settings = QuickTerminalSettings {
-            shortcut: QuickTerminalShortcut::DoubleShift,
+            shortcut: QuickTerminalShortcut::KeyCombo {
+                key_combo: KeyCombo::new("space", CONTROL | OPTION),
+                virtual_key_code: 49,
+            },
             ..Default::default()
         };
         let encoded = toml::to_string(&settings).unwrap();
@@ -79,5 +83,42 @@ mod tests {
             settings.width = width;
             assert!(settings.validate().is_err());
         }
+    }
+
+    #[test]
+    fn removed_double_shift_loads_as_unassigned_without_losing_settings() {
+        let directory =
+            std::env::temp_dir().join(format!("muxy-quick-shortcut-{}", crate::ProjectId::new()));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("settings.toml");
+        std::fs::write(
+            &path,
+            "[quick_terminal]\nenabled = true\nwidth = 900\nheight = 600\ntransparency = 25\nblur = 40\n[quick_terminal.shortcut]\ntype = 'doubleShift'\n",
+        ).unwrap();
+        let settings = crate::settings::Settings::load(&path).unwrap();
+        assert_eq!(
+            settings.quick_terminal,
+            QuickTerminalSettings {
+                enabled: true,
+                width: 900,
+                height: 600,
+                transparency: 25,
+                blur: 40,
+                shortcut: QuickTerminalShortcut::Unassigned,
+            }
+        );
+        settings.quick_terminal.save(&path).unwrap();
+        assert!(
+            !std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("doubleShift")
+        );
+        assert_eq!(
+            crate::settings::Settings::load(&path)
+                .unwrap()
+                .quick_terminal,
+            settings.quick_terminal
+        );
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }

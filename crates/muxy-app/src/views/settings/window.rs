@@ -75,9 +75,6 @@ impl SettingsWindow {
                             model.confirm_server_control(*restart, window.window_handle(), cx);
                         });
                     }
-                    SettingsEvent::QuickMonitoring => {
-                        let _ = root.model.update(cx, AppModel::request_quick_monitoring);
-                    }
                     SettingsEvent::ReadServer => {
                         let _ = root.model.update(cx, AppModel::read_server_settings);
                     }
@@ -111,12 +108,7 @@ impl SettingsWindow {
             cx.notify();
         });
         let focus_lost = cx.on_focus_lost(window, |root, window, cx| root.focus(window, cx));
-        let activation = cx.observe_window_activation(window, |root: &mut Self, window, cx| {
-            if window.is_window_active() {
-                let _ = root.model.update(cx, AppModel::refresh_quick_monitoring);
-            }
-        });
-        let mut subscriptions = vec![events, appearance, focus_lost, activation];
+        let mut subscriptions = vec![events, appearance, focus_lost];
         if let Some(model) = model.upgrade() {
             subscriptions.push(cx.observe(&model, |root: &mut Self, model, cx| {
                 let error = model.read(cx).error.clone();

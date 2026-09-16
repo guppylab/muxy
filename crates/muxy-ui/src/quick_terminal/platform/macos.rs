@@ -4,15 +4,15 @@ use crate::quick_terminal::panel::{
 };
 use crate::quick_terminal::platform::SystemMutation;
 use crate::quick_terminal::shortcut_service::{
-    EventTapRecovery, MonitoringState, ShortcutBackend, ShortcutBackendFactory, event_tap_recovery,
+    ShortcutBackend, ShortcutBackendFactory, ShortcutState,
 };
 use crate::quick_terminal::view::{AccessibilityNode, AccessibilityRole};
 use crate::quick_terminal::{ShortcutCapture, ShortcutRecordingEvent};
 use block2::RcBlock;
 use gpui::{Window, px, size};
+use muxy_core::quick_terminal::QuickTerminalShortcut;
 use muxy_core::quick_terminal::geometry::{Point, Rect};
 use muxy_core::quick_terminal::keys::{COMMAND, CONTROL, KeyCombo, OPTION, SHIFT};
-use muxy_core::quick_terminal::{DoubleShiftDetector, DoubleShiftInput, QuickTerminalShortcut};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, Bool, ClassBuilder, ProtocolObject, Sel};
 use objc2_app_kit::{
@@ -20,19 +20,12 @@ use objc2_app_kit::{
     NSAccessibilityPostNotification, NSAccessibilityStaticTextRole,
     NSAccessibilityValueChangedNotification, NSApplication, NSApplicationActivationOptions,
     NSApplicationDidChangeScreenParametersNotification, NSColor, NSEvent, NSEventMask,
-    NSEventModifierFlags, NSEventType, NSRunningApplication, NSScreen, NSStatusWindowLevel,
+    NSEventModifierFlags, NSRunningApplication, NSScreen, NSStatusWindowLevel,
     NSTextInputContextKeyboardSelectionDidChangeNotification, NSView, NSWindow,
     NSWindowCollectionBehavior, NSWindowStyleMask, NSWorkspace,
     NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification,
-    NSWorkspaceDidActivateApplicationNotification,
 };
-use objc2_core_foundation::{
-    CFMachPort, CFRetained, CFRunLoop, CFRunLoopSource, kCFRunLoopCommonModes,
-};
-use objc2_core_graphics::{
-    CGEvent, CGEventFlags, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType,
-    CGPreflightListenEventAccess, CGRequestListenEventAccess,
-};
+use objc2_core_graphics::CGEvent;
 use objc2_foundation::{
     MainThreadMarker, NSArray, NSNotification, NSNotificationCenter, NSObjectProtocol,
     NSOperationQueue, NSPoint, NSRect, NSSize, NSString,
@@ -70,16 +63,10 @@ impl SystemObservers {
         let observers = unsafe {
             vec![
                 system_observer(
-                    workspace_center.clone(),
+                    workspace_center,
                     NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification,
                     sender.clone(),
                     SystemMutation::Accessibility,
-                ),
-                system_observer(
-                    workspace_center,
-                    NSWorkspaceDidActivateApplicationNotification,
-                    sender.clone(),
-                    SystemMutation::InputMonitoring,
                 ),
                 system_observer(
                     default_center.clone(),
@@ -144,17 +131,12 @@ impl ShortcutBackendFactory for MacShortcutBackendFactory {
     fn create(&mut self, shortcut: &QuickTerminalShortcut) -> Option<Box<dyn ShortcutBackend>> {
         match shortcut {
             QuickTerminalShortcut::Unassigned => None,
-            QuickTerminalShortcut::DoubleShift => Some(Box::new(DoubleShiftBackend::new())),
             QuickTerminalShortcut::KeyCombo { .. } => {
                 shortcut.registration_identity().map(|identity| {
                     Box::new(CarbonHotKeyBackend::new(identity, self.take_identifier())) as Box<_>
                 })
             }
         }
-    }
-
-    fn request_input_monitoring_access(&mut self) -> bool {
-        CGRequestListenEventAccess()
     }
 }
 
@@ -805,280 +787,6 @@ extern "C-unwind" fn quick_terminal_panel_cannot_become_main(
     Bool::NO
 }
 
-struct DoubleShiftBackend {
-    detector: DoubleShiftDetector,
-    caps_lock_enabled: Option<bool>,
-    local_monitor: Option<Retained<AnyObject>>,
-    event_tap: Option<CFRetained<CFMachPort>>,
-    event_tap_source: Option<CFRetained<CFRunLoopSource>>,
-    event_tap_run_loop: Option<CFRetained<CFRunLoop>>,
-    trigger: Option<Rc<dyn Fn()>>,
-}
-
-impl DoubleShiftBackend {
-    fn new() -> Self {
-        Self {
-            detector: DoubleShiftDetector::default(),
-            caps_lock_enabled: None,
-            local_monitor: None,
-            event_tap: None,
-            event_tap_source: None,
-            event_tap_run_loop: None,
-            trigger: None,
-        }
-    }
-
-    fn receive_local_event(&mut self, event: &NSEvent) {
-        if self.event_tap.is_some() {
-            return;
-        }
-        let flags = NSEventModifierFlags(
-            event.modifierFlags().0 & NSEventModifierFlags::DeviceIndependentFlagsMask.0,
-        );
-        let shift_pressed = flags.contains(NSEventModifierFlags::Shift);
-        let input = match event.r#type() {
-            NSEventType::FlagsChanged => DoubleShiftInput::ModifierChange {
-                shift_pressed,
-                other_modifier_pressed: self.other_modifier_pressed(
-                    flags.intersects(
-                        NSEventModifierFlags::Control
-                            | NSEventModifierFlags::Option
-                            | NSEventModifierFlags::Command
-                            | NSEventModifierFlags::Function,
-                    ),
-                    flags.contains(NSEventModifierFlags::CapsLock),
-                ),
-                timestamp: event.timestamp(),
-            },
-            NSEventType::KeyDown => DoubleShiftInput::KeyDown {
-                shift_pressed,
-                timestamp: event.timestamp(),
-            },
-            NSEventType::LeftMouseDown
-            | NSEventType::RightMouseDown
-            | NSEventType::OtherMouseDown => DoubleShiftInput::PointerDown {
-                shift_pressed,
-                timestamp: event.timestamp(),
-            },
-            _ => return,
-        };
-        self.process(input);
-    }
-
-    fn receive_global_event(&mut self, event_type: CGEventType, event: &CGEvent) {
-        if event_type == CGEventType::TapDisabledByTimeout
-            || event_type == CGEventType::TapDisabledByUserInput
-        {
-            self.recover_disabled_event_tap();
-            return;
-        }
-        let flags = CGEvent::flags(Some(event));
-        let shift_pressed = flags.contains(CGEventFlags::MaskShift);
-        let timestamp =
-            std::time::Duration::from_nanos(CGEvent::timestamp(Some(event))).as_secs_f64();
-        let input = match event_type {
-            CGEventType::FlagsChanged => DoubleShiftInput::ModifierChange {
-                shift_pressed,
-                other_modifier_pressed: self.other_modifier_pressed(
-                    flags.intersects(
-                        CGEventFlags::MaskControl
-                            | CGEventFlags::MaskAlternate
-                            | CGEventFlags::MaskCommand
-                            | CGEventFlags::MaskSecondaryFn,
-                    ),
-                    flags.contains(CGEventFlags::MaskAlphaShift),
-                ),
-                timestamp,
-            },
-            CGEventType::KeyDown => DoubleShiftInput::KeyDown {
-                shift_pressed,
-                timestamp,
-            },
-            CGEventType::LeftMouseDown
-            | CGEventType::RightMouseDown
-            | CGEventType::OtherMouseDown => DoubleShiftInput::PointerDown {
-                shift_pressed,
-                timestamp,
-            },
-            _ => return,
-        };
-        self.process(input);
-    }
-
-    fn other_modifier_pressed(&mut self, conventional: bool, caps_lock_enabled: bool) -> bool {
-        let caps_lock_changed = self
-            .caps_lock_enabled
-            .is_some_and(|previous| previous != caps_lock_enabled);
-        self.caps_lock_enabled = Some(caps_lock_enabled);
-        conventional || caps_lock_changed
-    }
-
-    fn process(&mut self, input: DoubleShiftInput) {
-        if self.detector.process(input)
-            && let Some(trigger) = &self.trigger
-        {
-            trigger();
-        }
-    }
-
-    fn enable_event_tap_if_authorized(&mut self) -> bool {
-        if !CGPreflightListenEventAccess() {
-            self.remove_event_tap();
-            return false;
-        }
-        if let Some(event_tap) = &self.event_tap {
-            CGEvent::tap_enable(event_tap, true);
-            if CGEvent::tap_is_enabled(event_tap) {
-                return true;
-            }
-            self.remove_event_tap();
-        }
-        let mask = event_mask(&[
-            CGEventType::FlagsChanged,
-            CGEventType::KeyDown,
-            CGEventType::LeftMouseDown,
-            CGEventType::RightMouseDown,
-            CGEventType::OtherMouseDown,
-        ]);
-        let pointer = std::ptr::from_mut(self).cast::<c_void>();
-        let Some(event_tap) = (unsafe {
-            CGEvent::tap_create(
-                CGEventTapLocation::SessionEventTap,
-                CGEventTapPlacement::HeadInsertEventTap,
-                CGEventTapOptions::ListenOnly,
-                mask,
-                Some(double_shift_event_tap_callback),
-                pointer,
-            )
-        }) else {
-            return false;
-        };
-        let Some(source) = CFMachPort::new_run_loop_source(None, Some(&event_tap), 0) else {
-            return false;
-        };
-        let Some(run_loop) = CFRunLoop::main() else {
-            return false;
-        };
-        let common_modes = unsafe { kCFRunLoopCommonModes };
-        run_loop.add_source(Some(&source), common_modes);
-        CGEvent::tap_enable(&event_tap, true);
-        if !CGEvent::tap_is_enabled(&event_tap) {
-            run_loop.remove_source(Some(&source), common_modes);
-            event_tap.invalidate();
-            return false;
-        }
-        self.event_tap = Some(event_tap);
-        self.event_tap_source = Some(source);
-        self.event_tap_run_loop = Some(run_loop);
-        true
-    }
-
-    fn recover_disabled_event_tap(&mut self) {
-        let authorized = CGPreflightListenEventAccess();
-        let reenabled = if authorized {
-            self.event_tap.as_ref().is_some_and(|event_tap| {
-                CGEvent::tap_enable(event_tap, true);
-                CGEvent::tap_is_enabled(event_tap)
-            })
-        } else {
-            false
-        };
-        if event_tap_recovery(authorized, reenabled) == EventTapRecovery::Downgrade {
-            self.remove_event_tap();
-        }
-    }
-
-    fn remove_event_tap(&mut self) {
-        if let (Some(run_loop), Some(source)) = (&self.event_tap_run_loop, &self.event_tap_source) {
-            run_loop.remove_source(Some(source), unsafe { kCFRunLoopCommonModes });
-        }
-        if let Some(event_tap) = self.event_tap.take() {
-            event_tap.invalidate();
-        }
-        self.event_tap_source = None;
-        self.event_tap_run_loop = None;
-    }
-}
-
-impl ShortcutBackend for DoubleShiftBackend {
-    fn start(&mut self, trigger: Rc<dyn Fn()>) -> Result<(), String> {
-        if self.local_monitor.is_some() {
-            return Ok(());
-        }
-        self.trigger = Some(trigger);
-        let pointer = std::ptr::from_mut(self);
-        let block = RcBlock::new(move |event_pointer: NonNull<NSEvent>| -> *mut NSEvent {
-            let event = unsafe { event_pointer.as_ref() };
-            if let Some(backend) = unsafe { pointer.as_mut() } {
-                backend.receive_local_event(event);
-            }
-            event_pointer.as_ptr()
-        });
-        let mask = NSEventMask::FlagsChanged
-            | NSEventMask::KeyDown
-            | NSEventMask::LeftMouseDown
-            | NSEventMask::RightMouseDown
-            | NSEventMask::OtherMouseDown;
-        let monitor =
-            unsafe { NSEvent::addLocalMonitorForEventsMatchingMask_handler(mask, &block) };
-        let Some(monitor) = monitor else {
-            self.trigger = None;
-            return Err("failed to install local double-Shift monitor".to_owned());
-        };
-        self.local_monitor = Some(monitor);
-        self.enable_event_tap_if_authorized();
-        Ok(())
-    }
-
-    fn stop(&mut self) {
-        if let Some(monitor) = self.local_monitor.take() {
-            unsafe { NSEvent::removeMonitor(&monitor) };
-        }
-        self.remove_event_tap();
-        self.trigger = None;
-        self.detector.reset();
-        self.caps_lock_enabled = None;
-    }
-
-    fn monitoring_state(&self) -> MonitoringState {
-        if self.event_tap.is_some() {
-            MonitoringState::SystemWide
-        } else if self.local_monitor.is_some() {
-            MonitoringState::LocalOnly
-        } else {
-            MonitoringState::Stopped
-        }
-    }
-
-    fn refresh_system_wide_monitoring(&mut self) -> bool {
-        self.enable_event_tap_if_authorized()
-    }
-}
-
-impl Drop for DoubleShiftBackend {
-    fn drop(&mut self) {
-        self.stop();
-    }
-}
-
-unsafe extern "C-unwind" fn double_shift_event_tap_callback(
-    _proxy: objc2_core_graphics::CGEventTapProxy,
-    event_type: CGEventType,
-    event: NonNull<CGEvent>,
-    user_info: *mut c_void,
-) -> *mut CGEvent {
-    if let Some(mut backend) = NonNull::new(user_info.cast::<DoubleShiftBackend>()) {
-        unsafe { backend.as_mut() }.receive_global_event(event_type, unsafe { event.as_ref() });
-    }
-    event.as_ptr()
-}
-
-fn event_mask(types: &[CGEventType]) -> u64 {
-    types
-        .iter()
-        .fold(0, |mask, event_type| mask | (1_u64 << event_type.0))
-}
-
 struct CarbonHotKeyBackend {
     identity: muxy_core::quick_terminal::RegistrationIdentity,
     identifier: u32,
@@ -1171,11 +879,11 @@ impl ShortcutBackend for CarbonHotKeyBackend {
         self.trigger = None;
     }
 
-    fn monitoring_state(&self) -> MonitoringState {
+    fn state(&self) -> ShortcutState {
         if self.hot_key.is_null() {
-            MonitoringState::Stopped
+            ShortcutState::Stopped
         } else {
-            MonitoringState::CarbonHotKey
+            ShortcutState::Registered
         }
     }
 }
@@ -1335,37 +1043,11 @@ unsafe extern "C-unwind" {
 )]
 mod tests {
     use super::{
-        CALayer, CGEvent, CGEventFlags, CGEventType, DoubleShiftBackend, MacShortcutBackendFactory,
-        NSPoint, NSRect, NSSize, carbon_modifiers, set_mask_frame, sync_reveal_mask,
+        CALayer, MacShortcutBackendFactory, NSPoint, NSRect, NSSize, carbon_modifiers,
+        set_mask_frame, sync_reveal_mask,
     };
     use muxy_core::quick_terminal::keys::{COMMAND, CONTROL, OPTION, SHIFT};
-    use std::cell::Cell;
-    use std::rc::Rc;
     use std::time::Duration;
-
-    #[test]
-    fn quick_terminal_global_double_shift_does_not_depend_on_app_focus() {
-        let count = Rc::new(Cell::new(0));
-        let observed = count.clone();
-        let mut backend = DoubleShiftBackend::new();
-        backend.trigger = Some(Rc::new(move || observed.set(observed.get() + 1)));
-        let event = CGEvent::new(None).unwrap();
-        for gesture in 0..3 {
-            for (offset, shift) in [(0, true), (100, false), (200, true), (300, false)] {
-                CGEvent::set_timestamp(Some(&event), (gesture * 1000 + offset) * 1_000_000);
-                CGEvent::set_flags(
-                    Some(&event),
-                    if shift {
-                        CGEventFlags::MaskShift
-                    } else {
-                        CGEventFlags::empty()
-                    },
-                );
-                backend.receive_global_event(CGEventType::FlagsChanged, &event);
-            }
-            assert_eq!(count.get(), gesture + 1);
-        }
-    }
 
     #[test]
     fn quick_terminal_shortcut_factory_owns_carbon_identifiers() {

@@ -4,40 +4,20 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum MonitoringState {
+pub enum ShortcutState {
     Stopped,
     Unavailable,
-    LocalOnly,
-    SystemWide,
-    CarbonHotKey,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum EventTapRecovery {
-    Reenable,
-    Downgrade,
-}
-
-pub fn event_tap_recovery(authorized: bool, reenable_succeeded: bool) -> EventTapRecovery {
-    if authorized && reenable_succeeded {
-        EventTapRecovery::Reenable
-    } else {
-        EventTapRecovery::Downgrade
-    }
+    Registered,
 }
 
 pub trait ShortcutBackend {
     fn start(&mut self, trigger: Rc<dyn Fn()>) -> Result<(), String>;
     fn stop(&mut self);
-    fn monitoring_state(&self) -> MonitoringState;
-    fn refresh_system_wide_monitoring(&mut self) -> bool {
-        false
-    }
+    fn state(&self) -> ShortcutState;
 }
 
 pub trait ShortcutBackendFactory {
     fn create(&mut self, shortcut: &QuickTerminalShortcut) -> Option<Box<dyn ShortcutBackend>>;
-    fn request_input_monitoring_access(&mut self) -> bool;
 }
 
 pub type ShortcutPersistence = dyn FnMut(&QuickTerminalShortcut) -> std::io::Result<()>;
@@ -68,8 +48,8 @@ pub enum ShortcutServiceError {
 pub struct QuickTerminalShortcutService {
     shortcut: QuickTerminalShortcut,
     enabled: bool,
-    monitoring_requested: bool,
-    monitoring_state: MonitoringState,
+    started: bool,
+    state: ShortcutState,
     error_message: Option<String>,
     active_backend: Option<Box<dyn ShortcutBackend>>,
     generation: u64,
@@ -94,8 +74,8 @@ impl QuickTerminalShortcutService {
         Self {
             shortcut,
             enabled,
-            monitoring_requested: false,
-            monitoring_state: MonitoringState::Stopped,
+            started: false,
+            state: ShortcutState::Stopped,
             error_message: None,
             active_backend: None,
             generation: 0,
@@ -110,7 +90,7 @@ impl QuickTerminalShortcutService {
     }
 
     pub fn start(&mut self) -> Result<(), ShortcutServiceError> {
-        self.monitoring_requested = true;
+        self.started = true;
         if !self.enabled || self.active_backend.is_some() {
             return Ok(());
         }
@@ -119,7 +99,7 @@ impl QuickTerminalShortcutService {
         };
         self.shortcut = shortcut.clone();
         let Some(mut backend) = self.factory.create(&shortcut) else {
-            self.monitoring_state = MonitoringState::Stopped;
+            self.state = ShortcutState::Stopped;
             self.error_message = None;
             return Ok(());
         };
@@ -128,14 +108,14 @@ impl QuickTerminalShortcutService {
             return self.fail(ShortcutServiceError::Backend(error));
         }
         self.active_generation.set(Some(generation));
-        self.monitoring_state = backend.monitoring_state();
+        self.state = backend.state();
         self.active_backend = Some(backend);
         self.error_message = None;
         Ok(())
     }
 
     pub fn stop(&mut self) {
-        self.monitoring_requested = false;
+        self.started = false;
         self.stop_active_backend();
         self.error_message = None;
     }
@@ -182,7 +162,7 @@ impl QuickTerminalShortcutService {
             return self.fail(ShortcutServiceError::Conflict(conflict.label));
         }
         let persist = shortcut != self.shortcut;
-        if !self.monitoring_requested {
+        if !self.started {
             return Ok(PreparedShortcutUpdate {
                 shortcut,
                 enabled,
@@ -251,11 +231,9 @@ impl QuickTerminalShortcutService {
                 generation,
             } => {
                 self.active_generation.set(generation);
-                self.monitoring_state = backend
+                self.state = backend
                     .as_ref()
-                    .map_or(MonitoringState::Stopped, |backend| {
-                        backend.monitoring_state()
-                    });
+                    .map_or(ShortcutState::Stopped, |backend| backend.state());
                 if let Some(mut previous) = self.active_backend.take() {
                     previous.stop();
                 }
@@ -285,7 +263,7 @@ impl QuickTerminalShortcutService {
             self.error_message = None;
             return Ok(());
         }
-        if self.monitoring_requested
+        if self.started
             && let Err(error) = self.start()
         {
             self.enabled = false;
@@ -294,46 +272,12 @@ impl QuickTerminalShortcutService {
         Ok(())
     }
 
-    pub fn request_input_monitoring_access(&mut self) -> bool {
-        if !self.monitoring_requested
-            || !self.enabled
-            || !matches!(self.shortcut, QuickTerminalShortcut::DoubleShift)
-        {
-            return false;
-        }
-        if self.refresh_input_monitoring_access() {
-            return true;
-        }
-        if !self.factory.request_input_monitoring_access() {
-            return false;
-        }
-        self.refresh_input_monitoring_access()
-    }
-
-    pub fn refresh_input_monitoring_access(&mut self) -> bool {
-        if !self.monitoring_requested
-            || !self.enabled
-            || !matches!(self.shortcut, QuickTerminalShortcut::DoubleShift)
-        {
-            return false;
-        }
-        let Some(backend) = self.active_backend.as_mut() else {
-            return false;
-        };
-        let enabled = backend.refresh_system_wide_monitoring();
-        self.monitoring_state = backend.monitoring_state();
-        if enabled {
-            self.error_message = None;
-        }
-        enabled
-    }
-
     pub fn shortcut(&self) -> &QuickTerminalShortcut {
         &self.shortcut
     }
 
-    pub fn monitoring_state(&self) -> MonitoringState {
-        self.monitoring_state
+    pub fn state(&self) -> ShortcutState {
+        self.state
     }
 
     pub fn error_message(&self) -> Option<&str> {
@@ -379,7 +323,7 @@ impl QuickTerminalShortcutService {
         if let Some(mut backend) = self.active_backend.take() {
             backend.stop();
         }
-        self.monitoring_state = MonitoringState::Stopped;
+        self.state = ShortcutState::Stopped;
     }
 
     fn fail<T>(&mut self, error: ShortcutServiceError) -> Result<T, ShortcutServiceError> {
@@ -390,8 +334,7 @@ impl QuickTerminalShortcutService {
 
 fn same_registration(left: &QuickTerminalShortcut, right: &QuickTerminalShortcut) -> bool {
     match (left, right) {
-        (QuickTerminalShortcut::Unassigned, QuickTerminalShortcut::Unassigned)
-        | (QuickTerminalShortcut::DoubleShift, QuickTerminalShortcut::DoubleShift) => true,
+        (QuickTerminalShortcut::Unassigned, QuickTerminalShortcut::Unassigned) => true,
         (QuickTerminalShortcut::KeyCombo { .. }, QuickTerminalShortcut::KeyCombo { .. }) => {
             left.registration_identity() == right.registration_identity()
         }
@@ -430,7 +373,7 @@ impl std::fmt::Debug for QuickTerminalShortcutService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("QuickTerminalShortcutService")
             .field("shortcut", &self.shortcut)
-            .field("monitoring_state", &self.monitoring_state)
+            .field("state", &self.state)
             .finish_non_exhaustive()
     }
 }
@@ -445,10 +388,10 @@ impl std::fmt::Debug for QuickTerminalShortcutService {
 )]
 mod tests {
     use super::{
-        EventTapRecovery, MonitoringState, QuickTerminalShortcutService, ShortcutBackend,
-        ShortcutBackendFactory, ShortcutServiceError, event_tap_recovery,
+        QuickTerminalShortcutService, ShortcutBackend, ShortcutBackendFactory,
+        ShortcutServiceError, ShortcutState,
     };
-    use muxy_core::quick_terminal::keys::{COMMAND, KeyCombo};
+    use muxy_core::quick_terminal::keys::{COMMAND, CONTROL, KeyCombo};
     use muxy_core::quick_terminal::{ConflictCandidate, QuickTerminalShortcut};
     use std::cell::{Cell, RefCell};
     use std::collections::VecDeque;
@@ -459,16 +402,13 @@ mod tests {
     struct BackendRecord {
         starts: usize,
         stops: usize,
-        refreshes: usize,
-        refresh_states: VecDeque<MonitoringState>,
         trigger: Option<Rc<dyn Fn()>>,
         events: Vec<String>,
     }
 
     struct TestBackend {
         name: &'static str,
-        state: MonitoringState,
-        refreshed_state: MonitoringState,
+        state: ShortcutState,
         start_error: Option<&'static str>,
         record: Rc<RefCell<BackendRecord>>,
     }
@@ -482,6 +422,7 @@ mod tests {
                 return Err(error.to_owned());
             }
             record.trigger = Some(trigger);
+            self.state = ShortcutState::Registered;
             Ok(())
         }
 
@@ -489,64 +430,39 @@ mod tests {
             let mut record = self.record.borrow_mut();
             record.stops += 1;
             record.events.push(format!("stop {}", self.name));
-            self.state = MonitoringState::Stopped;
+            self.state = ShortcutState::Stopped;
         }
 
-        fn monitoring_state(&self) -> MonitoringState {
+        fn state(&self) -> ShortcutState {
             self.state
-        }
-
-        fn refresh_system_wide_monitoring(&mut self) -> bool {
-            let mut record = self.record.borrow_mut();
-            record.refreshes += 1;
-            self.state = record
-                .refresh_states
-                .pop_front()
-                .unwrap_or(self.refreshed_state);
-            self.state == MonitoringState::SystemWide
         }
     }
 
     struct TestFactory {
-        double_shift: VecDeque<TestBackend>,
-        carbon: VecDeque<TestBackend>,
-        requests: Rc<Cell<usize>>,
-        grant: bool,
+        backends: VecDeque<TestBackend>,
     }
 
     impl ShortcutBackendFactory for TestFactory {
         fn create(&mut self, shortcut: &QuickTerminalShortcut) -> Option<Box<dyn ShortcutBackend>> {
             match shortcut {
                 QuickTerminalShortcut::Unassigned => None,
-                QuickTerminalShortcut::DoubleShift => self
-                    .double_shift
-                    .pop_front()
-                    .map(|backend| Box::new(backend) as Box<dyn ShortcutBackend>),
                 QuickTerminalShortcut::KeyCombo { .. } => self
-                    .carbon
+                    .backends
                     .pop_front()
                     .map(|backend| Box::new(backend) as Box<dyn ShortcutBackend>),
             }
-        }
-
-        fn request_input_monitoring_access(&mut self) -> bool {
-            self.requests.set(self.requests.get() + 1);
-            self.grant
         }
     }
 
     fn backend(
         name: &'static str,
-        state: MonitoringState,
-        refreshed_state: MonitoringState,
         start_error: Option<&'static str>,
     ) -> (TestBackend, Rc<RefCell<BackendRecord>>) {
         let record = Rc::new(RefCell::new(BackendRecord::default()));
         (
             TestBackend {
                 name,
-                state,
-                refreshed_state,
+                state: ShortcutState::Stopped,
                 start_error,
                 record: record.clone(),
             },
@@ -561,59 +477,39 @@ mod tests {
         }
     }
 
+    fn other_key_combo() -> QuickTerminalShortcut {
+        QuickTerminalShortcut::KeyCombo {
+            key_combo: KeyCombo::new("space", CONTROL),
+            virtual_key_code: 49,
+        }
+    }
+
     fn service(
         shortcut: QuickTerminalShortcut,
         enabled: bool,
-        double_shift: Vec<TestBackend>,
-        carbon: Vec<TestBackend>,
-        grant: bool,
+        backends: Vec<TestBackend>,
         persist: impl FnMut(&QuickTerminalShortcut) -> io::Result<()> + 'static,
-    ) -> (QuickTerminalShortcutService, Rc<Cell<usize>>) {
-        let requests = Rc::new(Cell::new(0));
-        let factory = TestFactory {
-            double_shift: double_shift.into(),
-            carbon: carbon.into(),
-            requests: requests.clone(),
-            grant,
-        };
-        (
-            QuickTerminalShortcutService::new(
-                shortcut,
-                enabled,
-                Box::new(factory),
-                Box::new(persist),
-                Box::new(|code| match code {
-                    0 => Some("a".to_owned()),
-                    49 => Some("space".to_owned()),
-                    _ => None,
-                }),
-            ),
-            requests,
+    ) -> QuickTerminalShortcutService {
+        QuickTerminalShortcutService::new(
+            shortcut,
+            enabled,
+            Box::new(TestFactory {
+                backends: backends.into(),
+            }),
+            Box::new(persist),
+            Box::new(|code| match code {
+                0 => Some("a".to_owned()),
+                49 => Some("space".to_owned()),
+                _ => None,
+            }),
         )
     }
 
     #[test]
     fn quick_terminal_shortcut_start_stop_and_stale_generation() {
-        let (first, first_record) = backend(
-            "first",
-            MonitoringState::LocalOnly,
-            MonitoringState::LocalOnly,
-            None,
-        );
-        let (second, second_record) = backend(
-            "second",
-            MonitoringState::CarbonHotKey,
-            MonitoringState::CarbonHotKey,
-            None,
-        );
-        let (mut service, _) = service(
-            QuickTerminalShortcut::DoubleShift,
-            true,
-            vec![first],
-            vec![second],
-            false,
-            |_| Ok(()),
-        );
+        let (first, first_record) = backend("first", None);
+        let (second, second_record) = backend("second", None);
+        let mut service = service(other_key_combo(), true, vec![first, second], |_| Ok(()));
         service.start().unwrap();
         first_record.borrow().trigger.as_ref().unwrap()();
         assert_eq!(service.trigger_count(), 1);
@@ -624,36 +520,19 @@ mod tests {
         assert_eq!(service.trigger_count(), 2);
         service.stop();
         assert_eq!(second_record.borrow().stops, 1);
-        assert_eq!(service.monitoring_state(), MonitoringState::Stopped);
+        assert_eq!(service.state(), ShortcutState::Stopped);
     }
 
     #[test]
     fn quick_terminal_shortcut_replacement_is_transactional() {
         let events = Rc::new(RefCell::new(Vec::new()));
-        let (first, first_record) = backend(
-            "first",
-            MonitoringState::LocalOnly,
-            MonitoringState::LocalOnly,
-            None,
-        );
-        let (second, second_record) = backend(
-            "second",
-            MonitoringState::CarbonHotKey,
-            MonitoringState::CarbonHotKey,
-            None,
-        );
+        let (first, first_record) = backend("first", None);
+        let (second, second_record) = backend("second", None);
         let persisted = events.clone();
-        let (mut service, _) = service(
-            QuickTerminalShortcut::DoubleShift,
-            true,
-            vec![first],
-            vec![second],
-            false,
-            move |_| {
-                persisted.borrow_mut().push("persist".to_owned());
-                Ok(())
-            },
-        );
+        let mut service = service(other_key_combo(), true, vec![first, second], move |_| {
+            persisted.borrow_mut().push("persist".to_owned());
+            Ok(())
+        });
         service.start().unwrap();
         service.update_shortcut(key_combo(), &[]).unwrap();
         assert_eq!(first_record.borrow().events, ["start first", "stop first"]);
@@ -664,31 +543,14 @@ mod tests {
 
     #[test]
     fn quick_terminal_shortcut_registration_failure_keeps_previous() {
-        let (first, first_record) = backend(
-            "first",
-            MonitoringState::LocalOnly,
-            MonitoringState::LocalOnly,
-            None,
-        );
-        let (second, second_record) = backend(
-            "second",
-            MonitoringState::CarbonHotKey,
-            MonitoringState::CarbonHotKey,
-            Some("registration failed"),
-        );
+        let (first, first_record) = backend("first", None);
+        let (second, second_record) = backend("second", Some("registration failed"));
         let saves = Rc::new(Cell::new(0));
         let observed_saves = saves.clone();
-        let (mut service, _) = service(
-            QuickTerminalShortcut::DoubleShift,
-            true,
-            vec![first],
-            vec![second],
-            false,
-            move |_| {
-                observed_saves.set(observed_saves.get() + 1);
-                Ok(())
-            },
-        );
+        let mut service = service(other_key_combo(), true, vec![first, second], move |_| {
+            observed_saves.set(observed_saves.get() + 1);
+            Ok(())
+        });
         service.start().unwrap();
         assert!(matches!(
             service.update_shortcut(key_combo(), &[]),
@@ -697,32 +559,17 @@ mod tests {
         assert_eq!(first_record.borrow().stops, 0);
         assert_eq!(second_record.borrow().starts, 1);
         assert_eq!(saves.get(), 0);
-        assert_eq!(service.shortcut(), &QuickTerminalShortcut::DoubleShift);
-        assert_eq!(service.monitoring_state(), MonitoringState::LocalOnly);
+        assert_eq!(service.shortcut(), &other_key_combo());
+        assert_eq!(service.state(), ShortcutState::Registered);
     }
 
     #[test]
     fn quick_terminal_shortcut_persistence_failure_rolls_back_candidate() {
-        let (first, first_record) = backend(
-            "first",
-            MonitoringState::LocalOnly,
-            MonitoringState::LocalOnly,
-            None,
-        );
-        let (second, second_record) = backend(
-            "second",
-            MonitoringState::CarbonHotKey,
-            MonitoringState::CarbonHotKey,
-            None,
-        );
-        let (mut service, _) = service(
-            QuickTerminalShortcut::DoubleShift,
-            true,
-            vec![first],
-            vec![second],
-            false,
-            |_| Err(io::Error::other("disk full")),
-        );
+        let (first, first_record) = backend("first", None);
+        let (second, second_record) = backend("second", None);
+        let mut service = service(other_key_combo(), true, vec![first, second], |_| {
+            Err(io::Error::other("disk full"))
+        });
         service.start().unwrap();
         assert!(matches!(
             service.update_shortcut(key_combo(), &[]),
@@ -730,8 +577,8 @@ mod tests {
         ));
         assert_eq!(first_record.borrow().stops, 0);
         assert_eq!(second_record.borrow().stops, 1);
-        assert_eq!(service.shortcut(), &QuickTerminalShortcut::DoubleShift);
-        assert_eq!(service.monitoring_state(), MonitoringState::LocalOnly);
+        assert_eq!(service.shortcut(), &other_key_combo());
+        assert_eq!(service.state(), ShortcutState::Registered);
     }
 
     #[test]
@@ -750,38 +597,31 @@ mod tests {
             fn stop(&mut self) {
                 self.ordering.borrow_mut().push("stop");
             }
-            fn monitoring_state(&self) -> MonitoringState {
-                MonitoringState::LocalOnly
+            fn state(&self) -> ShortcutState {
+                ShortcutState::Registered
             }
         }
-        let requests = Rc::new(Cell::new(0));
         struct OrderedFactory {
             backend: Option<OrderedBackend>,
-            requests: Rc<Cell<usize>>,
         }
         impl ShortcutBackendFactory for OrderedFactory {
             fn create(
                 &mut self,
                 shortcut: &QuickTerminalShortcut,
             ) -> Option<Box<dyn ShortcutBackend>> {
-                matches!(shortcut, QuickTerminalShortcut::DoubleShift)
+                matches!(shortcut, QuickTerminalShortcut::KeyCombo { .. })
                     .then(|| Box::new(self.backend.take().unwrap()) as Box<dyn ShortcutBackend>)
-            }
-            fn request_input_monitoring_access(&mut self) -> bool {
-                self.requests.set(self.requests.get() + 1);
-                false
             }
         }
         let persisted = ordering.clone();
         let mut service = QuickTerminalShortcutService::new(
-            QuickTerminalShortcut::DoubleShift,
+            other_key_combo(),
             true,
             Box::new(OrderedFactory {
                 backend: Some(OrderedBackend {
                     ordering: ordering.clone(),
                     record,
                 }),
-                requests,
             }),
             Box::new(move |_| {
                 persisted.borrow_mut().push("persist");
@@ -797,263 +637,97 @@ mod tests {
     }
 
     #[test]
-    fn quick_terminal_shortcut_existing_permission_does_not_prompt_again() {
-        let (first, first_record) = backend(
-            "first",
-            MonitoringState::LocalOnly,
-            MonitoringState::SystemWide,
-            None,
-        );
-        let (mut service, requests) = service(
-            QuickTerminalShortcut::DoubleShift,
-            true,
-            vec![first],
-            vec![],
-            true,
-            |_| Ok(()),
-        );
+    fn quick_terminal_custom_shortcut_registers_and_delivers_trigger() {
+        let (first, record) = backend("first", None);
+        let mut service = service(key_combo(), true, vec![first], |_| Ok(()));
         service.start().unwrap();
-        assert!(service.refresh_input_monitoring_access());
-        assert_eq!(requests.get(), 0);
-        assert!(service.request_input_monitoring_access());
-        assert_eq!(requests.get(), 0);
-        assert_eq!(first_record.borrow().refreshes, 2);
-        assert_eq!(service.monitoring_state(), MonitoringState::SystemWide);
-    }
-
-    #[test]
-    fn quick_terminal_shortcut_permission_grant_recovers_without_restarting() {
-        let (first, record) = backend(
-            "first",
-            MonitoringState::LocalOnly,
-            MonitoringState::SystemWide,
-            None,
-        );
-        record
-            .borrow_mut()
-            .refresh_states
-            .push_back(MonitoringState::LocalOnly);
-        let (mut service, requests) = service(
-            QuickTerminalShortcut::DoubleShift,
-            true,
-            vec![first],
-            vec![],
-            false,
-            |_| Ok(()),
-        );
-        service.start().unwrap();
-        assert!(!service.request_input_monitoring_access());
-        assert_eq!(requests.get(), 1);
-        assert_eq!(service.monitoring_state(), MonitoringState::LocalOnly);
-        assert!(service.refresh_input_monitoring_access());
-        assert_eq!(service.monitoring_state(), MonitoringState::SystemWide);
-        assert_eq!(record.borrow().starts, 1);
-        assert_eq!(requests.get(), 1);
+        assert_eq!(service.state(), ShortcutState::Registered);
         record.borrow().trigger.as_ref().unwrap()();
         assert!(service.try_receive_trigger());
         assert!(!service.try_receive_trigger());
-    }
-
-    #[test]
-    fn quick_terminal_custom_shortcut_is_global_without_input_monitoring() {
-        let (first, record) = backend(
-            "first",
-            MonitoringState::CarbonHotKey,
-            MonitoringState::CarbonHotKey,
-            None,
-        );
-        let (mut service, requests) =
-            service(key_combo(), true, vec![], vec![first], false, |_| Ok(()));
-        service.start().unwrap();
-        assert!(!service.request_input_monitoring_access());
-        assert_eq!(requests.get(), 0);
-        assert_eq!(record.borrow().refreshes, 0);
-        assert_eq!(service.monitoring_state(), MonitoringState::CarbonHotKey);
-        record.borrow().trigger.as_ref().unwrap()();
-        assert!(service.try_receive_trigger());
-        assert!(!service.try_receive_trigger());
-    }
-
-    #[test]
-    fn quick_terminal_shortcut_revocation_downgrades_monitoring() {
-        let (first, _) = backend(
-            "first",
-            MonitoringState::SystemWide,
-            MonitoringState::LocalOnly,
-            None,
-        );
-        let (mut service, _) = service(
-            QuickTerminalShortcut::DoubleShift,
-            true,
-            vec![first],
-            vec![],
-            false,
-            |_| Ok(()),
-        );
-        service.start().unwrap();
-        assert!(!service.refresh_input_monitoring_access());
-        assert_eq!(service.monitoring_state(), MonitoringState::LocalOnly);
-    }
-
-    #[test]
-    fn quick_terminal_shortcut_event_tap_reenables_or_downgrades() {
-        assert_eq!(event_tap_recovery(true, true), EventTapRecovery::Reenable);
-        assert_eq!(event_tap_recovery(true, false), EventTapRecovery::Downgrade);
-        assert_eq!(event_tap_recovery(false, true), EventTapRecovery::Downgrade);
     }
 
     #[test]
     fn quick_terminal_shortcut_disabled_runtime_does_not_install_backend() {
-        let (first, first_record) = backend(
-            "first",
-            MonitoringState::LocalOnly,
-            MonitoringState::LocalOnly,
-            None,
-        );
-        let (mut service, requests) = service(
-            QuickTerminalShortcut::DoubleShift,
-            false,
-            vec![first],
-            vec![],
-            false,
-            |_| Ok(()),
-        );
+        let (first, first_record) = backend("first", None);
+        let mut service = service(other_key_combo(), false, vec![first], |_| Ok(()));
         service.start().unwrap();
-        assert!(!service.request_input_monitoring_access());
-        assert_eq!(requests.get(), 0);
         assert_eq!(first_record.borrow().starts, 0);
-        assert_eq!(service.monitoring_state(), MonitoringState::Stopped);
+        assert_eq!(service.state(), ShortcutState::Stopped);
     }
 
     #[test]
     fn quick_terminal_shortcut_prepares_enable_before_runtime_publish() {
-        let (candidate, record) = backend(
-            "candidate",
-            MonitoringState::LocalOnly,
-            MonitoringState::LocalOnly,
-            None,
-        );
-        let (mut service, _) = service(
-            QuickTerminalShortcut::DoubleShift,
-            false,
-            vec![candidate],
-            vec![],
-            false,
-            |_| Ok(()),
-        );
+        let (candidate, record) = backend("candidate", None);
+        let mut service = service(other_key_combo(), false, vec![candidate], |_| Ok(()));
         service.start().unwrap();
         let prepared = service
-            .prepare_shortcut_for_enabled(QuickTerminalShortcut::DoubleShift, &[], true)
+            .prepare_shortcut_for_enabled(other_key_combo(), &[], true)
             .unwrap();
         assert_eq!(record.borrow().starts, 1);
-        assert_eq!(service.monitoring_state(), MonitoringState::Stopped);
+        assert_eq!(service.state(), ShortcutState::Stopped);
         service.commit_prepared(prepared);
-        assert_eq!(service.monitoring_state(), MonitoringState::LocalOnly);
+        assert_eq!(service.state(), ShortcutState::Registered);
         service.stop();
         assert_eq!(record.borrow().stops, 1);
     }
 
     #[test]
     fn quick_terminal_shortcut_cancelled_enable_stops_only_the_candidate() {
-        let (candidate, record) = backend(
-            "candidate",
-            MonitoringState::LocalOnly,
-            MonitoringState::LocalOnly,
-            None,
-        );
-        let (mut service, _) = service(
-            QuickTerminalShortcut::DoubleShift,
-            false,
-            vec![candidate],
-            vec![],
-            false,
-            |_| Ok(()),
-        );
+        let (candidate, record) = backend("candidate", None);
+        let mut service = service(other_key_combo(), false, vec![candidate], |_| Ok(()));
         service.start().unwrap();
         let prepared = service
-            .prepare_shortcut_for_enabled(QuickTerminalShortcut::DoubleShift, &[], true)
+            .prepare_shortcut_for_enabled(other_key_combo(), &[], true)
             .unwrap();
         service.cancel_prepared(prepared);
         assert_eq!(record.borrow().stops, 1);
-        assert_eq!(service.monitoring_state(), MonitoringState::Stopped);
+        assert_eq!(service.state(), ShortcutState::Stopped);
     }
 
     #[test]
     fn quick_terminal_shortcut_failed_unassignment_keeps_active_backend() {
-        let (first, first_record) = backend(
-            "first",
-            MonitoringState::LocalOnly,
-            MonitoringState::LocalOnly,
-            None,
-        );
-        let (mut service, _) = service(
-            QuickTerminalShortcut::DoubleShift,
-            true,
-            vec![first],
-            vec![],
-            false,
-            |_| Err(io::Error::other("disk full")),
-        );
+        let (first, first_record) = backend("first", None);
+        let mut service = service(other_key_combo(), true, vec![first], |_| {
+            Err(io::Error::other("disk full"))
+        });
         service.start().unwrap();
         assert!(matches!(
             service.update_shortcut(QuickTerminalShortcut::Unassigned, &[]),
             Err(ShortcutServiceError::Persistence(_))
         ));
         assert_eq!(first_record.borrow().stops, 0);
-        assert_eq!(service.shortcut(), &QuickTerminalShortcut::DoubleShift);
-        assert_eq!(service.monitoring_state(), MonitoringState::LocalOnly);
+        assert_eq!(service.shortcut(), &other_key_combo());
+        assert_eq!(service.state(), ShortcutState::Registered);
     }
 
     #[test]
-    fn quick_terminal_shortcut_disable_and_reenable_replaces_monitoring() {
-        let (first, first_record) = backend(
-            "first",
-            MonitoringState::LocalOnly,
-            MonitoringState::LocalOnly,
-            None,
-        );
-        let (second, second_record) = backend(
-            "second",
-            MonitoringState::LocalOnly,
-            MonitoringState::LocalOnly,
-            None,
-        );
-        let (mut service, _) = service(
-            QuickTerminalShortcut::DoubleShift,
-            true,
-            vec![first, second],
-            vec![],
-            false,
-            |_| Ok(()),
-        );
+    fn quick_terminal_shortcut_disable_and_reenable_replaces_registration() {
+        let (first, first_record) = backend("first", None);
+        let (second, second_record) = backend("second", None);
+        let mut service = service(other_key_combo(), true, vec![first, second], |_| Ok(()));
         service.start().unwrap();
         service.set_enabled(false).unwrap();
         assert_eq!(first_record.borrow().stops, 1);
-        assert_eq!(service.monitoring_state(), MonitoringState::Stopped);
+        assert_eq!(service.state(), ShortcutState::Stopped);
         service.set_enabled(true).unwrap();
         assert_eq!(second_record.borrow().starts, 1);
-        assert_eq!(service.monitoring_state(), MonitoringState::LocalOnly);
+        assert_eq!(service.state(), ShortcutState::Registered);
     }
 
     #[test]
     fn quick_terminal_shortcut_layout_refresh_preserves_registration() {
-        let (first, first_record) = backend(
-            "first",
-            MonitoringState::CarbonHotKey,
-            MonitoringState::CarbonHotKey,
-            None,
-        );
+        let (first, first_record) = backend("first", None);
         let saved = Rc::new(RefCell::new(None));
         let observed = saved.clone();
         let initial = QuickTerminalShortcut::KeyCombo {
             key_combo: KeyCombo::new("a", COMMAND),
             virtual_key_code: 0,
         };
-        let (mut service, _) =
-            service(initial, true, vec![], vec![first], false, move |shortcut| {
-                *observed.borrow_mut() = Some(shortcut.clone());
-                Ok(())
-            });
+        let mut service = service(initial, true, vec![first], move |shortcut| {
+            *observed.borrow_mut() = Some(shortcut.clone());
+            Ok(())
+        });
         service.start().unwrap();
         service.key_resolver = Box::new(|code| (code == 0).then(|| "q".to_owned()));
         let refreshed = QuickTerminalShortcut::KeyCombo {
@@ -1072,20 +746,10 @@ mod tests {
 
     #[test]
     fn quick_terminal_shortcut_conflict_is_rejected_before_registration() {
-        let (first, first_record) = backend(
-            "first",
-            MonitoringState::CarbonHotKey,
-            MonitoringState::CarbonHotKey,
-            None,
-        );
-        let (mut service, _) = service(
-            QuickTerminalShortcut::Unassigned,
-            true,
-            vec![],
-            vec![first],
-            false,
-            |_| Ok(()),
-        );
+        let (first, first_record) = backend("first", None);
+        let mut service = service(QuickTerminalShortcut::Unassigned, true, vec![first], |_| {
+            Ok(())
+        });
         service.start().unwrap();
         let conflicts = [ConflictCandidate {
             label: "Open Project".to_owned(),

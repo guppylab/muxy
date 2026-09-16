@@ -57,7 +57,6 @@ impl QuickTerminalRuntime {
         );
         // Settings owns persistence; a prepared native registration commits only after a successful save.
         let _ = shortcuts.start();
-        shortcuts.request_input_monitoring_access();
         let triggers = shortcuts.trigger_receiver();
         let trigger_task = cx.spawn(async move |model, cx| {
             while triggers.recv().await.is_ok() {
@@ -78,10 +77,6 @@ impl QuickTerminalRuntime {
             while let Ok(mutation) = receiver.recv().await {
                 let _ = model.update(cx, |model, cx| {
                     match mutation {
-                        SystemMutation::InputMonitoring => {
-                            model.refresh_quick_monitoring(cx);
-                            return;
-                        }
                         SystemMutation::Accessibility => {
                             model.quick.accessibility = Self::accessibility();
                         }
@@ -167,21 +162,18 @@ impl AppModel {
     pub(crate) fn quick_shortcut_label(&self) -> String {
         match self.quick.shortcuts.shortcut() {
             QuickTerminalShortcut::Unassigned => "Unassigned".into(),
-            QuickTerminalShortcut::DoubleShift => "Double Shift".into(),
             QuickTerminalShortcut::KeyCombo { key_combo, .. } => key_combo.display(),
         }
     }
 
-    pub(crate) fn quick_monitoring_label(&self) -> String {
-        use muxy_ui::quick_terminal::shortcut_service::MonitoringState;
+    pub(crate) fn quick_shortcut_status(&self) -> String {
+        use muxy_ui::quick_terminal::shortcut_service::ShortcutState;
         self.quick.shortcuts.error_message().map_or_else(
             || {
-                match self.quick.shortcuts.monitoring_state() {
-                    MonitoringState::Stopped => "Inactive",
-                    MonitoringState::Unavailable => "Unavailable",
-                    MonitoringState::LocalOnly => "Local only",
-                    MonitoringState::SystemWide => "System-wide",
-                    MonitoringState::CarbonHotKey => "Active system-wide",
+                match self.quick.shortcuts.state() {
+                    ShortcutState::Stopped => "Inactive",
+                    ShortcutState::Unavailable => "Unavailable",
+                    ShortcutState::Registered => "Active system-wide",
                 }
                 .into()
             },
@@ -204,7 +196,6 @@ impl AppModel {
         if self.connection == ConnectionState::Disconnected {
             self.connect(cx);
         }
-        self.quick.shortcuts.refresh_input_monitoring_access();
         if self.quick.panel.is_none() {
             let model = self.quick_view_model();
             let owner = cx.weak_entity();
@@ -458,14 +449,8 @@ impl AppModel {
             self.quick.shortcuts.cancel_prepared(prepared);
             return Err(error.to_string());
         }
-        let shortcut_activated = settings.enabled
-            && (!self.settings.quick_terminal.enabled
-                || settings.shortcut != self.settings.quick_terminal.shortcut);
         self.quick.shortcuts.commit_prepared(prepared);
         self.settings.quick_terminal = settings;
-        if shortcut_activated {
-            self.quick.shortcuts.request_input_monitoring_access();
-        }
         if !self.settings.quick_terminal.enabled {
             self.close_quick_terminal(cx);
         }
@@ -473,16 +458,6 @@ impl AppModel {
         self.prepare_quick_terminal(cx);
         self.sync_preferences(cx);
         Ok(())
-    }
-
-    pub(crate) fn refresh_quick_monitoring(&mut self, cx: &mut Context<Self>) {
-        self.quick.shortcuts.refresh_input_monitoring_access();
-        self.sync_preferences(cx);
-    }
-
-    pub(crate) fn request_quick_monitoring(&mut self, cx: &mut Context<Self>) {
-        self.quick.shortcuts.request_input_monitoring_access();
-        self.sync_preferences(cx);
     }
 
     pub(super) fn validate_quick_conflict(

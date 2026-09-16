@@ -19,7 +19,7 @@ pub(super) const SETTINGS: &[Setting] = &[
     Setting {
         id: "quick-shortcut",
         label: "Open Quick Terminal",
-        description: "Choose Double Shift or record a custom system-wide shortcut.",
+        description: "Record a system-wide shortcut to open Quick Terminal.",
         category: Category::QuickTerminal,
         section: "Shortcut",
     },

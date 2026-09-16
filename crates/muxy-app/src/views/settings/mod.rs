@@ -78,7 +78,6 @@ pub(crate) enum SettingsEvent {
     Picker(PickerKind, PickerAnchor),
     ServerControl { restart: bool },
     ReadServer,
-    QuickMonitoring,
     Connect,
     OpenConfiguration(&'static str),
 }
@@ -86,7 +85,7 @@ pub(crate) enum SettingsEvent {
 #[derive(Clone)]
 pub(crate) struct Snapshot {
     pub(crate) settings: Settings,
-    pub(crate) quick_monitoring: String,
+    pub(crate) quick_shortcut_status: String,
     pub(crate) terminal: TerminalSettings,
     pub(crate) server: Option<muxy_protocol::ServerSettingsDoc>,
     pub(crate) connected: bool,

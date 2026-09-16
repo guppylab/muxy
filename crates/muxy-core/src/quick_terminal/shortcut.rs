@@ -6,8 +6,6 @@ use serde::{Deserialize, Deserializer, Serialize};
 pub enum QuickTerminalShortcut {
     #[serde(rename = "unassigned")]
     Unassigned,
-    #[serde(rename = "doubleShift")]
-    DoubleShift,
     #[serde(rename = "keyCombo")]
     KeyCombo {
         #[serde(rename = "keyCombo")]
@@ -25,10 +23,8 @@ impl<'de> Deserialize<'de> for QuickTerminalShortcut {
         #[derive(Deserialize)]
         #[serde(tag = "type")]
         enum StoredShortcut {
-            #[serde(rename = "unassigned")]
+            #[serde(rename = "unassigned", alias = "doubleShift")]
             Unassigned,
-            #[serde(rename = "doubleShift")]
-            DoubleShift,
             #[serde(rename = "keyCombo")]
             KeyCombo {
                 #[serde(rename = "keyCombo")]
@@ -40,7 +36,6 @@ impl<'de> Deserialize<'de> for QuickTerminalShortcut {
 
         match StoredShortcut::deserialize(deserializer)? {
             StoredShortcut::Unassigned => Ok(Self::Unassigned),
-            StoredShortcut::DoubleShift => Ok(Self::DoubleShift),
             StoredShortcut::KeyCombo {
                 key_combo,
                 virtual_key_code,
@@ -81,7 +76,6 @@ impl QuickTerminalShortcut {
     ) -> Option<Self> {
         match self {
             Self::Unassigned => Some(Self::Unassigned),
-            Self::DoubleShift => Some(Self::DoubleShift),
             Self::KeyCombo {
                 virtual_key_code, ..
             } => {
@@ -115,7 +109,7 @@ impl QuickTerminalShortcut {
     pub fn key_combo(&self) -> Option<&KeyCombo> {
         match self {
             Self::KeyCombo { key_combo, .. } => Some(key_combo),
-            Self::Unassigned | Self::DoubleShift => None,
+            Self::Unassigned => None,
         }
     }
 

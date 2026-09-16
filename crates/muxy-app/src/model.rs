@@ -288,7 +288,6 @@ impl AppModel {
             }
             self.refresh_git(cx);
             self.refresh_project_statuses(cx);
-            self.refresh_quick_monitoring(cx);
         } else {
             self.cancel_titlebar_drag(cx);
             self.finish_sidebar_resize(cx);

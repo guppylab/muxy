@@ -29,63 +29,46 @@ pub(super) fn rows(view: &SettingsView, cx: &mut Context<SettingsView>) -> Vec<A
     }
     if view.matches(Category::QuickTerminal, "Open Quick Terminal") {
         let mut buttons = div().flex().flex_wrap().gap(px(8.0));
-        for (id, label, shortcut) in [
-            (
+        let mut unassigned = settings.clone();
+        unassigned.shortcut = QuickTerminalShortcut::Unassigned;
+        buttons = buttons.child(
+            controls::button(
+                view.style(),
                 "quick-unassigned",
                 "No Shortcut",
-                QuickTerminalShortcut::Unassigned,
-            ),
-            (
-                "quick-double-shift",
-                "Double Shift",
-                QuickTerminalShortcut::DoubleShift,
-            ),
-        ] {
-            let mut next = settings.clone();
-            next.shortcut = shortcut;
-            let selected = next.shortcut == settings.shortcut;
-            buttons = buttons.child(
-                controls::button(
-                    view.style(),
-                    id,
-                    label,
-                    true,
-                    cx.listener(move |_: &mut SettingsView, _, _, cx| {
-                        cx.emit(SettingsEvent::Change(Change::QuickTerminal(next.clone())));
-                    }),
-                )
-                .when(selected, |button| button.border_color(view.theme.accent))
-                .debug_selector(move || format!("settings-{id}")),
-            );
-        }
-        buttons = buttons.child(controls::button(
-            view.style(),
-            "quick-record",
-            if view.quick_recording.is_some() {
-                "Cancel Recording"
-            } else {
-                "Record Custom…"
-            },
-            true,
-            cx.listener(|view, _, window, cx| view.record_quick_shortcut(window, cx)),
-        ));
-        if settings.shortcut == QuickTerminalShortcut::DoubleShift {
-            buttons = buttons.child(controls::button(
-                view.style(),
-                "quick-input-monitoring",
-                "Enable Input Monitoring",
                 true,
-                cx.listener(|_: &mut SettingsView, _, _, cx| {
-                    cx.emit(SettingsEvent::QuickMonitoring);
+                cx.listener(move |_: &mut SettingsView, _, _, cx| {
+                    cx.emit(SettingsEvent::Change(Change::QuickTerminal(
+                        unassigned.clone(),
+                    )));
                 }),
-            ));
-        }
+            )
+            .when(
+                settings.shortcut == QuickTerminalShortcut::Unassigned,
+                |button| button.border_color(view.theme.accent),
+            )
+            .debug_selector(|| "settings-quick-unassigned".to_owned()),
+        );
+        buttons = buttons.child(
+            controls::button(
+                view.style(),
+                "quick-record",
+                if view.quick_recording.is_some() {
+                    "Cancel Recording"
+                } else {
+                    "Record Shortcut…"
+                },
+                true,
+                cx.listener(|view, _, window, cx| view.record_quick_shortcut(window, cx)),
+            )
+            .debug_selector(|| "settings-quick-record".to_owned()),
+        );
         let status = if !settings.enabled {
             "Disabled".into()
         } else if settings.shortcut == QuickTerminalShortcut::Unassigned {
             "No shortcut assigned".into()
         } else {
-            view.snapshot.quick_monitoring.clone()
+            view.snapshot.quick_shortcut_status.clone()
         };
         let label = settings
             .shortcut

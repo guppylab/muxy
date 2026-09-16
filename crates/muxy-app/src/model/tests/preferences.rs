@@ -915,30 +915,45 @@ fn quick_terminal_settings_show_invalid_dimensions(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn quick_terminal_shortcut_choices_are_clickable_and_save_while_disabled(cx: &mut TestAppContext) {
+fn quick_terminal_custom_shortcut_can_be_saved_and_cleared_while_disabled(cx: &mut TestAppContext) {
+    use muxy_core::quick_terminal::QuickTerminalShortcut;
+    use muxy_core::quick_terminal::keys::{CONTROL, KeyCombo, OPTION};
+
     let (mut boot, _) = stub_boot(AppState::bootstrap().expect("state"));
     boot.settings.quick_terminal.enabled = false;
     let (view, cx) = settings_window(boot, cx);
     click_preference(cx, "settings-disclosure-Quick Terminal");
     click_preference(cx, "settings-subcategory-Shortcut");
-    for (selector, expected) in [
-        (
-            "settings-quick-double-shift",
-            muxy_core::quick_terminal::QuickTerminalShortcut::DoubleShift,
-        ),
-        (
-            "settings-quick-unassigned",
-            muxy_core::quick_terminal::QuickTerminalShortcut::Unassigned,
-        ),
-    ] {
-        click_preference(cx, selector);
-        view.read_with(cx, |model, _| {
-            assert_eq!(model.settings.quick_terminal.shortcut, expected);
-            let saved =
-                muxy_app_core::settings::Settings::load(&model.configuration_path("settings.toml"))
-                    .expect("saved shortcut");
-            assert_eq!(saved.quick_terminal.shortcut, expected);
-            assert!(!saved.quick_terminal.enabled);
-        });
-    }
+    assert!(cx.debug_bounds("settings-quick-record").is_some());
+    let shortcut = QuickTerminalShortcut::KeyCombo {
+        key_combo: KeyCombo::new("space", CONTROL | OPTION),
+        virtual_key_code: 49,
+    };
+    view.update(cx, |model, cx| {
+        let mut settings = model.settings.quick_terminal.clone();
+        settings.shortcut = shortcut.clone();
+        model.change_preference(Change::QuickTerminal(settings), cx);
+    });
+    view.read_with(cx, |model, _| {
+        let saved =
+            muxy_app_core::settings::Settings::load(&model.configuration_path("settings.toml"))
+                .expect("saved shortcut");
+        assert_eq!(saved.quick_terminal.shortcut, shortcut);
+        assert!(!saved.quick_terminal.enabled);
+    });
+    click_preference(cx, "settings-quick-unassigned");
+    view.read_with(cx, |model, _| {
+        assert_eq!(
+            model.settings.quick_terminal.shortcut,
+            QuickTerminalShortcut::Unassigned
+        );
+        let saved =
+            muxy_app_core::settings::Settings::load(&model.configuration_path("settings.toml"))
+                .expect("cleared shortcut");
+        assert_eq!(
+            saved.quick_terminal.shortcut,
+            QuickTerminalShortcut::Unassigned
+        );
+        assert!(!saved.quick_terminal.enabled);
+    });
 }
