@@ -84,6 +84,16 @@ impl SettingsWindow {
                     SettingsEvent::OpenConfiguration(filename) => {
                         root.open_configuration(filename, cx);
                     }
+                    SettingsEvent::ReloadConfiguration => {
+                        if let Ok(error) = root.model.update(cx, |model, cx| {
+                            model.reload_configuration(cx);
+                            model.configuration_error.clone()
+                        }) {
+                            root.view.update(cx, |view, cx| {
+                                view.set_error("configuration", error.as_deref(), cx);
+                            });
+                        }
+                    }
                 },
             );
         let appearance = cx.observe(&view, |root: &mut Self, _, cx| {

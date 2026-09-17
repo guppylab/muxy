@@ -143,6 +143,13 @@ pub(super) const SETTINGS: &[Setting] = &[
         section: "Behavior",
     },
     Setting {
+        id: "ghostty-configuration",
+        label: "Ghostty configuration",
+        description: "Edit ghostty.conf to customize terminal appearance and key aliases such as Shift+Enter. Save the file, then reload to apply changes.",
+        category: Category::Terminal,
+        section: "Configuration",
+    },
+    Setting {
         id: "terminal-configuration-warnings",
         label: "Configuration warnings",
         description: "Unsupported Ghostty options in ghostty.conf are ignored.",

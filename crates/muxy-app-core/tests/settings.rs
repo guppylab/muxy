@@ -1098,6 +1098,59 @@ window-save-state = always
 }
 
 #[test]
+fn terminal_alias_defaults_can_be_overridden_unbound_and_cleared() -> Result {
+    use muxy_app_core::settings::TerminalAction;
+    let fixture = Fixture::new()?;
+    let path = fixture.write("ghostty.conf", "font-size = 14\n")?;
+    let newline = "shift-enter".parse()?;
+    let paste = "cmd-shift-v".parse()?;
+    let settings = TerminalSettings::load_with_seed(&path, None)?;
+    assert_eq!(
+        settings.keybindings.action(&newline),
+        Some(&TerminalAction::Text(b"\n".to_vec()))
+    );
+    assert_eq!(
+        settings.keybindings.action(&paste),
+        Some(&TerminalAction::Paste)
+    );
+    assert!(settings.keybindings.bindings.is_empty());
+    for (config, expected) in [
+        (
+            "keybind = shift+enter=text:\\x1b\\r",
+            Some(TerminalAction::Text(b"\x1b\r".to_vec())),
+        ),
+        ("keybind = shift+enter=unbind", Some(TerminalAction::Unbind)),
+        ("keybind = shift+enter=ignore", Some(TerminalAction::Ignore)),
+        ("keybind = clear", None),
+        (
+            "keybind = clear\nkeybind = shift+enter=text:\\n",
+            Some(TerminalAction::Text(b"\n".to_vec())),
+        ),
+        (
+            "keybind = clear\nkeybind =",
+            Some(TerminalAction::Text(b"\n".to_vec())),
+        ),
+    ] {
+        fs::write(&path, config)?;
+        let mut settings = TerminalSettings::load_with_seed(&path, None)?;
+        assert_eq!(
+            settings.keybindings.action(&newline),
+            expected.as_ref(),
+            "{config}"
+        );
+        settings
+            .keybindings
+            .bindings
+            .insert("alt-enter".parse()?, TerminalAction::Text(b"\n".to_vec()));
+        let saved = settings.save(&path)?;
+        assert_eq!(saved.keybindings, settings.keybindings);
+        assert_eq!(saved.keybindings.action(&newline), expected.as_ref());
+        assert!(!fs::read_to_string(&path)?.contains("cmd+shift+v"));
+    }
+    Ok(())
+}
+
+#[test]
 fn ghostty_option_resets_and_errors_keep_source_locations() -> Result {
     let fixture = Fixture::new()?;
     let path = fixture.write("ghostty.conf", "background = 123456\nbackground =\npalette = 200=123456\npalette =\nkeybind = shift+enter=text:hello\nkeybind =\nbackground-opacity = 2\nconfig-file = included.conf\n")?;

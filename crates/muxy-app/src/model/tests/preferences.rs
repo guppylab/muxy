@@ -9,6 +9,60 @@ use crate::views::settings::{Change, SettingsEvent};
 use muxy_core::shortcuts::ShortcutSettings;
 
 #[gpui::test]
+fn ghostty_configuration_is_discoverable_and_reload_reports_errors(cx: &mut TestAppContext) {
+    let (boot, _requests) = stub_boot(AppState::bootstrap().expect("state"));
+    let path = boot.state_path.with_file_name("ghostty.conf");
+    cx.update(|cx| crate::views::workspace::bind_keys(&boot.settings.keymap, cx));
+    let (view, cx) = settings_window(boot, cx);
+    click_preference(cx, "settings-category-Terminal");
+    assert!(
+        cx.debug_bounds("settings-edit-ghostty-configuration")
+            .is_some()
+    );
+    click_preference(cx, "settings-category-General");
+    click_preference(cx, "settings-search");
+    cx.simulate_keystrokes("g h o s t t y space a l i a s e s");
+    cx.run_until_parked();
+    assert!(
+        cx.debug_bounds("settings-edit-ghostty-configuration")
+            .is_some()
+    );
+    for (config, expected_error) in [
+        (
+            "font-size = 22\nkeybind = shift+enter=text:\\x1b\\r\n",
+            false,
+        ),
+        ("font-size = invalid\n", true),
+        (
+            "font-size = 22\nkeybind = shift+enter=text:\\x1b\\r\n",
+            false,
+        ),
+    ] {
+        std::fs::write(&path, config).expect("config");
+        click_preference(cx, "settings-reload-ghostty-configuration");
+        view.read_with(cx, |model, cx| {
+            assert_eq!(model.terminal.font_size, 22.0);
+            assert_eq!(
+                model
+                    .terminal
+                    .keybindings
+                    .action(&"shift-enter".parse().expect("chord")),
+                Some(&muxy_app_core::settings::TerminalAction::Text(
+                    b"\x1b\r".to_vec()
+                ))
+            );
+            assert_eq!(
+                settings_view(model)
+                    .read(cx)
+                    .errors
+                    .contains_key("configuration"),
+                expected_error,
+            );
+        });
+    }
+}
+
+#[gpui::test]
 fn unsupported_ghostty_settings_are_reported_in_preferences_without_workspace_errors(
     cx: &mut TestAppContext,
 ) {

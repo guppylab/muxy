@@ -126,7 +126,7 @@ impl TerminalPane {
         let weak = cx.entity().downgrade();
         let keybindings = cx.intercept_keystrokes(move |event, window, cx| {
             let _ = weak.update(cx, |pane, cx| {
-                pane.configured_key(&event.keystroke, window, cx);
+                pane.key_binding(&event.keystroke, false, window, cx);
             });
         });
         Self {
@@ -1098,10 +1098,11 @@ impl TerminalPane {
     }
 
     pub(crate) fn paste_clipboard(&mut self, cx: &mut Context<Self>) {
-        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text())
+        if let Some(item) = cx.read_from_clipboard()
             && let Some(grid) = &self.grid
+            && let Some(bytes) = clipboard::contents(&item, grid.modes)
         {
-            self.send_paste(&clipboard::paste(&text, grid.modes), cx);
+            self.send_paste(&bytes, cx);
         }
     }
 
@@ -1151,28 +1152,35 @@ fn mouse_button(button: MouseButton) -> muxy_protocol::MouseButton {
 }
 
 impl TerminalPane {
-    fn configured_key(
+    fn key_binding(
         &mut self,
         key: &gpui::Keystroke,
+        defaults: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
         use muxy_app_core::settings::TerminalAction;
         if !self.focus.is_focused(window) || !self.composition.text.is_empty() {
-            return;
+            return false;
         }
         let Ok(chord) = key.unparse().parse::<muxy_app_core::settings::KeyChord>() else {
-            return;
+            return false;
         };
-        let Some(action) = self.terminal.keybindings.bindings.get(&chord).cloned() else {
-            return;
+        let bindings = &self.terminal.keybindings;
+        let action = if defaults {
+            bindings.action(&chord)
+        } else {
+            bindings.bindings.get(&chord)
+        };
+        let Some(action) = action.cloned() else {
+            return false;
         };
         match action {
             TerminalAction::Text(bytes) => self.send_paste(&bytes, cx),
             TerminalAction::Ignore => {}
             TerminalAction::Unbind => {
                 if input::uses_text_input(key, self.option_as_alt()) {
-                    return;
+                    return false;
                 }
                 if let Some(grid) = &self.grid
                     && let Some(bytes) =
@@ -1197,6 +1205,7 @@ impl TerminalPane {
         }
         cx.notify();
         cx.stop_propagation();
+        true
     }
 
     fn option_as_alt(&self) -> bool {
@@ -1218,6 +1227,9 @@ impl TerminalPane {
         cx: &mut Context<Self>,
     ) {
         if !self.focus.is_focused(window) || !self.composition.text.is_empty() {
+            return;
+        }
+        if self.key_binding(&event.keystroke, true, window, cx) {
             return;
         }
         let option_as_alt = self.option_as_alt();
@@ -1501,7 +1513,122 @@ mod tests {
             pane.terminal.keybindings.bindings.clear();
         });
         cx.simulate_keystrokes("shift-enter alt-left");
-        assert_eq!(&*input.borrow(), b"\r\x1bb");
+        assert_eq!(&*input.borrow(), b"\n\x1bb");
+    }
+
+    #[gpui::test]
+    fn default_newline_binding_preserves_enter_and_yields_to_app_shortcuts(
+        cx: &mut TestAppContext,
+    ) {
+        let (pane, cx) = cx.add_window_view(|window, cx| {
+            let mut pane = TerminalPane::new(
+                Palette::new(true),
+                muxy_app_core::settings::TerminalSettings::default(),
+                cx,
+            );
+            prepare_mouse(&mut pane);
+            pane.focus.focus(window);
+            pane
+        });
+        let input = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        cx.update(|_, cx| {
+            let input = input.clone();
+            cx.subscribe(&pane, move |_, event, _| {
+                if let PaneEvent::Input(_, bytes) = event {
+                    input.borrow_mut().extend_from_slice(bytes);
+                }
+            })
+            .detach();
+        });
+        cx.simulate_keystrokes("enter shift-enter ctrl-j alt-enter ctrl-shift-enter");
+        assert_eq!(&*input.borrow(), b"\r\n\n\x1b\r\r");
+        input.borrow_mut().clear();
+        pane.update(cx, |pane, _| {
+            pane.terminal.keybindings.clear_defaults = true;
+        });
+        cx.simulate_keystrokes("shift-enter");
+        assert_eq!(&*input.borrow(), b"\r");
+        input.borrow_mut().clear();
+        pane.update(cx, |pane, _| {
+            pane.terminal.keybindings.clear_defaults = false;
+        });
+        cx.update(|_, cx| {
+            cx.bind_keys([gpui::KeyBinding::new(
+                "shift-enter",
+                muxy_ui::text_input::Copy,
+                Some("TerminalPane"),
+            )]);
+        });
+        cx.simulate_keystrokes("shift-enter");
+        assert!(input.borrow().is_empty());
+        pane.update(cx, |pane, _| {
+            pane.terminal.keybindings.bindings.insert(
+                "shift-enter".parse().unwrap(),
+                muxy_app_core::settings::TerminalAction::Unbind,
+            );
+        });
+        cx.simulate_keystrokes("shift-enter");
+        assert_eq!(&*input.borrow(), b"\r");
+    }
+
+    #[gpui::test]
+    fn clipboard_images_reach_tuis_without_changing_the_clipboard(cx: &mut TestAppContext) {
+        let (pane, cx) = cx.add_window_view(|window, cx| {
+            let mut pane = TerminalPane::new(
+                Palette::new(true),
+                muxy_app_core::settings::TerminalSettings::default(),
+                cx,
+            );
+            prepare_mouse(&mut pane);
+            pane.grid.as_mut().unwrap().modes.bracketed_paste = true;
+            pane.focus.focus(window);
+            pane
+        });
+        let input = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        cx.update(|_, cx| {
+            cx.bind_keys([gpui::KeyBinding::new(
+                "cmd-v",
+                muxy_ui::text_input::Paste,
+                Some("TerminalPane"),
+            )]);
+            let input = input.clone();
+            cx.subscribe(&pane, move |_, event, _| {
+                if let PaneEvent::Input(_, bytes) = event {
+                    input.borrow_mut().extend_from_slice(bytes);
+                }
+            })
+            .detach();
+        });
+        let image = gpui::ClipboardItem::new_image(&gpui::Image::from_bytes(
+            gpui::ImageFormat::Png,
+            vec![1, 2, 3],
+        ));
+        cx.update(|_, cx| cx.write_to_clipboard(image.clone()));
+        cx.simulate_keystrokes("cmd-v cmd-shift-v ctrl-v ctrl-shift-v");
+        assert_eq!(&*input.borrow(), b"\x16\x16\x16\x16");
+        assert_eq!(cx.update(|_, cx| cx.read_from_clipboard()), Some(image));
+        input.borrow_mut().clear();
+        pane.update(cx, TerminalPane::paste_clipboard);
+        assert_eq!(&*input.borrow(), b"\x16");
+        input.borrow_mut().clear();
+        cx.update(|_, cx| {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string("one\ntwo".into()));
+        });
+        cx.simulate_keystrokes("cmd-v ctrl-v");
+        assert_eq!(&*input.borrow(), b"\x1b[200~one\rtwo\x1b[201~\x16");
+        input.borrow_mut().clear();
+        pane.update(cx, |pane, _| {
+            pane.terminal.keybindings.bindings.insert(
+                "alt-p".parse().unwrap(),
+                muxy_app_core::settings::TerminalAction::Paste,
+            );
+        });
+        cx.simulate_keystrokes("alt-p");
+        assert_eq!(&*input.borrow(), b"\x1b[200~one\rtwo\x1b[201~");
+        input.borrow_mut().clear();
+        pane.update(cx, |pane, cx| pane.set_state(PaneState::Disconnected, cx));
+        cx.simulate_keystrokes("cmd-v cmd-shift-v alt-p shift-enter");
+        assert!(input.borrow().is_empty());
     }
 
     #[gpui::test]

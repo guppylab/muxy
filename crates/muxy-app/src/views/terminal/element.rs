@@ -11,7 +11,8 @@ use std::sync::Arc;
 
 use gpui::{
     App, Bounds, Entity, FontFeatures, FontStyle, FontWeight, Hsla, IntoElement, LineLayout,
-    Pixels, Point, ShapedLine, Styled, TextRun, Window, canvas, fill, font, point, px, rgb, size,
+    Pixels, Point, Styled, TextRun, Window, WrappedLine, WrappedLineLayout, canvas, fill, font,
+    point, px, rgb, size,
 };
 use muxy_protocol::{MAX_COLS, MAX_ROWS, Run, Size, Style};
 
@@ -19,7 +20,7 @@ use super::{colors::Palette, pane::TerminalPane};
 
 #[derive(Default)]
 struct Painting {
-    lines: Vec<(Point<Pixels>, ShapedLine)>,
+    lines: Vec<(Point<Pixels>, WrappedLine)>,
     glyphs: Vec<PaintGlyph>,
     thicken: f32,
     shades: Vec<shade::Shade>,
@@ -553,17 +554,25 @@ impl RowRenderer<'_> {
         collect_glyphs: bool,
     ) {
         if !text.is_empty() {
-            let mut line =
-                self.window
-                    .text_system()
-                    .shape_line(text.into(), self.font_size, styles, None);
+            let Ok(mut lines) = self.window.text_system().shape_text(
+                text.into(),
+                self.font_size,
+                styles,
+                None,
+                None,
+            ) else {
+                return;
+            };
+            let Some(mut line) = lines.pop() else {
+                return;
+            };
             align_to_cells(&mut line, columns, self.cell.width, column, self.metrics);
             let baseline = position
                 + point(
                     px(0.0),
-                    (self.cell.height - line.ascent - line.descent) / 2.0 + line.ascent,
+                    (self.cell.height - line.ascent() - line.descent()) / 2.0 + line.ascent(),
                 );
-            for shaped in line.runs.iter().filter(|_| collect_glyphs) {
+            for shaped in line.runs().iter().filter(|_| collect_glyphs) {
                 for glyph in &shaped.glyphs {
                     let mut end = 0;
                     let color = styles
@@ -634,13 +643,13 @@ fn selection_bounds(
 }
 
 fn align_to_cells(
-    line: &mut ShapedLine,
+    line: &mut WrappedLine,
     columns: &[u16],
     cell_width: Pixels,
     width: u16,
     metrics: (Pixels, Pixels),
 ) {
-    let mut runs = line.runs.clone();
+    let mut runs = line.runs().to_vec();
     let mut anchors = std::collections::HashMap::new();
     for glyph in runs.iter().flat_map(|run| &run.glyphs) {
         if let Some(column) = columns.get(glyph.index) {
@@ -655,13 +664,17 @@ fn align_to_cells(
             }
         }
     }
-    **line = Arc::new(LineLayout {
-        font_size: line.font_size,
-        width: cell_width * f32::from(width),
-        ascent: metrics.0,
-        descent: metrics.1,
-        runs,
-        len: line.len(),
+    **line = Arc::new(WrappedLineLayout {
+        unwrapped_layout: Arc::new(LineLayout {
+            font_size: line.font_size(),
+            width: cell_width * f32::from(width),
+            ascent: metrics.0,
+            descent: metrics.1,
+            runs,
+            len: line.len(),
+        }),
+        wrap_boundaries: line.wrap_boundaries.clone(),
+        wrap_width: None,
     });
 }
 
@@ -845,7 +858,14 @@ fn paint(painting: Painting, palette: &Palette, window: &mut Window, cx: &mut Ap
         }
     }
     for (origin, line) in painting.lines {
-        if let Err(error) = line.paint(origin, painting.cell.height, window, cx) {
+        if let Err(error) = line.paint(
+            origin,
+            painting.cell.height,
+            gpui::TextAlign::Left,
+            None,
+            window,
+            cx,
+        ) {
             use std::io::Write;
             let _ = writeln!(
                 std::io::stderr(),
@@ -943,6 +963,50 @@ fn link_highlight(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn mixed_font_rows_preserve_terminal_columns_without_wrapping(cx: &mut gpui::TestAppContext) {
+        cx.add_empty_window().update(|window, _| {
+            let runs = [
+                Run {
+                    text: "›".into(),
+                    width: 1,
+                    style: Style {
+                        bold: true,
+                        ..Style::default()
+                    },
+                },
+                Run {
+                    text: " some example test".into(),
+                    width: 18,
+                    style: Style::default(),
+                },
+            ];
+            let mut painting = Painting::default();
+            RowRenderer {
+                settings: &muxy_app_core::settings::FontOptions::default(),
+                cell: size(px(8.0), px(16.0)),
+                palette: &Palette::new(true),
+                base_font: &font("Menlo"),
+                font_size: px(21.0),
+                metrics: (px(12.0), px(4.0)),
+                window,
+            }
+            .row(&runs, point(px(0.0), px(0.0)), &mut painting, true);
+            assert_eq!(painting.lines.len(), 1);
+            let line = &painting.lines[0].1;
+            assert!(line.wrap_boundaries.is_empty());
+            assert_eq!(line.width(), px(19.0 * 8.0));
+            assert_eq!((line.ascent(), line.descent()), (px(12.0), px(4.0)));
+            assert_glyph_x(line, '›', px(0.0));
+            let input_start = line.text.find('s');
+            assert!(
+                line.runs().iter().flat_map(|run| &run.glyphs).any(|glyph| {
+                    Some(glyph.index) == input_start && glyph.position.x == px(16.0)
+                })
+            );
+        });
+    }
 
     #[gpui::test]
     fn configured_selection_and_cursor_colors_use_the_actual_cell(cx: &mut gpui::TestAppContext) {
@@ -1297,9 +1361,9 @@ mod tests {
         });
     }
 
-    fn assert_glyph_x(line: &ShapedLine, ch: char, x: Pixels) {
+    fn assert_glyph_x(line: &WrappedLine, ch: char, x: Pixels) {
         let positions: Vec<_> = line
-            .runs
+            .runs()
             .iter()
             .flat_map(|run| &run.glyphs)
             .filter(|glyph| Some(glyph.index) == line.text.find(ch))

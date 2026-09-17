@@ -100,6 +100,7 @@ pub(crate) enum SettingsEvent {
     ReadServer,
     Connect,
     OpenConfiguration(&'static str),
+    ReloadConfiguration,
 }
 
 #[derive(Clone)]

@@ -3,6 +3,16 @@ use std::path::PathBuf;
 
 use muxy_protocol::Modes;
 
+pub(crate) fn contents(item: &gpui::ClipboardItem, modes: Modes) -> Option<Vec<u8>> {
+    if let Some(text) = item.text() {
+        return Some(paste(&text, modes));
+    }
+    item.entries()
+        .iter()
+        .any(|entry| matches!(entry, gpui::ClipboardEntry::Image(_)))
+        .then(|| vec![0x16])
+}
+
 pub(crate) fn paste(text: &str, modes: Modes) -> Vec<u8> {
     let text = text.replace("\r\n", "\n").replace('\n', "\r");
     let text = text.replace(['\x1b', '\u{009b}'], "");
@@ -56,6 +66,22 @@ fn bracket(text: Vec<u8>, modes: Modes) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn image_paste_is_a_control_key_even_in_bracketed_paste_mode() {
+        for bracketed_paste in [false, true] {
+            let modes = Modes {
+                bracketed_paste,
+                ..Modes::default()
+            };
+            let image = gpui::ClipboardItem::new_image(&gpui::Image::empty());
+            assert_eq!(contents(&image, modes), Some(vec![0x16]));
+            let text = gpui::ClipboardItem::new_string("one\ntwo".into());
+            assert_eq!(contents(&text, modes), Some(paste("one\ntwo", modes)));
+            let empty = gpui::ClipboardItem::new_string(String::new());
+            assert_eq!(contents(&empty, modes), Some(Vec::new()));
+        }
+    }
 
     #[test]
     fn paste_normalizes_newlines_and_removes_embedded_escape_sequences() {

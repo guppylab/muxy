@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::LazyLock;
 
 use crate::settings::{Error, KeyChord, Result};
 
@@ -24,7 +25,27 @@ pub struct TerminalBindings {
     pub clear_defaults: bool,
 }
 
+static DEFAULT_BINDINGS: LazyLock<BTreeMap<KeyChord, TerminalAction>> = LazyLock::new(|| {
+    [
+        ("shift-enter", TerminalAction::Text(b"\n".to_vec())),
+        ("cmd-shift-v", TerminalAction::Paste),
+    ]
+    .into_iter()
+    .map(|(key, action)| (KeyChord::default_binding(key), action))
+    .collect()
+});
+
 impl TerminalBindings {
+    pub fn action(&self, chord: &KeyChord) -> Option<&TerminalAction> {
+        self.bindings.get(chord).or_else(|| {
+            if self.clear_defaults {
+                None
+            } else {
+                DEFAULT_BINDINGS.get(chord)
+            }
+        })
+    }
+
     pub(super) fn lines(&self) -> Vec<String> {
         let mut lines = vec![if self.clear_defaults {
             "clear".into()

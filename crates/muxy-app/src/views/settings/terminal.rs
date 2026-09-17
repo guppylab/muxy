@@ -1,5 +1,7 @@
 use super::{Category, Change, PickerKind, SettingsEvent, SettingsView};
-use gpui::{AnyElement, Context, InteractiveElement, IntoElement, Window};
+use gpui::{
+    AnyElement, Context, InteractiveElement, IntoElement, ParentElement, Styled, Window, div,
+};
 use muxy_app_core::settings::NewPaneDirectory;
 use muxy_ui::controls::{self, Choice};
 
@@ -75,6 +77,9 @@ pub(super) fn rows(
             ),
         ));
     }
+    if pane.matches(Category::Terminal, "Ghostty configuration") {
+        rows.push(configuration(pane, cx));
+    }
     if !pane.snapshot.terminal.diagnostics.is_empty()
         && pane.matches(Category::Terminal, "Configuration warnings")
     {
@@ -91,4 +96,40 @@ pub(super) fn rows(
         );
     }
     rows
+}
+
+fn configuration(pane: &SettingsView, cx: &mut Context<SettingsView>) -> AnyElement {
+    pane.row(
+        "ghostty-configuration",
+        "Ghostty configuration",
+        div()
+            .flex()
+            .flex_wrap()
+            .gap(pane.metrics.spacing2())
+            .child(
+                controls::button(
+                    pane.style(),
+                    "edit-ghostty-configuration",
+                    "Edit ghostty.conf",
+                    true,
+                    cx.listener(|_, _, _, cx| {
+                        cx.emit(SettingsEvent::OpenConfiguration("ghostty.conf"));
+                    }),
+                )
+                .debug_selector(|| "settings-edit-ghostty-configuration".into()),
+            )
+            .child(
+                controls::button(
+                    pane.style(),
+                    "reload-ghostty-configuration",
+                    "Reload",
+                    true,
+                    cx.listener(|_, _, _, cx| {
+                        cx.emit(SettingsEvent::ReloadConfiguration);
+                    }),
+                )
+                .debug_selector(|| "settings-reload-ghostty-configuration".into()),
+            )
+            .into_any_element(),
+    )
 }
