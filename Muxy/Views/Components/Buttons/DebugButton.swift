@@ -9,8 +9,7 @@ struct DebugButton: View {
         Button {
             showingPopover.toggle()
         } label: {
-            Image(systemName: "ladybug.fill").resizable().scaledToFit()
-                .frame(width: UIMetrics.fontBody, height: UIMetrics.fontBody)
+            SymbolIcon(name: "ladybug.fill", size: UIMetrics.fontBody, weight: .semibold)
                 .foregroundStyle(hovered ? MuxyTheme.warning : MuxyTheme.warning.opacity(0.75))
                 .frame(width: UIMetrics.scaled(22), height: UIMetrics.scaled(22))
                 .contentShape(Rectangle())
@@ -32,8 +31,7 @@ private struct DebugInfoPopover: View {
     var body: some View {
         VStack(alignment: .leading, spacing: UIMetrics.spacing5) {
             HStack(spacing: UIMetrics.spacing3) {
-                Image(systemName: "ladybug.fill").resizable().scaledToFit()
-                    .frame(width: UIMetrics.fontFootnote, height: UIMetrics.fontFootnote)
+                SymbolIcon(name: "ladybug.fill", size: UIMetrics.fontFootnote, weight: .semibold)
                     .foregroundStyle(MuxyTheme.warning)
                 Text(L10n.resource("Debug"))
                     .font(.system(size: UIMetrics.fontBody, weight: .semibold))
@@ -64,8 +62,7 @@ private struct DebugInfoPopover: View {
 
     private func metricRow(_ label: String, value: String, icon: String) -> some View {
         HStack(spacing: UIMetrics.spacing4) {
-            Image(systemName: icon).resizable().scaledToFit()
-                .frame(width: UIMetrics.fontCaption, height: UIMetrics.fontCaption)
+            SymbolIcon(name: icon, size: UIMetrics.fontCaption, weight: .medium)
                 .foregroundStyle(MuxyTheme.fgMuted)
                 .frame(width: UIMetrics.iconMD)
             Text(label)

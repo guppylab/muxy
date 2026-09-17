@@ -8,8 +8,7 @@ struct UpdateBadge: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: UIMetrics.spacing2) {
-                Image(systemName: "arrow.down.circle.fill").resizable().scaledToFit()
-                    .frame(width: UIMetrics.fontXS, height: UIMetrics.fontXS)
+                SymbolIcon(name: "arrow.down.circle.fill", size: UIMetrics.fontXS, weight: .bold)
                 Text(L10n.resource("Update \(version)"))
                     .font(.system(size: UIMetrics.fontCaption, weight: .semibold, design: .monospaced))
                     .lineLimit(1)
