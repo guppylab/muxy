@@ -6,6 +6,7 @@ pub enum TerminalEvent {
     Title(String),
     Directory(String),
     Bell,
+    Progress(muxy_protocol::SessionProgress),
 }
 
 #[derive(Debug, Default)]

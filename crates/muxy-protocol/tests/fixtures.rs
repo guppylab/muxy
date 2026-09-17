@@ -180,6 +180,7 @@ fn legacy_fixture_name(message: &Message) -> &'static str {
         Message::Metadata(MetadataEvent::InputModes(_)) => "input_modes",
         Message::Metadata(MetadataEvent::CursorBlinking(_)) => "cursor_blinking",
         Message::Metadata(MetadataEvent::History { .. }) => "history_metadata",
+        Message::Progress { .. } => "session_progress",
         Message::Request {
             body: RequestBody::HistoryPage { .. },
             ..
@@ -229,6 +230,7 @@ fn development_messages_share_one_version_and_reject_unknown_schemas() -> Result
 fn kind_name(kind: MessageKind) -> &'static str {
     match kind {
         MessageKind::GitChanged => "git_changed",
+        MessageKind::Progress => "session_progress",
         MessageKind::SessionsChanged => "sessions_changed",
         MessageKind::CatalogChanged => "catalog_changed",
         MessageKind::Hello => "hello",

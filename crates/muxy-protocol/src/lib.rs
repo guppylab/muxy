@@ -27,8 +27,8 @@ pub use screen::{
 pub use session::{
     AttachSnapshot, ClientKind, ExitReason, ForegroundProcess, HistoryCursor, HistoryPage,
     InputModes, LinkRow, LinkSpan, MetadataEvent, Modifiers, MouseAction, MouseButton, MouseEvent,
-    SavedScreen, ScrollDirection, SearchMatch, SearchPage, SearchSource, SessionClient,
-    SessionInfo,
+    ProgressState, SavedScreen, ScrollDirection, SearchMatch, SearchPage, SearchSource,
+    SessionClient, SessionInfo, SessionProgress, TerminalProgress,
 };
 pub use validate::{
     MAX_COLS, MAX_INPUT, MAX_LINK_SPANS, MAX_LINK_URI, MAX_ROWS, validate_input, validate_path,

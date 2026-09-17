@@ -75,6 +75,16 @@ impl Message {
             }
             Self::Metadata(MetadataEvent::Links { rows, .. }) => validate_links(rows),
             Self::Metadata(MetadataEvent::Directory(path)) => validate_path(path),
+            Self::Progress { progress, .. } => {
+                if progress
+                    .progress
+                    .is_some_and(|progress| progress.percent.is_some_and(|value| value > 100))
+                {
+                    Err(ErrorCode::BadRequest)
+                } else {
+                    Ok(())
+                }
+            }
             Self::GitChanged { .. }
             | Self::SessionsChanged { .. }
             | Self::CatalogChanged { .. }

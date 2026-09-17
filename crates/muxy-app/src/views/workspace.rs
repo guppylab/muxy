@@ -366,6 +366,9 @@ pub(crate) fn register_commands(
 impl AppModel {
     fn sync_pane_focus(&mut self, cx: &mut Context<Self>) {
         let active = self.active_pane();
+        if let Some(active) = active {
+            self.completions.remove(&active);
+        }
         let zoomed = self
             .state
             .current_project()

@@ -40,6 +40,7 @@ pub struct Terminal {
     cells: CellIterator<'static>,
     pty_output: Rc<RefCell<Vec<u8>>>,
     events: Events,
+    progress: crate::progress::Progress,
     row_hashes: Vec<Option<u64>>,
     links: Vec<crate::links::CachedRow>,
     text: String,
@@ -95,6 +96,7 @@ impl Terminal {
             cells: CellIterator::new().map_err(create)?,
             pty_output,
             events,
+            progress: crate::progress::Progress::default(),
             row_hashes: Vec::new(),
             links: Vec::new(),
             text: String::new(),
@@ -179,6 +181,7 @@ impl Terminal {
     }
 
     pub fn feed(&mut self, bytes: &[u8]) {
+        self.progress.feed(bytes);
         let mut start = 0;
         for (index, byte) in bytes.iter().copied().enumerate() {
             if self.screen_switch.advance(byte) {
@@ -195,6 +198,9 @@ impl Terminal {
 
     pub fn take_events(&mut self) -> Vec<TerminalEvent> {
         let mut events = Vec::new();
+        if let Some(progress) = self.progress.take(std::time::Instant::now()) {
+            events.push(progress);
+        }
         if self.events.title.replace(false)
             && let Ok(title) = self.engine.title()
         {

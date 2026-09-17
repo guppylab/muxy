@@ -7,6 +7,7 @@ mod error;
 mod events;
 mod ghostty;
 mod links;
+mod progress;
 mod runs;
 mod screen;
 

@@ -323,3 +323,24 @@ fn identify_desktop<R: std::io::Read, W: std::io::Write>(
     )?;
     Ok(())
 }
+
+#[test]
+fn deferred_progress_keeps_only_the_latest_state_and_completion_count() -> TestResult {
+    let mut delivery = delivery::Delivery::default();
+    delivery.pending = 1;
+    let session = SessionId::from(std::num::NonZeroU64::MIN);
+    let event = |completed| ClientEvent::Progress {
+        session,
+        progress: muxy_protocol::SessionProgress {
+            progress: None,
+            completed,
+        },
+    };
+    for completed in 1..=2000 {
+        assert!(delivery.event(event(completed))?.is_empty());
+    }
+    assert!(
+        matches!(delivery.complete(None).as_slice(), [Update::Event(received)] if *received == event(2000))
+    );
+    Ok(())
+}

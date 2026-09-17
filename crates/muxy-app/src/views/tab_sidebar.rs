@@ -490,10 +490,16 @@ fn tab_row(
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(SymbolGlyph::new(
-                    if tab.pinned { "pin" } else { "terminal" },
-                    m.font_footnote(),
-                    if active { theme.fg } else { theme.fg_muted },
+                .child(super::tab_activity::glyph(
+                    tab,
+                    model,
+                    m.icon_md(),
+                    SymbolGlyph::new(
+                        if tab.pinned { "pin" } else { "terminal" },
+                        m.font_footnote(),
+                        if active { theme.fg } else { theme.fg_muted },
+                    )
+                    .into_any_element(),
                 )),
         )
         .child(

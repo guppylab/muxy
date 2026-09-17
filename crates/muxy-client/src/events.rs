@@ -13,6 +13,10 @@ use crate::requests::Pending;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ClientEvent {
+    Progress {
+        session: SessionId,
+        progress: muxy_protocol::SessionProgress,
+    },
     GitChanged {
         project: muxy_protocol::ProjectId,
     },
@@ -71,6 +75,9 @@ fn next_event(
             return None;
         }
         match (channel, message) {
+            (CONTROL, Message::Progress { session, progress }) => {
+                return Some(ClientEvent::Progress { session, progress });
+            }
             (CONTROL, Message::GitChanged { project }) => {
                 return Some(ClientEvent::GitChanged { project });
             }

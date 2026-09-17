@@ -13,6 +13,10 @@ pub enum ChannelKind {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Message {
+    Progress {
+        session: SessionId,
+        progress: crate::SessionProgress,
+    },
     SessionsChanged {
         revision: u64,
     },
@@ -59,7 +63,8 @@ pub enum Message {
 impl Message {
     pub fn channel_kind(&self) -> ChannelKind {
         match self {
-            Self::GitChanged { .. }
+            Self::Progress { .. }
+            | Self::GitChanged { .. }
             | Self::SessionsChanged { .. }
             | Self::CatalogChanged { .. }
             | Self::Hello { .. }

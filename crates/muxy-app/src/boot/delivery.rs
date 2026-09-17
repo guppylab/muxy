@@ -36,6 +36,11 @@ impl Delivery {
             *previous = event;
             return Ok(Vec::new());
         }
+        if let ClientEvent::Progress { session, .. } = &event
+            && let Some(previous) = self.deferred.iter_mut().find(|previous| matches!(previous, ClientEvent::Progress { session: id, .. } if id == session)) {
+            *previous = event;
+            return Ok(Vec::new());
+        }
         if let ClientEvent::GitChanged { project } = &event
             && self.deferred.iter().any(|pending| matches!(pending, ClientEvent::GitChanged { project: id } if id == project)) {
             return Ok(Vec::new());
@@ -133,7 +138,8 @@ impl Delivery {
                 ClientEvent::Frame { channel, .. } | ClientEvent::Metadata { channel, .. } => {
                     channel.0 <= self.installed_through
                 }
-                ClientEvent::GitChanged { .. }
+                ClientEvent::Progress { .. }
+                | ClientEvent::GitChanged { .. }
                 | ClientEvent::SessionsChanged { .. }
                 | ClientEvent::CatalogChanged { .. }
                 | ClientEvent::SessionEnded { .. }

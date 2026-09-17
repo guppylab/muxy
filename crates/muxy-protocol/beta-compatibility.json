@@ -1,5 +1,5 @@
 {
-  "identifier": 8,
+  "identifier": 9,
   "wire": {
     "CancelCreation.bin": "031bc6d86abd1ea3445835db6184a96951140b35449fdbd0e0782a05b6c87d26",
     "Catalog.bin": "02dace73c7b8d79c93c0e0f4cd15177764638901fdfc10fde3b8ed0454cd4c95",
@@ -21,8 +21,8 @@
     "git_changed.bin": "ef735c08af47ad09516c803c5385311516a2cf774e59614a979e9c23dd545003",
     "git_reply.bin": "9c01a05402bec1e268f00ab107ac0cdcd4c24bdcc47a56cb68407da9beefacf5",
     "git_request.bin": "56ad3fca98297fc98a2557b7e5038a69fa46a2b3e48a03ddb6bf8fca182afac2",
-    "hello.bin": "fff0ac7c8733922b95d90624a123f53c17c04ed26c1199e37b17efb9ee45aa02",
-    "hello_reply.bin": "48c2d15bb76e998991bbbcc1d4a4fe926bb806f8abc14f99716dec1c87e6720a",
+    "hello.bin": "01a3427a7fad63dd07911c9abcfb72c5541fb9a1e48ca1a9d102fd4bd86063d9",
+    "hello_reply.bin": "41077d971ca1244d058677238e77f10cd2fe67462d94442921b7a64414590d85",
     "history_metadata.bin": "fffff1f770355489db28b9f7fd7f13eaccece41a7dec86813394e3035d7dba64",
     "history_reply.bin": "f3061b12a4d1779645c7cd21662df438b5bc5dab22daf9d46cbbb7e0f6e82df5",
     "history_request.bin": "6c231c15b10f8254b6950d904c0e83a7df86ac0dfa00d0dda7d64283c2475eda",
@@ -47,6 +47,7 @@
     "server_stopping.bin": "4e057ef5937a2111c82bfbb052ca87ca17282ebb9314a8f17904eccdd2e175ab",
     "session_closed.bin": "4d14fb9536c265265484d1ed28d2d99693cffcad1d7797a85efffbde82edb969",
     "session_ended.bin": "12c169af7dc96bdbfe6501e334a82096dbfa77d11e1183242b80aeb395b704f7",
+    "session_progress.bin": "8e4b1291e300ad1c135e9ddeb22d6520275d8b5b18f1ac66786676da16a3bb1a",
     "session_references.bin": "a623747dc765cbe94f903be2c61141c2580da40de6c7dd0acbcf7d35291da43d",
     "session_references_synced.bin": "6a0718414d96030601cc7d7158f19c060721748cdc83056f89048e4836f30009",
     "sessions_changed.bin": "c077ae1e3f46c747ebcba5808bb9265f3b8c60a5ac94fe8020d6a5500b54936f",

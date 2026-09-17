@@ -111,6 +111,8 @@ pub(crate) struct AppModel {
     retained: HashSet<PaneId>,
     loaded: HashSet<PaneId>,
     snapshots: HashMap<PaneId, RunGrid>,
+    pub(crate) progress: HashMap<SessionId, muxy_protocol::SessionProgress>,
+    pub(crate) completions: HashSet<PaneId>,
     discarding: HashSet<SessionId>,
     references: Option<Vec<SessionId>>,
     generation: u64,
@@ -397,6 +399,8 @@ impl AppModel {
             retained: HashSet::new(),
             loaded: HashSet::new(),
             snapshots: HashMap::new(),
+            progress: HashMap::new(),
+            completions: HashSet::new(),
             discarding: HashSet::new(),
             references: None,
             generation: 1,
@@ -1240,6 +1244,9 @@ impl AppModel {
             .chain(self.state.quick_terminal())
             .map(|pane| pane.id)
             .collect();
+        self.completions.retain(|id| panes.contains(id));
+        let sessions = self.state.session_references();
+        self.progress.retain(|id, _| sessions.contains(id));
         self.font_sizes.retain(|id, _| panes.contains(id));
         self.initial_directories.retain(|id, _| panes.contains(id));
         self.snapshots.retain(|id, _| panes.contains(id));
@@ -1804,8 +1811,40 @@ impl AppModel {
         }
     }
 
+    fn receive_progress(
+        &mut self,
+        session: SessionId,
+        progress: muxy_protocol::SessionProgress,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.state.session_references().contains(&session) {
+            return;
+        }
+        let previous = self.progress.insert(session, progress).unwrap_or_default();
+        if progress.completed > previous.completed {
+            let active = self.active_pane();
+            for pane in self
+                .state
+                .projects()
+                .iter()
+                .flat_map(|project| &project.tabs)
+                .flat_map(|tab| &tab.panes)
+            {
+                if Some(pane.id) != active
+                    && matches!(pane.content, PaneContent::Terminal { session: Some(id) } if id == session)
+                {
+                    self.completions.insert(pane.id);
+                }
+            }
+        }
+        cx.notify();
+    }
+
     fn receive_event(&mut self, event: ClientEvent, cx: &mut Context<Self>) {
         match event {
+            ClientEvent::Progress { session, progress } => {
+                self.receive_progress(session, progress, cx);
+            }
             ClientEvent::GitChanged { project } => self.git_invalidated(project, cx),
             ClientEvent::SessionsChanged { revision } => {
                 self.existing_sessions.revision = self.existing_sessions.revision.max(revision);
@@ -1927,6 +1966,10 @@ impl AppModel {
             repository.disconnect();
         }
         self.connection = ConnectionState::Disconnected;
+        for progress in self.progress.values_mut() {
+            progress.progress = None;
+        }
+        self.completions.clear();
         self.references = None;
         self.existing_sessions = crate::views::session_picker::ExistingSessions::default();
         self.update_session_picker(cx);
@@ -1994,6 +2037,7 @@ mod tests {
     mod links;
     mod mouse;
     mod preferences;
+    mod progress;
     mod projects;
     mod quick_terminal;
     mod scrollback;

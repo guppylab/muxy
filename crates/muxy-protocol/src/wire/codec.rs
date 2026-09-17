@@ -15,6 +15,7 @@ pub fn encode(
     output.resize(HEADER_LEN, 0);
     match message {
         Message::GitChanged { project } => serialize(project, output)?,
+        Message::Progress { session, progress } => serialize(&(session, progress), output)?,
         Message::CatalogChanged { revision } | Message::SessionsChanged { revision } => {
             serialize(revision, output)?;
         }
@@ -51,6 +52,10 @@ pub fn decode(header: Header, payload: &[u8]) -> Result<(ChannelId, Message), Wi
         return Err(postcard::Error::DeserializeBadEncoding.into());
     }
     let message = match MessageKind::from_u8(header.kind)? {
+        MessageKind::Progress => {
+            let (session, progress) = deserialize(payload)?;
+            Message::Progress { session, progress }
+        }
         MessageKind::GitChanged => Message::GitChanged {
             project: deserialize(payload)?,
         },

@@ -104,6 +104,26 @@ pub struct ForegroundProcess {
     pub is_shell: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum ProgressState {
+    Running,
+    Error,
+    Indeterminate,
+    Paused,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct TerminalProgress {
+    pub state: ProgressState,
+    pub percent: Option<u8>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SessionProgress {
+    pub progress: Option<TerminalProgress>,
+    pub completed: u64,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum MetadataEvent {
     Title(String),

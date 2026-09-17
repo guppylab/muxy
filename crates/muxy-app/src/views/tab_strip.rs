@@ -388,17 +388,41 @@ fn tab_cell(
             shows_title,
             active,
             group,
-            foreground,
-            bell.then_some(theme.accent),
-            if tab.pinned {
-                Icon::Pin
-            } else if settings {
-                Icon::Settings
-            } else {
-                Icon::Terminal
-            },
+            tab.pinned,
+            super::tab_activity::glyph(
+                tab,
+                model,
+                px(14.0),
+                tab_glyph(tab.pinned, settings, bell, foreground, theme),
+            ),
         ))
         .when(!tab.pinned, |cell| cell.child(close))
+        .into_any_element()
+}
+
+fn tab_glyph(
+    pinned: bool,
+    settings: bool,
+    bell: bool,
+    foreground: gpui::Hsla,
+    theme: &Theme,
+) -> AnyElement {
+    let (icon, selector) = if bell {
+        (Icon::Bell, "tab-bell")
+    } else if pinned {
+        (Icon::Pin, "tab-pin")
+    } else if settings {
+        (Icon::Settings, "tab-settings")
+    } else {
+        (Icon::Terminal, "tab-terminal")
+    };
+    div()
+        .debug_selector(move || selector.into())
+        .child(IconGlyph::new(
+            icon,
+            px(14.0),
+            if bell { theme.accent } else { foreground },
+        ))
         .into_any_element()
 }
 
@@ -407,9 +431,8 @@ fn tab_label(
     shows_title: bool,
     active: bool,
     group: SharedString,
-    foreground: gpui::Hsla,
-    bell: Option<gpui::Hsla>,
-    icon: Icon,
+    pinned: bool,
+    glyph: AnyElement,
 ) -> impl IntoElement {
     div()
         .flex()
@@ -424,25 +447,10 @@ fn tab_label(
             div()
                 .flex()
                 .flex_none()
-                .when(!shows_title && icon != Icon::Pin, |icon| {
+                .when(!shows_title && !pinned, |icon| {
                     icon.group_hover(group, |style| style.opacity(0.0))
                 })
-                .debug_selector(move || {
-                    if bell.is_some() {
-                        "tab-bell".into()
-                    } else if icon == Icon::Pin {
-                        "tab-pin".into()
-                    } else if icon == Icon::Settings {
-                        "tab-settings".into()
-                    } else {
-                        "tab-terminal".into()
-                    }
-                })
-                .child(IconGlyph::new(
-                    if bell.is_some() { Icon::Bell } else { icon },
-                    px(14.0),
-                    bell.unwrap_or(foreground),
-                )),
+                .child(glyph),
         )
         .when(shows_title, |row| {
             row.child(

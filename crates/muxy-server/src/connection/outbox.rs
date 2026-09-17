@@ -5,7 +5,8 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use muxy_protocol::wire::message_version;
 use muxy_protocol::{
     AttachSnapshot, CONTROL, ChannelId, ErrorCode, ExitReason, ForegroundProcess, Message,
-    MetadataEvent, ReplyBody, RequestId, ScreenFrame, SessionId, Size, TerminalColors, Version,
+    MetadataEvent, ReplyBody, RequestId, ScreenFrame, SessionId, SessionProgress, Size,
+    TerminalColors, Version,
 };
 
 use crate::{AttachmentId, ServerError, SessionCommand, SessionHandle};
@@ -52,6 +53,7 @@ struct State {
     created: HashSet<SessionId>,
     changes: Arc<AtomicU64>,
     references: References,
+    progress: HashMap<SessionId, SessionProgress>,
     catalog_watched: bool,
     colors: Option<TerminalColors>,
     control: VecDeque<Message>,
@@ -81,6 +83,10 @@ impl Outbox {
         }
     }
 
+    pub(crate) fn referenced_sessions(&self) -> Vec<SessionId> {
+        self.lock().references.sessions.iter().copied().collect()
+    }
+
     pub(crate) fn reference_state(&self) -> Option<References> {
         let state = self.lock();
         (!state.closed).then(|| state.references.clone())
@@ -102,6 +108,10 @@ impl Outbox {
         state
             .open_sessions
             .retain(|session| references.sessions.contains(session));
+        state.control.retain(|message| !matches!(message, Message::Progress { session, .. } if !references.sessions.contains(session)));
+        state
+            .progress
+            .retain(|session, _| references.sessions.contains(session));
         state.references = references;
         state.refresh_positions();
     }
@@ -196,6 +206,19 @@ impl Outbox {
         };
         let mut state = self.lock();
         if !state.closed {
+            if let Message::Progress { session, progress } = &message {
+                if !state.references.sessions.contains(session)
+                    || *progress == state.progress.get(session).copied().unwrap_or_default()
+                {
+                    return;
+                }
+                state.progress.insert(*session, *progress);
+            }
+            if let Message::Progress { session, .. } = &message
+                && let Some(pending) = state.control.iter_mut().find(|pending| matches!(pending, Message::Progress { session: id, .. } if id == session)) {
+                *pending = message;
+                return;
+            }
             if let Message::GitChanged { project } = &message
                 && state.control.iter().any(|pending| matches!(pending, Message::GitChanged { project: id } if id == project)) {
                 return;
@@ -353,7 +376,11 @@ impl Outbox {
             return;
         }
         state.created.remove(&session);
+        state.control.retain(
+            |message| !matches!(message, Message::Progress { session: id, .. } if *id == session),
+        );
         state.references.sessions.remove(&session);
+        state.progress.remove(&session);
         state.open_sessions.remove(&session);
         let channels: Vec<_> = state
             .attachments
@@ -521,6 +548,7 @@ impl State {
                 .send(SessionCommand::Detach(attachment.id));
         }
         self.pending.clear();
+        self.progress.clear();
         self.metadata.clear();
         self.credit.clear();
         self.sent.clear();
@@ -670,12 +698,73 @@ mod tests {
     }
 
     #[test]
+    fn progress_coalesces_completions_and_releases_pending_updates_on_unsubscribe() {
+        let outbox = Outbox::new(muxy_protocol::V1, Arc::default());
+        let session = SessionId::from(std::num::NonZeroU64::MIN);
+        let message = |completed| Message::Progress {
+            session,
+            progress: SessionProgress {
+                progress: None,
+                completed,
+            },
+        };
+        outbox.lock().references.sessions.insert(session);
+        for completed in 1..=1000 {
+            outbox.push_control(message(completed));
+        }
+        assert_eq!(outbox.lock().control.len(), 1);
+        assert_eq!(outbox.next(), Some((CONTROL, message(1000))));
+        outbox.push_control(message(1001));
+        outbox.set_references(References::default(), Some(&[]), false);
+        outbox.push_control(message(1002));
+        assert!(outbox.lock().control.is_empty());
+    }
+
+    #[test]
+    fn progress_resubscription_restores_unchanged_state_between_polls() {
+        for delivered in [false, true] {
+            let outbox = Outbox::new(muxy_protocol::V1, Arc::default());
+            let session = SessionId::from(std::num::NonZeroU64::MIN);
+            let message = Message::Progress {
+                session,
+                progress: SessionProgress {
+                    progress: Some(muxy_protocol::TerminalProgress {
+                        state: muxy_protocol::ProgressState::Indeterminate,
+                        percent: None,
+                    }),
+                    completed: 0,
+                },
+            };
+            let mut references = References::default();
+            references.update(None, 1, vec![session]);
+            outbox.set_references(references.clone(), Some(&[session]), false);
+            outbox.push_control(message.clone());
+            if delivered {
+                assert_eq!(outbox.next(), Some((CONTROL, message.clone())));
+            }
+            outbox.set_references(References::default(), Some(&[]), false);
+            outbox.push_control(message.clone());
+            assert!(outbox.lock().control.is_empty());
+            outbox.set_references(references.clone(), Some(&[session]), false);
+            outbox.push_control(message.clone());
+            assert_eq!(outbox.lock().control.len(), 1);
+            assert_eq!(outbox.next(), Some((CONTROL, message.clone())));
+            outbox.set_references(references, Some(&[session]), false);
+            outbox.push_control(message);
+            assert!(outbox.lock().control.is_empty());
+        }
+    }
+
+    #[test]
     fn negotiated_development_protocol_preserves_every_control_message() {
         for message in Message::samples()
             .into_iter()
             .filter(|message| message.channel_kind() == muxy_protocol::ChannelKind::Control)
         {
             let outbox = Outbox::new(muxy_protocol::V1, Arc::default());
+            if let Message::Progress { session, .. } = &message {
+                outbox.lock().references.sessions.insert(*session);
+            }
             outbox.push_control(message.clone());
             outbox.close();
             assert_eq!(outbox.next(), Some((CONTROL, message)));

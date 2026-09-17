@@ -104,6 +104,7 @@ fn kind_numbers_and_both_reserved_flags_are_checked() -> Result<(), WireError> {
         MessageKind::CatalogChanged,
         MessageKind::SessionsChanged,
         MessageKind::GitChanged,
+        MessageKind::Progress,
     ];
     for (number, kind) in (1_u8..).zip(kinds) {
         assert_eq!(kind as u8, number);
@@ -122,7 +123,7 @@ fn kind_numbers_and_both_reserved_flags_are_checked() -> Result<(), WireError> {
                 Err(WireError::FlagsSet(value)) if value == kind
             ));
             assert!(matches!(decode(header, &[]), Err(WireError::FlagsSet(_))));
-        } else if kind == 0 || kind > MessageKind::GitChanged as u8 {
+        } else if kind == 0 || kind > MessageKind::Progress as u8 {
             assert!(matches!(
                 Header::from_bytes(header.to_bytes()),
                 Err(WireError::UnknownKind(value)) if value == kind

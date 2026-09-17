@@ -60,6 +60,7 @@ struct Owner {
     pty: Pty,
     terminal: Terminal,
     metadata: Metadata,
+    progress: super::SharedProgress,
     size: Size,
     events: Receiver<OwnerEvent>,
     input: Sender<Vec<u8>>,
@@ -111,6 +112,8 @@ pub(crate) fn start(
         })
         .map_err(ServerError::spawn_failed)?;
 
+    let progress = super::SharedProgress::default();
+    let session_progress = progress.clone();
     let session = info.clone();
     let failed = sender.clone();
     thread::Builder::new()
@@ -143,6 +146,7 @@ pub(crate) fn start(
             let _ = ready_sender.send(Ok(()));
             let owner = Owner {
                 metadata: Metadata::new(session.directory.clone()),
+                progress: session_progress,
                 info: session,
                 pty,
                 terminal,
@@ -175,7 +179,7 @@ pub(crate) fn start(
     ready
         .recv()
         .map_err(|_| ServerError::spawn_failed("session thread stopped before it was ready"))??;
-    Ok(SessionHandle::new(info, sender))
+    Ok(SessionHandle::new(info, sender, progress))
 }
 
 fn set_colors(
@@ -572,6 +576,14 @@ impl Owner {
 
     fn update_metadata(&mut self) {
         let terminal = self.terminal.take_events();
+        for event in &terminal {
+            if let muxy_terminal::TerminalEvent::Progress(progress) = event {
+                *self
+                    .progress
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = *progress;
+            }
+        }
         for event in self.metadata.update(&self.pty, terminal) {
             self.attachments.retain(|_, attachment| {
                 attachment
@@ -741,6 +753,7 @@ mod tests {
             pty,
             terminal: Terminal::new(size, 1024)?,
             metadata: Metadata::new(directory),
+            progress: crate::session::SharedProgress::default(),
             size,
             events: mpsc::channel().1,
             input: mpsc::channel().0,

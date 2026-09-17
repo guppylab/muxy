@@ -22,6 +22,7 @@ pub enum MessageKind {
     CatalogChanged = 15,
     SessionsChanged = 16,
     GitChanged = 17,
+    Progress = 18,
 }
 
 impl MessageKind {
@@ -47,6 +48,7 @@ impl MessageKind {
             15 => Ok(Self::CatalogChanged),
             16 => Ok(Self::SessionsChanged),
             17 => Ok(Self::GitChanged),
+            18 => Ok(Self::Progress),
             _ => Err(WireError::UnknownKind(value)),
         }
     }
@@ -56,6 +58,7 @@ impl From<&Message> for MessageKind {
     fn from(message: &Message) -> Self {
         match message {
             Message::GitChanged { .. } => Self::GitChanged,
+            Message::Progress { .. } => Self::Progress,
             Message::SessionsChanged { .. } => Self::SessionsChanged,
             Message::CatalogChanged { .. } => Self::CatalogChanged,
             Message::Hello { .. } => Self::Hello,

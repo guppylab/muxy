@@ -459,6 +459,7 @@ fn samples_cover_every_message_variant_once_and_use_the_right_channel() {
             Message::Metadata(MetadataEvent::CursorBlinking(_)) => {
                 ("CursorBlinking", ChannelKind::Session)
             }
+            Message::Progress { .. } => ("Progress", ChannelKind::Control),
             Message::Metadata(_) => ("Metadata", ChannelKind::Session),
             Message::CellSize(_) => ("CellSize", ChannelKind::Session),
         };
@@ -522,6 +523,7 @@ fn samples_cover_every_message_variant_once_and_use_the_right_channel() {
             "Mouse",
             "InputModes",
             "CursorBlinking",
+            "Progress",
             "Frame",
             "Metadata",
         ])

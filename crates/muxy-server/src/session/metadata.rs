@@ -65,7 +65,7 @@ impl Metadata {
                     }
                 }
                 TerminalEvent::Bell => events.push(MetadataEvent::Bell),
-                TerminalEvent::Title(_) => {}
+                TerminalEvent::Progress(_) | TerminalEvent::Title(_) => {}
             }
         }
         if self.directory != previous_directory {

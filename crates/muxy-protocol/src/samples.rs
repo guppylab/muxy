@@ -295,6 +295,16 @@ fn sample_cursor() -> Cursor {
 }
 
 fn terminal_metadata_samples(samples: &mut Vec<Message>) {
+    samples.push(Message::Progress {
+        session: SessionId::from(NonZeroU64::MIN),
+        progress: crate::SessionProgress {
+            progress: Some(crate::TerminalProgress {
+                state: crate::ProgressState::Running,
+                percent: Some(42),
+            }),
+            completed: 2,
+        },
+    });
     samples.push(Message::Metadata(MetadataEvent::CursorBlinking(true)));
     samples.push(Message::Metadata(MetadataEvent::Links {
         seq: 1,

@@ -96,6 +96,24 @@ impl Registry {
         Ok(registry)
     }
 
+    pub(crate) fn progress(
+        &self,
+        outbox: &crate::connection::Outbox,
+    ) -> BTreeMap<SessionId, muxy_protocol::SessionProgress> {
+        let sessions = outbox.referenced_sessions();
+        let handles: Vec<_> = {
+            let state = lock(&self.sessions);
+            sessions
+                .iter()
+                .filter_map(|id| state.sessions.get(id).cloned())
+                .collect()
+        };
+        handles
+            .into_iter()
+            .map(|handle| (handle.id(), handle.progress()))
+            .collect()
+    }
+
     pub fn home_project(&self) -> muxy_protocol::ProjectId {
         self.catalog.home()
     }

@@ -55,6 +55,9 @@ pub fn serve(
             let mut revision = 0;
             let mut sessions_revision = 0;
             while !output.is_closed() {
+                for (session, progress) in catalog.progress(&output) {
+                    output.push_control(muxy_protocol::Message::Progress { session, progress });
+                }
                 let current = catalog.catalog_revision();
                 if current > revision && output.catalog_watched() {
                     output
