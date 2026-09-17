@@ -123,6 +123,9 @@ strip -Sx "$APP_BUNDLE/Contents/MacOS/Muxy"
 RESOURCE_BUNDLE="$SPM_BUILD_DIR/Muxy_Muxy.bundle"
 TRANSPARENT_SURFACE_CONFIG="$RESOURCE_BUNDLE/ghostty-overrides/transparent-surface.conf"
 if [[ ! -f "$TRANSPARENT_SURFACE_CONFIG" ]]; then
+    TRANSPARENT_SURFACE_CONFIG="$RESOURCE_BUNDLE/Contents/Resources/ghostty-overrides/transparent-surface.conf"
+fi
+if [[ ! -f "$TRANSPARENT_SURFACE_CONFIG" ]]; then
     echo "Error: Transparent surface config not found at $TRANSPARENT_SURFACE_CONFIG"
     exit 1
 fi
